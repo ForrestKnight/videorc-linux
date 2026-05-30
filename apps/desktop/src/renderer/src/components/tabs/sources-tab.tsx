@@ -1,0 +1,166 @@
+import { ArrowsClockwise, Monitor, SpeakerHigh, Warning, Waveform } from '@phosphor-icons/react'
+import type { ReactElement } from 'react'
+
+import { PanelSection } from '@/components/panel-section'
+import { SourceSelect } from '@/components/source-select'
+import { StatusBadge, type StatusTone } from '@/components/status-badge'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
+import { Empty, EmptyDescription, EmptyTitle } from '@/components/ui/empty'
+import { useStudio } from '@/hooks/use-studio'
+import type { Device, DeviceStatus } from '@/lib/backend'
+import { formatDb } from '@/lib/format'
+import { cn } from '@/lib/utils'
+
+const STATUS_TONE: Record<DeviceStatus, StatusTone> = {
+  available: 'good',
+  unavailable: 'neutral',
+  'permission-required': 'warn'
+}
+
+export function SourcesTab(): ReactElement {
+  const {
+    deviceList,
+    captureConfig,
+    setCaptureConfig,
+    refreshBackend,
+    sampleAudioMeter,
+    audioMeter,
+    audioMeterLoading,
+    meterLevel,
+    canSampleAudio,
+    selectedMicrophone
+  } = useStudio()
+
+  const captureDevices = deviceList.devices.filter((device) => ['screen', 'window'].includes(device.kind))
+  const cameras = deviceList.devices.filter((device) => device.kind === 'camera')
+  const microphones = deviceList.devices.filter((device) => device.kind === 'microphone')
+
+  const meterTone =
+    audioMeter?.status === 'ready'
+      ? 'bg-success'
+      : audioMeter?.status === 'silent' || audioMeter?.status === 'permission-required'
+        ? 'bg-warning'
+        : 'bg-muted-foreground/40'
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      <PanelSection
+        action={
+          <Button size="sm" variant="outline" onClick={refreshBackend}>
+            <ArrowsClockwise data-icon="inline-start" />
+            Refresh
+          </Button>
+        }
+        className="lg:col-span-2"
+        description="Pick what gets captured. Unavailable devices need permission or reconnection."
+        icon={Monitor}
+        title="Capture sources"
+      >
+        {deviceList.warnings.map((warning) => (
+          <Alert key={warning} variant="warning">
+            <Warning weight="fill" />
+            <AlertTitle>{warning}</AlertTitle>
+          </Alert>
+        ))}
+        <div className="grid gap-4 md:grid-cols-3">
+          <SourceSelect
+            devices={captureDevices}
+            label="Screen / window"
+            value={captureConfig.sources.screenId}
+            onChange={(screenId) =>
+              setCaptureConfig((current) => ({
+                ...current,
+                sources: { ...current.sources, screenId, windowId: undefined }
+              }))
+            }
+          />
+          <SourceSelect
+            allowNone
+            devices={cameras}
+            label="Camera"
+            value={captureConfig.sources.cameraId}
+            onChange={(cameraId) =>
+              setCaptureConfig((current) => ({ ...current, sources: { ...current.sources, cameraId } }))
+            }
+          />
+          <SourceSelect
+            allowNone
+            devices={microphones}
+            label="Microphone"
+            value={captureConfig.sources.microphoneId}
+            onChange={(microphoneId) =>
+              setCaptureConfig((current) => ({ ...current, sources: { ...current.sources, microphoneId } }))
+            }
+          />
+        </div>
+      </PanelSection>
+
+      <PanelSection
+        description="One-shot FFmpeg level check on the selected microphone."
+        icon={Waveform}
+        title="Microphone check"
+      >
+        <div className="flex items-center justify-between text-sm">
+          <span className="flex items-center gap-2 text-muted-foreground">
+            <SpeakerHigh className="size-4" weight="duotone" />
+            {selectedMicrophone ? selectedMicrophone.name : 'No microphone selected'}
+          </span>
+          <span className="font-semibold tabular-nums">{formatDb(audioMeter?.peakDb)}</span>
+        </div>
+        <div className="h-2.5 w-full overflow-hidden rounded-full bg-muted">
+          <div
+            className={cn('h-full rounded-full transition-all', meterTone)}
+            style={{ width: `${Math.min(100, Math.max(0, meterLevel))}%` }}
+          />
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {audioMeter?.message ?? 'Run a check to confirm the mic is live before recording.'}
+        </p>
+        <Button
+          className="self-start"
+          disabled={!canSampleAudio || audioMeterLoading}
+          size="sm"
+          variant="outline"
+          onClick={sampleAudioMeter}
+        >
+          {audioMeterLoading ? 'Checking…' : 'Check mic'}
+        </Button>
+      </PanelSection>
+
+      <PanelSection
+        description="All devices discovered by the backend and their permission state."
+        icon={Monitor}
+        title="Diagnostics"
+      >
+        {deviceList.devices.length === 0 ? (
+          <Empty className="border-0 py-6">
+            <EmptyTitle>No devices yet</EmptyTitle>
+            <EmptyDescription>Refresh to query the backend for capture devices.</EmptyDescription>
+          </Empty>
+        ) : (
+          <div className="flex flex-col gap-1.5">
+            {deviceList.devices.map((device) => (
+              <DiagnosticRow device={device} key={`${device.kind}-${device.id}`} />
+            ))}
+          </div>
+        )}
+      </PanelSection>
+    </div>
+  )
+}
+
+function DiagnosticRow({ device }: { device: Device }): ReactElement {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/30 px-3 py-2">
+      <div className="flex min-w-0 flex-col">
+        <span className="truncate text-sm font-medium">{device.name}</span>
+        <span className="text-xs text-muted-foreground capitalize">
+          {device.kind}
+          {device.detail ? ` · ${device.detail}` : ''}
+        </span>
+      </div>
+      <StatusBadge label="" tone={STATUS_TONE[device.status]} value={device.status} />
+    </div>
+  )
+}

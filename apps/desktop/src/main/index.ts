@@ -19,7 +19,7 @@ function createWindow(): void {
     minWidth: 960,
     minHeight: 660,
     title: 'Videogre',
-    backgroundColor: '#f4f1ea',
+    backgroundColor: '#ffffff',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,

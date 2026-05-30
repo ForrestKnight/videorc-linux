@@ -1,0 +1,44 @@
+import {
+  Broadcast,
+  FilmReel,
+  GearSix,
+  Layout,
+  Monitor,
+  Sparkle,
+  VideoCamera,
+  type Icon
+} from '@phosphor-icons/react'
+import { createContext, useContext } from 'react'
+
+export type WorkspaceTab = 'studio' | 'sources' | 'layout' | 'outputs' | 'library' | 'ai' | 'settings'
+
+export type WorkspaceTabMeta = {
+  id: WorkspaceTab
+  label: string
+  icon: Icon
+}
+
+export const WORKSPACE_TABS: WorkspaceTabMeta[] = [
+  { id: 'studio', label: 'Studio', icon: VideoCamera },
+  { id: 'sources', label: 'Sources', icon: Monitor },
+  { id: 'layout', label: 'Layout', icon: Layout },
+  { id: 'outputs', label: 'Outputs', icon: Broadcast },
+  { id: 'library', label: 'Library', icon: FilmReel },
+  { id: 'ai', label: 'AI', icon: Sparkle },
+  { id: 'settings', label: 'Settings', icon: GearSix }
+]
+
+type WorkspaceNavValue = {
+  active: WorkspaceTab
+  setActive: (tab: WorkspaceTab) => void
+}
+
+export const WorkspaceNavContext = createContext<WorkspaceNavValue | null>(null)
+
+export function useWorkspaceNav(): WorkspaceNavValue {
+  const value = useContext(WorkspaceNavContext)
+  if (!value) {
+    throw new Error('useWorkspaceNav must be used within a WorkspaceNavContext provider')
+  }
+  return value
+}
