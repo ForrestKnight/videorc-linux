@@ -29,6 +29,7 @@ const LIVE_PREVIEW_FPS: u32 = 12;
 const STOP_FINALIZE_TIMEOUT: Duration = Duration::from_secs(12);
 const STOP_TERM_DELAY: Duration = Duration::from_secs(3);
 const STOP_KILL_DELAY: Duration = Duration::from_secs(3);
+const SHUTDOWN_GRACE_DELAY: Duration = Duration::from_millis(1200);
 
 #[derive(Debug)]
 pub struct ActiveRecording {
@@ -211,7 +212,7 @@ pub async fn start_session(state: AppState, params: StartSessionParams) -> Resul
         },
     );
 
-    let mut child = Command::new(&ffmpeg_path)
+    let mut child = ffmpeg_command(&ffmpeg_path)
         .args(&args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -467,7 +468,7 @@ async fn run_preview_command_with_timeout(
     args: &[String],
     preview_timeout: Duration,
 ) -> Result<PreviewCommandOutput> {
-    let mut child = Command::new(ffmpeg_path)
+    let mut child = ffmpeg_command(ffmpeg_path)
         .args(args)
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -527,6 +528,10 @@ pub async fn start_live_preview(
         return Ok(status);
     }
 
+    if let Some(status) = reusable_idle_live_preview_status(&state, &params).await {
+        return Ok(status);
+    }
+
     start_idle_live_preview(state, params, PreviewLiveState::Connecting).await
 }
 
@@ -549,10 +554,55 @@ pub async fn live_preview_status(state: &AppState) -> PreviewLiveStatus {
     state.live_preview.lock().await.status.clone()
 }
 
+async fn reusable_idle_live_preview_status(
+    state: &AppState,
+    params: &PreviewLiveParams,
+) -> Option<PreviewLiveStatus> {
+    let guard = state.live_preview.lock().await;
+    if should_reuse_idle_live_preview(&guard, params) {
+        return Some(guard.status.clone());
+    }
+
+    None
+}
+
+fn should_reuse_idle_live_preview(preview: &LivePreviewState, params: &PreviewLiveParams) -> bool {
+    preview.idle_process.is_some()
+        && preview.desired_params.as_ref() == Some(params)
+        && matches!(
+            preview.status.state,
+            PreviewLiveState::Connecting | PreviewLiveState::Live | PreviewLiveState::Reconnecting
+        )
+}
+
 pub fn subscribe_live_preview_frames(
     state: &AppState,
 ) -> tokio::sync::broadcast::Receiver<Vec<u8>> {
     state.preview_frames.subscribe()
+}
+
+fn ffmpeg_command(ffmpeg_path: &str) -> Command {
+    let mut command = Command::new(ffmpeg_path);
+    command.kill_on_drop(true);
+    command
+}
+
+pub async fn shutdown_capture_processes(state: AppState) {
+    let idle_process = {
+        let mut guard = state.live_preview.lock().await;
+        guard.desired_params = None;
+        guard.status = unavailable_live_preview_status(Some(
+            "Backend is shutting down; live preview stopped.".to_string(),
+        ));
+        guard.idle_process.take()
+    };
+    stop_live_preview_process(idle_process).await;
+
+    let recording = {
+        let mut guard = state.recording.lock().await;
+        guard.take()
+    };
+    stop_recording_process_for_shutdown(recording).await;
 }
 
 async fn start_idle_live_preview(
@@ -581,13 +631,13 @@ async fn start_idle_live_preview(
     capture.microphone_index = None;
     let args = live_preview_ffmpeg_args(&capture, &session_params)?;
 
-    let mut child = match Command::new(&ffmpeg_path)
+    let mut command = ffmpeg_command(&ffmpeg_path);
+    command
         .args(&args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
+        .stderr(Stdio::piped());
+    let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
             let status = unavailable_live_preview_status(Some(format!(
@@ -825,8 +875,41 @@ async fn stop_live_preview_process(process: Option<ActiveLivePreview>) {
     }
 
     if process.pid != 0 {
-        sleep(Duration::from_millis(250)).await;
+        if wait_for_process_exit(process.pid, Duration::from_secs(2)).await {
+            return;
+        }
         let _ = send_process_signal(process.pid, "TERM").await;
+        if wait_for_process_exit(process.pid, Duration::from_secs(2)).await {
+            return;
+        }
+        let _ = send_process_signal(process.pid, "KILL").await;
+        let _ = wait_for_process_exit(process.pid, Duration::from_secs(1)).await;
+    }
+}
+
+async fn stop_recording_process_for_shutdown(recording: Option<ActiveRecording>) {
+    let Some(mut recording) = recording else {
+        return;
+    };
+
+    if let Some(mut stdin) = recording.stdin.take() {
+        let _ = stdin.write_all(b"q\n").await;
+        let _ = stdin.shutdown().await;
+    }
+
+    if recording.pid == 0 {
+        return;
+    }
+
+    sleep(SHUTDOWN_GRACE_DELAY).await;
+    if !process_is_running(recording.pid).await {
+        return;
+    }
+
+    let _ = send_process_signal(recording.pid, "TERM").await;
+    sleep(SHUTDOWN_GRACE_DELAY).await;
+    if process_is_running(recording.pid).await {
+        let _ = send_process_signal(recording.pid, "KILL").await;
     }
 }
 
@@ -947,6 +1030,25 @@ async fn send_process_signal(pid: u32, signal: &str) -> Result<()> {
         .await
         .with_context(|| format!("Could not send SIG{signal} to FFmpeg"))?;
     Ok(())
+}
+
+async fn process_is_running(pid: u32) -> bool {
+    Command::new("kill")
+        .arg("-0")
+        .arg(pid.to_string())
+        .status()
+        .await
+        .is_ok_and(|status| status.success())
+}
+
+async fn wait_for_process_exit(pid: u32, wait: Duration) -> bool {
+    timeout(wait, async {
+        while process_is_running(pid).await {
+            sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .is_ok()
 }
 
 async fn monitor_session(
@@ -1764,7 +1866,7 @@ mod tests {
     use super::*;
     use crate::protocol::{
         CameraCorner, CameraFit, CameraShape, CameraSize, LayoutSettings, OutputSettings,
-        RtmpSettings, SourceSelection,
+        PreviewLiveParams, RtmpSettings, SourceSelection,
     };
 
     fn base_params(record_enabled: bool, stream_enabled: bool) -> StartSessionParams {
@@ -1824,6 +1926,53 @@ mod tests {
         assert_eq!(state.status.state, PreviewLiveState::Unavailable);
         assert_eq!(state.status.source, PreviewLiveSource::Unavailable);
         assert!(state.status.url.is_none());
+    }
+
+    #[test]
+    fn same_connecting_idle_preview_is_reused() {
+        let params = PreviewLiveParams {
+            sources: base_params(true, false).sources,
+            layout: base_params(true, false).layout,
+            ffmpeg_path: None,
+            video: Some(default_video_settings()),
+        };
+        let state = LivePreviewState {
+            status: PreviewLiveStatus {
+                state: PreviewLiveState::Connecting,
+                source: PreviewLiveSource::IdlePreview,
+                url: Some("http://127.0.0.1:1234/preview/live.mjpeg?token=test".to_string()),
+                message: Some("Starting live preview.".to_string()),
+            },
+            desired_params: Some(params.clone()),
+            idle_process: Some(ActiveLivePreview {
+                pid: 123,
+                stdin: None,
+                first_frame_received: false,
+            }),
+        };
+
+        assert!(should_reuse_idle_live_preview(&state, &params));
+    }
+
+    #[test]
+    fn unavailable_idle_preview_is_not_reused() {
+        let params = PreviewLiveParams {
+            sources: base_params(true, false).sources,
+            layout: base_params(true, false).layout,
+            ffmpeg_path: None,
+            video: Some(default_video_settings()),
+        };
+        let state = LivePreviewState {
+            status: unavailable_live_preview_status(Some("No frames.".to_string())),
+            desired_params: Some(params.clone()),
+            idle_process: Some(ActiveLivePreview {
+                pid: 123,
+                stdin: None,
+                first_frame_received: false,
+            }),
+        };
+
+        assert!(!should_reuse_idle_live_preview(&state, &params));
     }
 
     #[tokio::test]

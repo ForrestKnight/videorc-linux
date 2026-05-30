@@ -152,7 +152,7 @@ pub enum AudioTrackSource {
     TestTone,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SourceSelection {
     pub screen_id: Option<String>,
@@ -163,7 +163,7 @@ pub struct SourceSelection {
     pub test_pattern: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct LayoutSettings {
     pub camera_corner: CameraCorner,
@@ -182,7 +182,7 @@ pub struct LayoutSettings {
     pub camera_offset_y: i32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum CameraCorner {
     TopLeft,
@@ -191,7 +191,7 @@ pub enum CameraCorner {
     BottomRight,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum CameraSize {
     Small,
@@ -199,7 +199,7 @@ pub enum CameraSize {
     Large,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum CameraShape {
     Rectangle,
@@ -232,7 +232,7 @@ pub struct OutputSettings {
     pub rtmp: RtmpSettings,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct VideoSettings {
     pub preset: VideoPreset,
@@ -303,7 +303,7 @@ pub struct PreviewSnapshot {
     pub created_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewLiveParams {
     pub sources: SourceSelection,

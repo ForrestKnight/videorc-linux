@@ -27,8 +27,8 @@ use protocol::{
 };
 use recording::{
     create_preview_snapshot, idle_status, live_preview_status, preview_file_path, remux_session,
-    start_live_preview, start_session, stop_live_preview, stop_recording,
-    subscribe_live_preview_frames,
+    shutdown_capture_processes, start_live_preview, start_session, stop_live_preview,
+    stop_recording, subscribe_live_preview_frames,
 };
 use serde::Deserialize;
 use tokio::net::TcpListener;
@@ -73,8 +73,49 @@ async fn main() -> Result<()> {
     std::io::stdout().flush()?;
 
     state.emit_log("info", "Videorc backend ready.");
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal(state.clone()))
+        .await?;
     Ok(())
+}
+
+async fn shutdown_signal(state: AppState) {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+
+        let mut terminate = signal(SignalKind::terminate()).ok();
+        tokio::select! {
+            result = tokio::signal::ctrl_c() => {
+                if let Err(error) = result {
+                    state.emit_log("warn", format!("Could not listen for Ctrl-C shutdown: {error}"));
+                }
+            }
+            _ = async {
+                if let Some(signal) = terminate.as_mut() {
+                    signal.recv().await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            } => {}
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        if let Err(error) = tokio::signal::ctrl_c().await {
+            state.emit_log(
+                "warn",
+                format!("Could not listen for shutdown signal: {error}"),
+            );
+        }
+    }
+
+    state.emit_log(
+        "info",
+        "Backend shutdown requested; stopping capture processes.",
+    );
+    shutdown_capture_processes(state).await;
 }
 
 #[derive(Debug, Deserialize)]
