@@ -1,0 +1,22 @@
+{
+  "name": "videogre",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI-native recording and livestreaming studio technical spike.",
+  "packageManager": "pnpm@11.0.9",
+  "scripts": {
+    "dev": "pnpm --filter @videogre/desktop dev",
+    "build": "pnpm --filter @videogre/desktop build",
+    "typecheck": "pnpm --filter @videogre/desktop typecheck",
+    "backend:dev": "cargo run -p videogre-backend",
+    "backend:test": "cargo test",
+    "backend:fmt": "cargo fmt --check",
+    "backend:clippy": "cargo clippy -- -D warnings"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "esbuild"
+    ]
+  }
+}
