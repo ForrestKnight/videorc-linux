@@ -1,8 +1,20 @@
-import { Brain, DownloadSimple, Lightning, ShieldCheck, Sparkle } from '@phosphor-icons/react'
+import {
+  Brain,
+  Crosshair,
+  DownloadSimple,
+  Lightning,
+  Scissors,
+  ShieldCheck,
+  Sparkle,
+  Warning,
+  Waveform,
+  type Icon
+} from '@phosphor-icons/react'
 import { useEffect, type ReactElement, type ReactNode } from 'react'
 
 import { PanelSection } from '@/components/panel-section'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Collapsible,
@@ -23,7 +35,15 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { useStudio } from '@/hooks/use-studio'
 import type { SessionSummary } from '@/lib/backend'
-import { artifactChapters, artifactField, artifactText, dayLabel, latestArtifact } from '@/lib/format'
+import {
+  artifactChapters,
+  artifactField,
+  artifactObjects,
+  artifactText,
+  dayLabel,
+  latestArtifact,
+  objectField
+} from '@/lib/format'
 
 export function AiTab({
   selectedSessionId,
@@ -94,14 +114,16 @@ export function AiTab({
           <Field orientation="horizontal">
             <FieldContent>
               <FieldLabel htmlFor="ai-consent">Allow cloud upload</FieldLabel>
-              <FieldDescription>Upload extracted audio and transcript for summaries and chapters.</FieldDescription>
+              <FieldDescription>
+                Upload extracted audio and transcript for summaries, chapters, highlights, and suggestions.
+              </FieldDescription>
             </FieldContent>
             <Switch checked={aiConsent} id="ai-consent" onCheckedChange={setAiConsent} />
           </Field>
         </PanelSection>
       </div>
 
-      <PanelSection icon={Brain} title="Publish pack">
+      <PanelSection icon={Brain} title="Publish & intelligence">
         {selected ? (
           <ArtifactView session={selected} />
         ) : (
@@ -145,7 +167,17 @@ function ArtifactView({ session }: { session: SessionSummary }): ReactElement {
   const transcript = latestArtifact(session, 'transcript')
   const summary = latestArtifact(session, 'summary')
   const chapters = latestArtifact(session, 'chapters')
+  const highlights = latestArtifact(session, 'highlights')
+  const smartZoom = latestArtifact(session, 'smart-zoom')
+  const noiseCleanup = latestArtifact(session, 'noise-cleanup')
+  const silenceRemoval = latestArtifact(session, 'silence-removal')
+  const healthAssistant = latestArtifact(session, 'health-assistant')
   const chapterItems = chapters ? artifactChapters(chapters) : []
+  const highlightItems = artifactObjects(highlights, 'highlights')
+  const smartZoomItems = artifactObjects(smartZoom, 'suggestions')
+  const noiseCleanupItems = artifactObjects(noiseCleanup, 'suggestions')
+  const silenceRemovalItems = artifactObjects(silenceRemoval, 'suggestions')
+  const healthItems = artifactObjects(healthAssistant, 'explanations')
   const title = titleDescription ? artifactField(titleDescription, 'title') : ''
   const description = titleDescription ? artifactField(titleDescription, 'description') : ''
 
@@ -153,7 +185,7 @@ function ArtifactView({ session }: { session: SessionSummary }): ReactElement {
     return (
       <Empty className="border-0 py-6">
         <EmptyTitle>No artifacts yet</EmptyTitle>
-        <EmptyDescription>Run the AI workflow to generate transcript, summary, and chapters.</EmptyDescription>
+        <EmptyDescription>Run the AI workflow to generate transcript, summary, chapters, and creator intelligence.</EmptyDescription>
       </Empty>
     )
   }
@@ -184,6 +216,77 @@ function ArtifactView({ session }: { session: SessionSummary }): ReactElement {
             </ol>
           </ArtifactSection>
         ) : null}
+        {highlightItems.length ? (
+          <ArtifactSection defaultOpen title="Highlights">
+            <InsightList
+              badgeField="timestamp"
+              details={[
+                ['reason', 'Reason'],
+                ['suggestedUse', 'Use']
+              ]}
+              icon={Lightning}
+              items={highlightItems}
+              primaryField="title"
+            />
+          </ArtifactSection>
+        ) : null}
+        {smartZoomItems.length ? (
+          <ArtifactSection title="Smart zoom prototype">
+            <InsightList
+              badgeField="timestamp"
+              details={[
+                ['subject', 'Subject'],
+                ['reason', 'Why']
+              ]}
+              icon={Crosshair}
+              items={smartZoomItems}
+              primaryField="action"
+            />
+          </ArtifactSection>
+        ) : null}
+        {noiseCleanupItems.length || silenceRemovalItems.length ? (
+          <ArtifactSection title="Cleanup suggestions">
+            <div className="flex flex-col gap-3">
+              {noiseCleanupItems.length ? (
+                <InsightList
+                  details={[
+                    ['suggestion', 'Suggestion'],
+                    ['confidence', 'Confidence']
+                  ]}
+                  icon={Waveform}
+                  items={noiseCleanupItems}
+                  primaryField="issue"
+                />
+              ) : null}
+              {silenceRemovalItems.length ? (
+                <InsightList
+                  badgeField="timestamp"
+                  details={[
+                    ['reason', 'Reason'],
+                    ['editSuggestion', 'Edit']
+                  ]}
+                  icon={Scissors}
+                  items={silenceRemovalItems}
+                  primaryField="reason"
+                />
+              ) : null}
+            </div>
+          </ArtifactSection>
+        ) : null}
+        {healthItems.length ? (
+          <ArtifactSection title="Health assistant">
+            <InsightList
+              badgeField="level"
+              details={[
+                ['explanation', 'Explanation'],
+                ['action', 'Action']
+              ]}
+              icon={Warning}
+              items={healthItems}
+              primaryField="issue"
+            />
+          </ArtifactSection>
+        ) : null}
         {transcript ? (
           <ArtifactSection title="Transcript">
             <p className="text-sm whitespace-pre-line text-muted-foreground">{artifactText(transcript)}</p>
@@ -191,6 +294,49 @@ function ArtifactView({ session }: { session: SessionSummary }): ReactElement {
         ) : null}
       </div>
     </ScrollArea>
+  )
+}
+
+function InsightList({
+  items,
+  icon: LeadingIcon,
+  primaryField,
+  badgeField,
+  details
+}: {
+  items: Record<string, unknown>[]
+  icon: Icon
+  primaryField: string
+  badgeField?: string
+  details: Array<[string, string]>
+}): ReactElement {
+  return (
+    <ol className="flex flex-col gap-2">
+      {items.map((item, index) => {
+        const title = objectField(item, primaryField) || 'Suggestion'
+        const badge = badgeField ? objectField(item, badgeField) : ''
+
+        return (
+          <li className="flex gap-3 rounded-lg border bg-muted/30 px-3 py-2" key={`${title}-${index}`}>
+            <LeadingIcon className="mt-0.5 shrink-0 text-muted-foreground" weight="duotone" />
+            <div className="flex min-w-0 flex-1 flex-col gap-1">
+              <div className="flex items-start justify-between gap-2">
+                <span className="text-sm font-medium">{title}</span>
+                {badge ? <Badge variant="outline">{badge}</Badge> : null}
+              </div>
+              {details.map(([field, label]) => {
+                const value = objectField(item, field)
+                return value ? (
+                  <p className="text-xs text-muted-foreground" key={field}>
+                    <span className="font-medium text-foreground">{label}:</span> {value}
+                  </p>
+                ) : null
+              })}
+            </div>
+          </li>
+        )
+      })}
+    </ol>
   )
 }
 

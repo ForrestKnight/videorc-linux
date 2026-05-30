@@ -218,3 +218,25 @@ export function artifactText(artifact: AiArtifact): string {
 
   return artifact.status
 }
+
+export function artifactObjects(artifact: AiArtifact | undefined, field: string): Record<string, unknown>[] {
+  if (!artifact || typeof artifact.content !== 'object' || artifact.content === null) {
+    return []
+  }
+
+  const value = (artifact.content as Record<string, unknown>)[field]
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return value.filter(isObjectRecord)
+}
+
+export function objectField(item: Record<string, unknown>, field: string): string {
+  const value = item[field]
+  return typeof value === 'string' ? value : ''
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}

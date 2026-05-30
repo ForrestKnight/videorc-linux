@@ -63,6 +63,7 @@ The technical spike, capture foundation, reliable recording preview path, first 
 - deterministic health events surfaced in the UI
 - local session library with MKV to MP4 remux
 - post-recording AI artifacts attached to local sessions
+- advanced creator intelligence for highlights, smart zoom notes, noise cleanup, silence-removal suggestions, and health explanations
 - expandable publish-pack viewer and Markdown export
 - setup checklist with backend, FFmpeg, source, output, stream, and mic readiness
 - first-run onboarding for workflow choice, readiness checks, privacy defaults, and tab handoff
@@ -70,7 +71,7 @@ The technical spike, capture foundation, reliable recording preview path, first 
 - camera framing controls for fit/fill crop, mirror, zoom, and pan
 - recording timer and first hotkeys for session toggle and preview refresh
 
-Next planned slice: advanced AI polish.
+Next planned slice: packaging and distribution planning.
 
 ## AI Workflow
 
@@ -79,7 +80,7 @@ The AI workflow is explicit-consent and post-recording only:
 - Audio is extracted locally from the session recording into app support storage.
 - No upload happens unless the user enables cloud AI consent in the UI and runs AI for a session.
 - Cloud transcription uses `OPENAI_API_KEY` when present.
-- Generated transcript, title/description, summary, and chapters are stored as local SQLite artifacts.
+- Generated transcript, title/description, summary, chapters, highlights, smart zoom notes, cleanup suggestions, and health explanations are stored as local SQLite artifacts.
 - Publish packs can be exported as local Markdown files beside the session's AI artifacts.
 - Single-upload transcription currently fails fast when the extracted audio is over 25 MB; chunking is a later slice.
 

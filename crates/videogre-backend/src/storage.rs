@@ -146,6 +146,11 @@ impl Database {
         self.ai_artifacts_for_session_locked(&conn, session_id)
     }
 
+    pub fn list_health_events(&self, session_id: &str) -> Result<Vec<HealthEvent>> {
+        let conn = self.lock()?;
+        self.health_events_for_session_locked(&conn, session_id)
+    }
+
     pub fn add_health_event(
         &self,
         session_id: Option<&str>,

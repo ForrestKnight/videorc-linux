@@ -461,6 +461,11 @@ pub enum AiArtifactKind {
     TitleDescription,
     Summary,
     Chapters,
+    Highlights,
+    SmartZoom,
+    NoiseCleanup,
+    SilenceRemoval,
+    HealthAssistant,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

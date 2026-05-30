@@ -11,7 +11,7 @@ use tokio::time::{Duration, timeout};
 
 use crate::protocol::{
     AiArtifact, AiArtifactKind, AiArtifactStatus, AiWorkflowResult, ExportPublishPackParams,
-    ExportPublishPackResult, HealthLevel, RunAiWorkflowParams,
+    ExportPublishPackResult, HealthEvent, HealthLevel, RunAiWorkflowParams,
 };
 use crate::recording::emit_health_event;
 use crate::state::AppState;
@@ -243,6 +243,37 @@ pub async fn run_ai_workflow(
         None,
     )?);
 
+    let health_events = state.database.list_health_events(&params.session_id)?;
+    match generate_creator_intelligence(&client, &api_key, &transcript, &health_events).await {
+        Ok(intelligence) => {
+            artifacts.extend(save_creator_intelligence_artifacts(
+                &state,
+                &params.session_id,
+                intelligence,
+            )?);
+        }
+        Err(error) => {
+            artifacts.push(state.database.save_ai_artifact(
+                &params.session_id,
+                AiArtifactKind::HealthAssistant,
+                AiArtifactStatus::Failed,
+                json!({
+                    "message": format!("Advanced creator intelligence failed: {error}"),
+                    "provider": "openai",
+                    "model": text_model(),
+                }),
+                None,
+            )?);
+            emit_health_event(
+                &state,
+                Some(&params.session_id),
+                HealthLevel::Warn,
+                "ai-creator-intelligence-failed",
+                "Publish pack was saved, but advanced creator intelligence failed.",
+            )?;
+        }
+    }
+
     emit_ai_artifacts_changed(&state, &params.session_id)?;
 
     Ok(AiWorkflowResult {
@@ -402,6 +433,60 @@ async fn summarize_and_chapter(
     parse_publish_pack(&output_text)
 }
 
+async fn generate_creator_intelligence(
+    client: &reqwest::Client,
+    api_key: &str,
+    transcript: &str,
+    health_events: &[HealthEvent],
+) -> Result<CreatorIntelligence> {
+    let health_context = if health_events.is_empty() {
+        "No health events were recorded for this session.".to_string()
+    } else {
+        health_events
+            .iter()
+            .map(|event| {
+                format!(
+                    "- {:?} [{}] {} ({})",
+                    event.level, event.code, event.message, event.created_at
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let prompt = format!(
+        "You are Videogre's creator intelligence assistant for gaming and coding/tutorial recordings.\n\
+         Return strict JSON with keys highlights, smartZoom, noiseCleanup, silenceRemoval, and healthAssistant.\n\
+         highlights: array of objects with timestamp, title, reason, suggestedUse.\n\
+         smartZoom: array of objects with timestamp, action, subject, reason.\n\
+         noiseCleanup: array of objects with issue, suggestion, confidence.\n\
+         silenceRemoval: array of objects with timestamp, reason, editSuggestion.\n\
+         healthAssistant: array of objects with level, issue, explanation, action.\n\
+         Prefer concrete creator-editing advice. If signal is weak, return short conservative arrays rather than guessing.\n\n\
+         Health events:\n{health_context}\n\n\
+         Transcript:\n{transcript}"
+    );
+    let response = client
+        .post(OPENAI_RESPONSES_URL)
+        .bearer_auth(api_key)
+        .json(&json!({
+            "model": text_model(),
+            "input": prompt,
+        }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json::<Value>()
+        .await?;
+    let output_text = response
+        .get("output_text")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| response_output_text(&response))
+        .unwrap_or_default();
+
+    parse_creator_intelligence(&output_text)
+}
+
 fn parse_publish_pack(output_text: &str) -> Result<PublishPack> {
     if let Ok(pack) = serde_json::from_str::<PublishPack>(output_text) {
         return Ok(pack);
@@ -414,6 +499,85 @@ fn parse_publish_pack(output_text: &str) -> Result<PublishPack> {
         bail!("AI response did not include complete JSON");
     };
     serde_json::from_str(&output_text[start..=end]).context("Could not parse AI publish pack JSON")
+}
+
+fn parse_creator_intelligence(output_text: &str) -> Result<CreatorIntelligence> {
+    if let Ok(intelligence) = serde_json::from_str::<CreatorIntelligence>(output_text) {
+        return Ok(intelligence);
+    }
+
+    let Some(start) = output_text.find('{') else {
+        bail!("AI response did not include JSON");
+    };
+    let Some(end) = output_text.rfind('}') else {
+        bail!("AI response did not include complete JSON");
+    };
+    serde_json::from_str(&output_text[start..=end])
+        .context("Could not parse AI creator intelligence JSON")
+}
+
+fn save_creator_intelligence_artifacts(
+    state: &AppState,
+    session_id: &str,
+    intelligence: CreatorIntelligence,
+) -> Result<Vec<AiArtifact>> {
+    Ok(vec![
+        state.database.save_ai_artifact(
+            session_id,
+            AiArtifactKind::Highlights,
+            AiArtifactStatus::Ready,
+            json!({
+                "highlights": intelligence.highlights,
+                "provider": "openai",
+                "model": text_model(),
+            }),
+            None,
+        )?,
+        state.database.save_ai_artifact(
+            session_id,
+            AiArtifactKind::SmartZoom,
+            AiArtifactStatus::Ready,
+            json!({
+                "suggestions": intelligence.smart_zoom,
+                "provider": "openai",
+                "model": text_model(),
+            }),
+            None,
+        )?,
+        state.database.save_ai_artifact(
+            session_id,
+            AiArtifactKind::NoiseCleanup,
+            AiArtifactStatus::Ready,
+            json!({
+                "suggestions": intelligence.noise_cleanup,
+                "provider": "openai",
+                "model": text_model(),
+            }),
+            None,
+        )?,
+        state.database.save_ai_artifact(
+            session_id,
+            AiArtifactKind::SilenceRemoval,
+            AiArtifactStatus::Ready,
+            json!({
+                "suggestions": intelligence.silence_removal,
+                "provider": "openai",
+                "model": text_model(),
+            }),
+            None,
+        )?,
+        state.database.save_ai_artifact(
+            session_id,
+            AiArtifactKind::HealthAssistant,
+            AiArtifactStatus::Ready,
+            json!({
+                "explanations": intelligence.health_assistant,
+                "provider": "openai",
+                "model": text_model(),
+            }),
+            None,
+        )?,
+    ])
 }
 
 fn response_output_text(value: &Value) -> Option<String> {
@@ -433,6 +597,11 @@ fn render_publish_pack(artifacts: &[AiArtifact]) -> String {
     let transcript = latest_ready_artifact(artifacts, AiArtifactKind::Transcript);
     let summary = latest_ready_artifact(artifacts, AiArtifactKind::Summary);
     let chapters = latest_ready_artifact(artifacts, AiArtifactKind::Chapters);
+    let highlights = latest_ready_artifact(artifacts, AiArtifactKind::Highlights);
+    let smart_zoom = latest_ready_artifact(artifacts, AiArtifactKind::SmartZoom);
+    let noise_cleanup = latest_ready_artifact(artifacts, AiArtifactKind::NoiseCleanup);
+    let silence_removal = latest_ready_artifact(artifacts, AiArtifactKind::SilenceRemoval);
+    let health_assistant = latest_ready_artifact(artifacts, AiArtifactKind::HealthAssistant);
 
     let title = title_description
         .and_then(|artifact| content_string(artifact, "title"))
@@ -470,6 +639,65 @@ fn render_publish_pack(artifacts: &[AiArtifact]) -> String {
             markdown.push('\n');
         }
     }
+    if let Some(highlights) = highlights {
+        let lines = object_lines(
+            highlights,
+            "highlights",
+            &["timestamp", "title", "reason", "suggestedUse"],
+        );
+        if !lines.is_empty() {
+            markdown.push_str("## Highlights\n\n");
+            push_markdown_list(&mut markdown, lines);
+        }
+    }
+    if let Some(smart_zoom) = smart_zoom {
+        let lines = object_lines(
+            smart_zoom,
+            "suggestions",
+            &["timestamp", "action", "subject", "reason"],
+        );
+        if !lines.is_empty() {
+            markdown.push_str("## Smart Zoom Notes\n\n");
+            push_markdown_list(&mut markdown, lines);
+        }
+    }
+    let cleanup_lines = noise_cleanup
+        .map(|artifact| {
+            object_lines(
+                artifact,
+                "suggestions",
+                &["issue", "suggestion", "confidence"],
+            )
+        })
+        .unwrap_or_default()
+        .into_iter()
+        .chain(
+            silence_removal
+                .map(|artifact| {
+                    object_lines(
+                        artifact,
+                        "suggestions",
+                        &["timestamp", "reason", "editSuggestion"],
+                    )
+                })
+                .unwrap_or_default(),
+        )
+        .collect::<Vec<_>>();
+    if !cleanup_lines.is_empty() {
+        markdown.push_str("## Cleanup Suggestions\n\n");
+        push_markdown_list(&mut markdown, cleanup_lines);
+    }
+    if let Some(health_assistant) = health_assistant {
+        let lines = object_lines(
+            health_assistant,
+            "explanations",
+            &["level", "issue", "explanation", "action"],
+        );
+        if !lines.is_empty() {
+            markdown.push_str("## Health Assistant\n\n");
+            push_markdown_list(&mut markdown, lines);
+        }
+    }
     if !transcript_text.is_empty() {
         markdown.push_str("## Transcript\n\n");
         markdown.push_str(&transcript_text);
@@ -493,6 +721,11 @@ fn is_publish_pack_kind(kind: &AiArtifactKind) -> bool {
             | AiArtifactKind::TitleDescription
             | AiArtifactKind::Summary
             | AiArtifactKind::Chapters
+            | AiArtifactKind::Highlights
+            | AiArtifactKind::SmartZoom
+            | AiArtifactKind::NoiseCleanup
+            | AiArtifactKind::SilenceRemoval
+            | AiArtifactKind::HealthAssistant
     )
 }
 
@@ -520,6 +753,37 @@ fn chapter_lines(artifact: &AiArtifact) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn object_lines(artifact: &AiArtifact, key: &str, fields: &[&str]) -> Vec<String> {
+    artifact
+        .content
+        .get(key)
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let object = item.as_object()?;
+                    let values = fields
+                        .iter()
+                        .filter_map(|field| object.get(*field).and_then(Value::as_str))
+                        .filter(|value| !value.trim().is_empty())
+                        .collect::<Vec<_>>();
+                    (!values.is_empty()).then(|| values.join(" - "))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn push_markdown_list(markdown: &mut String, lines: Vec<String>) {
+    for line in lines {
+        markdown.push_str("- ");
+        markdown.push_str(&line);
+        markdown.push('\n');
+    }
+    markdown.push('\n');
 }
 
 fn transcription_model() -> String {
@@ -557,6 +821,82 @@ struct Chapter {
     title: String,
 }
 
+#[derive(Debug, Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CreatorIntelligence {
+    #[serde(default)]
+    highlights: Vec<HighlightSuggestion>,
+    #[serde(default)]
+    smart_zoom: Vec<SmartZoomSuggestion>,
+    #[serde(default)]
+    noise_cleanup: Vec<NoiseCleanupSuggestion>,
+    #[serde(default)]
+    silence_removal: Vec<SilenceRemovalSuggestion>,
+    #[serde(default)]
+    health_assistant: Vec<HealthAssistantExplanation>,
+}
+
+#[derive(Debug, Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HighlightSuggestion {
+    #[serde(default)]
+    timestamp: String,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    reason: String,
+    #[serde(default)]
+    suggested_use: String,
+}
+
+#[derive(Debug, Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SmartZoomSuggestion {
+    #[serde(default)]
+    timestamp: String,
+    #[serde(default)]
+    action: String,
+    #[serde(default)]
+    subject: String,
+    #[serde(default)]
+    reason: String,
+}
+
+#[derive(Debug, Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NoiseCleanupSuggestion {
+    #[serde(default)]
+    issue: String,
+    #[serde(default)]
+    suggestion: String,
+    #[serde(default)]
+    confidence: String,
+}
+
+#[derive(Debug, Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SilenceRemovalSuggestion {
+    #[serde(default)]
+    timestamp: String,
+    #[serde(default)]
+    reason: String,
+    #[serde(default)]
+    edit_suggestion: String,
+}
+
+#[derive(Debug, Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HealthAssistantExplanation {
+    #[serde(default)]
+    level: String,
+    #[serde(default)]
+    issue: String,
+    #[serde(default)]
+    explanation: String,
+    #[serde(default)]
+    action: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -574,6 +914,25 @@ mod tests {
         assert_eq!(pack.description, "A quick walkthrough.");
         assert_eq!(pack.summary, "A short session.");
         assert_eq!(pack.chapters[0].title, "Intro");
+    }
+
+    #[test]
+    fn parses_creator_intelligence_from_model_output() {
+        let intelligence = parse_creator_intelligence(
+            r#"```json
+{"highlights":[{"timestamp":"00:12","title":"Fix the auth bug","reason":"Clear aha moment","suggestedUse":"Short clip"}],"smartZoom":[{"timestamp":"00:18","action":"Zoom editor","subject":"diff hunk","reason":"Small code text"}],"noiseCleanup":[{"issue":"Keyboard noise","suggestion":"Apply light gate","confidence":"medium"}],"silenceRemoval":[{"timestamp":"01:02","reason":"Long pause","editSuggestion":"Trim 4 seconds"}],"healthAssistant":[{"level":"warn","issue":"Dropped frames","explanation":"Encoder fell behind","action":"Lower bitrate"}]}
+```"#,
+        )
+        .unwrap();
+
+        assert_eq!(intelligence.highlights[0].title, "Fix the auth bug");
+        assert_eq!(intelligence.smart_zoom[0].subject, "diff hunk");
+        assert_eq!(intelligence.noise_cleanup[0].issue, "Keyboard noise");
+        assert_eq!(
+            intelligence.silence_removal[0].edit_suggestion,
+            "Trim 4 seconds"
+        );
+        assert_eq!(intelligence.health_assistant[0].action, "Lower bitrate");
     }
 
     #[test]
@@ -602,6 +961,28 @@ mod tests {
                 file_path: None,
                 created_at: "2026-05-30T00:00:01Z".to_string(),
             },
+            AiArtifact {
+                id: "3".to_string(),
+                session_id: "session".to_string(),
+                kind: AiArtifactKind::Highlights,
+                status: AiArtifactStatus::Ready,
+                content: json!({
+                    "highlights": [{"timestamp": "00:12", "title": "Aha moment", "reason": "Useful clip", "suggestedUse": "Short"}],
+                }),
+                file_path: None,
+                created_at: "2026-05-30T00:00:02Z".to_string(),
+            },
+            AiArtifact {
+                id: "4".to_string(),
+                session_id: "session".to_string(),
+                kind: AiArtifactKind::HealthAssistant,
+                status: AiArtifactStatus::Ready,
+                content: json!({
+                    "explanations": [{"level": "warn", "issue": "Dropped frames", "explanation": "Encoder overload", "action": "Lower bitrate"}],
+                }),
+                file_path: None,
+                created_at: "2026-05-30T00:00:03Z".to_string(),
+            },
         ];
 
         let markdown = render_publish_pack(&artifacts);
@@ -609,5 +990,7 @@ mod tests {
         assert!(markdown.contains("# Tutorial Session"));
         assert!(markdown.contains("## Description"));
         assert!(markdown.contains("- 00:00 Intro"));
+        assert!(markdown.contains("## Highlights"));
+        assert!(markdown.contains("## Health Assistant"));
     }
 }

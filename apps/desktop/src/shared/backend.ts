@@ -228,7 +228,17 @@ export interface ExportPublishPackResult {
   markdownPath: string
 }
 
-export type AiArtifactKind = 'audio-extract' | 'transcript' | 'title-description' | 'summary' | 'chapters'
+export type AiArtifactKind =
+  | 'audio-extract'
+  | 'transcript'
+  | 'title-description'
+  | 'summary'
+  | 'chapters'
+  | 'highlights'
+  | 'smart-zoom'
+  | 'noise-cleanup'
+  | 'silence-removal'
+  | 'health-assistant'
 export type AiArtifactStatus = 'ready' | 'pending-consent' | 'failed'
 
 export interface AiArtifact {
