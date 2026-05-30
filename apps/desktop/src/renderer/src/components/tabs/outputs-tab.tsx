@@ -40,7 +40,7 @@ export function OutputsTab(): ReactElement {
             onCheckedChange={(checked) => setCaptureConfig((current) => ({ ...current, recordEnabled: checked }))}
           />
         }
-        description="Local recording is the primary output. Files are written as MKV, then optionally remuxed to MP4."
+        description="Local recording is the primary output. MKV keeps the mic as its own audio track when available, then can remux to MP4."
         icon={FileVideo}
         title="Recording"
       >

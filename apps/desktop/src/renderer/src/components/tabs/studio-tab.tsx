@@ -51,6 +51,8 @@ export function StudioTab(): ReactElement {
 
   const active = recording.state === 'recording' || recording.state === 'streaming'
   const banner = studioBlocker(studio)
+  const audioSummary =
+    recording.audioTracks?.map((track) => track.label).join(' + ') ?? (selectedMicrophone ? 'Microphone' : 'None')
 
   return (
     <div className="flex flex-col gap-4">
@@ -159,7 +161,7 @@ export function StudioTab(): ReactElement {
             <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
               <SummaryRow label="Screen" value={selectedCaptureDevice?.name ?? 'None'} />
               <SummaryRow label="Camera" value={selectedCamera?.name ?? 'Off'} />
-              <SummaryRow label="Mic" value={selectedMicrophone?.name ?? 'None'} />
+              <SummaryRow label="Audio" value={audioSummary} />
               <SummaryRow
                 label="Output"
                 value={`${captureConfig.video.width}×${captureConfig.video.height} · ${captureConfig.video.fps}fps`}

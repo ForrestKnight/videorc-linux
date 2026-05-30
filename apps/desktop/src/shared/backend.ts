@@ -43,7 +43,16 @@ export interface RecordingStatus {
   outputPath?: string
   streamUrl?: string
   startedAt?: string
+  audioTracks?: AudioTrack[]
   message?: string
+}
+
+export type AudioTrackSource = 'microphone' | 'test-tone'
+
+export interface AudioTrack {
+  id: string
+  label: string
+  source: AudioTrackSource
 }
 
 export interface BackendLogEvent {

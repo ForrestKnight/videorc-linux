@@ -13,9 +13,9 @@ use uuid::Uuid;
 
 use crate::devices::find_avfoundation_screen_index;
 use crate::protocol::{
-    CameraCorner, CameraFit, CameraShape, CameraSize, HealthLevel, PreviewSnapshot,
-    PreviewSnapshotParams, RecordingState, RecordingStatus, RemuxSessionParams, RtmpPreset,
-    RtmpSettings, StartSessionParams, StreamHealth, VideoPreset, VideoSettings,
+    AudioTrack, AudioTrackSource, CameraCorner, CameraFit, CameraShape, CameraSize, HealthLevel,
+    PreviewSnapshot, PreviewSnapshotParams, RecordingState, RecordingStatus, RemuxSessionParams,
+    RtmpPreset, RtmpSettings, StartSessionParams, StreamHealth, VideoPreset, VideoSettings,
 };
 use crate::state::AppState;
 use crate::storage::{NewSession, default_preview_dir};
@@ -33,6 +33,7 @@ pub struct ActiveRecording {
     pub stream_url: Option<String>,
     pub started_at: String,
     pub mode: String,
+    pub audio_tracks: Vec<AudioTrack>,
     pub stop_requested: bool,
 }
 
@@ -47,6 +48,7 @@ impl ActiveRecording {
                 .map(|path| path.display().to_string()),
             stream_url: self.stream_url.clone(),
             started_at: Some(self.started_at.clone()),
+            audio_tracks: self.audio_tracks.clone(),
             message,
         }
     }
@@ -78,6 +80,7 @@ pub fn idle_status() -> RecordingStatus {
         output_path: None,
         stream_url: None,
         started_at: None,
+        audio_tracks: Vec::new(),
         message: Some("Ready to start a capture session.".to_string()),
     }
 }
@@ -151,6 +154,7 @@ pub async fn start_session(state: AppState, params: StartSessionParams) -> Resul
     }
 
     let capture = resolve_capture_inputs(&ffmpeg_path, &params).await;
+    let audio_tracks = capture_audio_tracks(&capture);
     if matches!(capture.video, VideoInput::TestPattern) {
         emit_health_event(
             &state,
@@ -160,6 +164,7 @@ pub async fn start_session(state: AppState, params: StartSessionParams) -> Resul
             "Using FFmpeg test pattern because a macOS screen/window source was not available.",
         )?;
     }
+    emit_audio_track_health_events(&state, &session_id, &params, &audio_tracks)?;
 
     let args = ffmpeg_args(
         &capture,
@@ -176,6 +181,7 @@ pub async fn start_session(state: AppState, params: StartSessionParams) -> Resul
             output_path: output_path.as_ref().map(|path| path.display().to_string()),
             stream_url: stream_url.clone(),
             started_at: Some(started_at.to_rfc3339()),
+            audio_tracks: audio_tracks.clone(),
             message: Some(format!("Starting {mode} session.")),
         },
     );
@@ -199,6 +205,7 @@ pub async fn start_session(state: AppState, params: StartSessionParams) -> Resul
         stream_url,
         started_at: started_at.to_rfc3339(),
         mode: mode.to_string(),
+        audio_tracks,
         stop_requested: false,
     };
     let running_state = if params.output.stream_enabled && !params.output.record_enabled {
@@ -589,6 +596,7 @@ async fn monitor_session(
                     output_path: output_path.as_ref().map(|path| path.display().to_string()),
                     stream_url: None,
                     started_at: None,
+                    audio_tracks: Vec::new(),
                     message: Some("Capture session finalized.".to_string()),
                 },
             );
@@ -614,6 +622,7 @@ async fn monitor_session(
                     output_path: output_path.as_ref().map(|path| path.display().to_string()),
                     stream_url: None,
                     started_at: None,
+                    audio_tracks: Vec::new(),
                     message: Some(message),
                 },
             );
@@ -639,6 +648,7 @@ async fn monitor_session(
                     output_path: output_path.as_ref().map(|path| path.display().to_string()),
                     stream_url: None,
                     started_at: None,
+                    audio_tracks: Vec::new(),
                     message: Some(message),
                 },
             );
@@ -720,9 +730,8 @@ fn ffmpeg_args(
         video_filter(input_layout.camera_input_index, params, false),
         "-map".to_string(),
         "[v]".to_string(),
-        "-map".to_string(),
-        audio_map(input_layout),
     ]);
+    append_audio_output_args(&mut args, &input_layout);
     args.extend([
         "-r".to_string(),
         params.output.video.fps.to_string(),
@@ -796,10 +805,16 @@ fn preview_ffmpeg_args(
     Ok(args)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct InputLayout {
     camera_input_index: Option<usize>,
-    audio_input_index: Option<usize>,
+    audio_inputs: Vec<AudioInput>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AudioInput {
+    input_index: usize,
+    track: AudioTrack,
 }
 
 fn append_input_args(
@@ -808,7 +823,10 @@ fn append_input_args(
     include_audio: bool,
     video: &VideoSettings,
 ) -> InputLayout {
-    let audio_input_index = match capture.video {
+    let mut next_input_index = 0;
+    let mut audio_inputs = Vec::new();
+
+    match capture.video {
         VideoInput::MacScreen { index } => {
             args.extend([
                 "-f".to_string(),
@@ -818,17 +836,25 @@ fn append_input_args(
                 "-capture_cursor".to_string(),
                 "1".to_string(),
                 "-i".to_string(),
-                format!(
-                    "{}:{}",
-                    index,
-                    include_audio
-                        .then_some(capture.microphone_index)
-                        .flatten()
-                        .map(|value| value.to_string())
-                        .unwrap_or_else(|| "none".to_string())
-                ),
+                format!("{index}:none"),
             ]);
-            include_audio.then_some(0)
+            next_input_index += 1;
+
+            if include_audio && let Some(microphone_index) = capture.microphone_index {
+                args.extend([
+                    "-f".to_string(),
+                    "avfoundation".to_string(),
+                    "-thread_queue_size".to_string(),
+                    "512".to_string(),
+                    "-i".to_string(),
+                    format!(":{microphone_index}"),
+                ]);
+                audio_inputs.push(AudioInput {
+                    input_index: next_input_index,
+                    track: microphone_audio_track(),
+                });
+                next_input_index += 1;
+            }
         }
         VideoInput::TestPattern => {
             args.extend([
@@ -840,26 +866,42 @@ fn append_input_args(
                     video.width, video.height, video.fps
                 ),
             ]);
+            next_input_index += 1;
+
             if include_audio {
-                args.extend([
-                    "-f".to_string(),
-                    "lavfi".to_string(),
-                    "-i".to_string(),
-                    "sine=frequency=880:sample_rate=48000".to_string(),
-                ]);
-                Some(1)
-            } else {
-                None
+                if let Some(microphone_index) = capture.microphone_index {
+                    args.extend([
+                        "-f".to_string(),
+                        "avfoundation".to_string(),
+                        "-thread_queue_size".to_string(),
+                        "512".to_string(),
+                        "-i".to_string(),
+                        format!(":{microphone_index}"),
+                    ]);
+                    audio_inputs.push(AudioInput {
+                        input_index: next_input_index,
+                        track: microphone_audio_track(),
+                    });
+                    next_input_index += 1;
+                } else {
+                    args.extend([
+                        "-f".to_string(),
+                        "lavfi".to_string(),
+                        "-i".to_string(),
+                        "sine=frequency=880:sample_rate=48000".to_string(),
+                    ]);
+                    audio_inputs.push(AudioInput {
+                        input_index: next_input_index,
+                        track: test_tone_audio_track(),
+                    });
+                    next_input_index += 1;
+                }
             }
         }
     };
 
     let camera_input_index = capture.camera_index.map(|camera_index| {
-        let input_index = match (capture.video.clone(), include_audio) {
-            (VideoInput::MacScreen { .. }, _) => 1,
-            (VideoInput::TestPattern, true) => 2,
-            (VideoInput::TestPattern, false) => 1,
-        };
+        let input_index = next_input_index;
         args.extend([
             "-f".to_string(),
             "avfoundation".to_string(),
@@ -873,15 +915,47 @@ fn append_input_args(
 
     InputLayout {
         camera_input_index,
-        audio_input_index,
+        audio_inputs,
     }
 }
 
-fn audio_map(input_layout: InputLayout) -> String {
-    input_layout
-        .audio_input_index
-        .map(|index| format!("{index}:a?"))
-        .unwrap_or_else(|| "0:a?".to_string())
+fn append_audio_output_args(args: &mut Vec<String>, input_layout: &InputLayout) {
+    for (track_index, audio_input) in input_layout.audio_inputs.iter().enumerate() {
+        args.extend([
+            "-map".to_string(),
+            format!("{}:a?", audio_input.input_index),
+            format!("-metadata:s:a:{track_index}"),
+            format!("title={}", audio_input.track.label),
+        ]);
+    }
+}
+
+fn capture_audio_tracks(capture: &CaptureInputs) -> Vec<AudioTrack> {
+    if capture.microphone_index.is_some() {
+        return vec![microphone_audio_track()];
+    }
+
+    if matches!(capture.video, VideoInput::TestPattern) {
+        return vec![test_tone_audio_track()];
+    }
+
+    Vec::new()
+}
+
+fn microphone_audio_track() -> AudioTrack {
+    AudioTrack {
+        id: "microphone".to_string(),
+        label: "Microphone".to_string(),
+        source: AudioTrackSource::Microphone,
+    }
+}
+
+fn test_tone_audio_track() -> AudioTrack {
+    AudioTrack {
+        id: "test-tone".to_string(),
+        label: "Test tone".to_string(),
+        source: AudioTrackSource::TestTone,
+    }
 }
 
 fn video_filter(
@@ -1073,6 +1147,36 @@ fn emit_foundation_health_events(
     Ok(())
 }
 
+fn emit_audio_track_health_events(
+    state: &AppState,
+    session_id: &str,
+    params: &StartSessionParams,
+    audio_tracks: &[AudioTrack],
+) -> Result<()> {
+    if !params.output.record_enabled {
+        return Ok(());
+    }
+
+    if audio_tracks.is_empty() {
+        return Ok(());
+    }
+
+    let labels = audio_tracks
+        .iter()
+        .map(|track| track.label.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    emit_health_event(
+        state,
+        Some(session_id),
+        HealthLevel::Info,
+        "audio-tracks-separated",
+        &format!("Local MKV will preserve separate audio track(s): {labels}."),
+    )?;
+
+    Ok(())
+}
+
 async fn emit_disk_space_health_event(
     state: &AppState,
     session_id: &str,
@@ -1218,6 +1322,42 @@ mod tests {
     }
 
     #[test]
+    fn debug_rec_dump_args() {
+        // [DEBUG-rec] temporary: print real generated command for headless ffmpeg run
+        for (label, mic, cam) in [
+            ("testpattern_sine", None, None),
+            ("testpattern_mic", Some(1usize), None),
+            ("macscreen_mic", Some(1usize), None),
+        ] {
+            let video = if label == "macscreen_mic" {
+                VideoInput::MacScreen { index: 3 }
+            } else {
+                VideoInput::TestPattern
+            };
+            let params = base_params(true, false);
+            let args = ffmpeg_args(
+                &CaptureInputs { video, camera_index: cam, microphone_index: mic },
+                &params,
+                Some(Path::new("/tmp/videogre-debug.mkv")),
+                None,
+            )
+            .unwrap();
+            let quoted = args
+                .iter()
+                .map(|a| if a.contains(' ') || a.is_empty() { format!("'{a}'") } else { a.clone() })
+                .collect::<Vec<_>>()
+                .join(" ");
+            eprintln!("[DEBUG-rec] {label} :: {quoted}");
+        }
+    }
+
+    fn ffmpeg_inputs(args: &[String]) -> Vec<&str> {
+        args.windows(2)
+            .filter_map(|pair| (pair[0] == "-i").then_some(pair[1].as_str()))
+            .collect()
+    }
+
+    #[test]
     fn default_recordings_dir_uses_videogre_movies_folder() {
         let path = default_recordings_dir();
         let rendered = path.display().to_string();
@@ -1245,9 +1385,94 @@ mod tests {
         assert!(args.iter().any(|arg| arg.contains("[f=matroska")));
         assert!(args.iter().any(|arg| arg.contains("[f=flv")));
         assert!(args.contains(&"-filter_complex".to_string()));
+        assert_eq!(ffmpeg_inputs(&args), vec!["3:none", ":1", "0:none"]);
+        assert!(args.iter().any(|arg| arg == "1:a?"));
+        assert!(args.iter().any(|arg| arg.contains("[2:v]")));
+        assert!(args.iter().any(|arg| arg == "title=Microphone"));
         assert!(args.contains(&"8000k".to_string()));
         assert!(args.iter().any(|arg| arg.contains("pad=2560:1440")));
         assert!(args.contains(&"pipe:2".to_string()));
+    }
+
+    #[test]
+    fn mac_recording_uses_dedicated_microphone_audio_input() {
+        let params = base_params(true, false);
+        let args = ffmpeg_args(
+            &CaptureInputs {
+                video: VideoInput::MacScreen { index: 3 },
+                camera_index: None,
+                microphone_index: Some(1),
+            },
+            &params,
+            Some(Path::new("/tmp/videogre-test.mkv")),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(ffmpeg_inputs(&args), vec!["3:none", ":1"]);
+        assert!(args.iter().any(|arg| arg == "1:a?"));
+        assert!(args.iter().any(|arg| arg == "-metadata:s:a:0"));
+        assert!(args.iter().any(|arg| arg == "title=Microphone"));
+    }
+
+    #[test]
+    fn mac_recording_without_mic_is_video_only() {
+        let params = base_params(true, false);
+        let args = ffmpeg_args(
+            &CaptureInputs {
+                video: VideoInput::MacScreen { index: 3 },
+                camera_index: None,
+                microphone_index: None,
+            },
+            &params,
+            Some(Path::new("/tmp/videogre-test.mkv")),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(ffmpeg_inputs(&args), vec!["3:none"]);
+        assert!(!args.iter().any(|arg| arg.ends_with(":a?")));
+    }
+
+    #[test]
+    fn test_pattern_uses_mic_when_selected_otherwise_test_tone() {
+        let params = base_params(true, false);
+        let with_mic = ffmpeg_args(
+            &CaptureInputs {
+                video: VideoInput::TestPattern,
+                camera_index: None,
+                microphone_index: Some(1),
+            },
+            &params,
+            Some(Path::new("/tmp/videogre-test.mkv")),
+            None,
+        )
+        .unwrap();
+        let without_mic = ffmpeg_args(
+            &CaptureInputs {
+                video: VideoInput::TestPattern,
+                camera_index: None,
+                microphone_index: None,
+            },
+            &params,
+            Some(Path::new("/tmp/videogre-test.mkv")),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(
+            ffmpeg_inputs(&with_mic),
+            vec!["testsrc2=size=2560x1440:rate=30", ":1"]
+        );
+        assert!(with_mic.iter().any(|arg| arg == "title=Microphone"));
+        assert_eq!(
+            ffmpeg_inputs(&without_mic),
+            vec![
+                "testsrc2=size=2560x1440:rate=30",
+                "sine=frequency=880:sample_rate=48000"
+            ]
+        );
+        assert!(without_mic.iter().any(|arg| arg == "title=Test tone"));
     }
 
     #[test]

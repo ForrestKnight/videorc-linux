@@ -120,6 +120,8 @@ pub struct RecordingStatus {
     pub stream_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub started_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub audio_tracks: Vec<AudioTrack>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }
@@ -133,6 +135,21 @@ pub enum RecordingState {
     Streaming,
     Stopping,
     Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioTrack {
+    pub id: String,
+    pub label: String,
+    pub source: AudioTrackSource,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum AudioTrackSource {
+    Microphone,
+    TestTone,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
