@@ -1,4 +1,4 @@
-import { ArrowsClockwise, Monitor, SpeakerHigh, Warning, Waveform } from '@phosphor-icons/react'
+import { ArrowsClockwise, Monitor, SpeakerHigh, SpeakerSlash, Warning, Waveform } from '@phosphor-icons/react'
 import type { ReactElement } from 'react'
 
 import { PanelSection } from '@/components/panel-section'
@@ -7,6 +7,8 @@ import { StatusBadge, type StatusTone } from '@/components/status-badge'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Empty, EmptyDescription, EmptyTitle } from '@/components/ui/empty'
+import { Slider } from '@/components/ui/slider'
+import { Switch } from '@/components/ui/switch'
 import { useStudio } from '@/hooks/use-studio'
 import type { Device, DeviceStatus } from '@/lib/backend'
 import { formatDb } from '@/lib/format'
@@ -97,16 +99,56 @@ export function SourcesTab(): ReactElement {
       </PanelSection>
 
       <PanelSection
-        description="One-shot FFmpeg level check on the selected microphone."
+        description="Native CoreAudio meter with manual source gain. No automatic processing is applied."
         icon={Waveform}
-        title="Microphone check"
+        title="Microphone mixer"
       >
         <div className="flex items-center justify-between text-sm">
           <span className="flex items-center gap-2 text-muted-foreground">
-            <SpeakerHigh className="size-4" weight="duotone" />
+            {captureConfig.audio.microphoneMuted ? (
+              <SpeakerSlash className="size-4" weight="duotone" />
+            ) : (
+              <SpeakerHigh className="size-4" weight="duotone" />
+            )}
             {selectedMicrophone ? selectedMicrophone.name : 'No microphone selected'}
           </span>
           <span className="font-semibold tabular-nums">{formatDb(audioMeter?.peakDb)}</span>
+        </div>
+        <div className="grid gap-2 rounded-lg border bg-muted/30 px-3 py-2">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs font-medium text-muted-foreground">Mute</span>
+            <Switch
+              checked={captureConfig.audio.microphoneMuted}
+              size="sm"
+              onCheckedChange={(microphoneMuted) =>
+                setCaptureConfig((current) => ({
+                  ...current,
+                  audio: { ...current.audio, microphoneMuted }
+                }))
+              }
+            />
+          </div>
+          <div className="grid gap-2">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-xs font-medium text-muted-foreground">Gain</span>
+              <span className="font-mono text-xs tabular-nums">
+                {captureConfig.audio.microphoneGainDb > 0 ? '+' : ''}
+                {captureConfig.audio.microphoneGainDb} dB
+              </span>
+            </div>
+            <Slider
+              max={24}
+              min={-24}
+              step={1}
+              value={[captureConfig.audio.microphoneGainDb]}
+              onValueChange={([microphoneGainDb]) =>
+                setCaptureConfig((current) => ({
+                  ...current,
+                  audio: { ...current.audio, microphoneGainDb: microphoneGainDb ?? 0 }
+                }))
+              }
+            />
+          </div>
         </div>
         <div className="h-2.5 w-full overflow-hidden rounded-full bg-muted">
           <div
@@ -124,7 +166,7 @@ export function SourcesTab(): ReactElement {
           variant="outline"
           onClick={sampleAudioMeter}
         >
-          {audioMeterLoading ? 'Checking…' : 'Check mic'}
+          {audioMeterLoading ? 'Checking...' : 'Check mic'}
         </Button>
       </PanelSection>
 

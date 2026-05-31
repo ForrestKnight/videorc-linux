@@ -1,4 +1,5 @@
 mod ai;
+mod audio;
 mod devices;
 mod ffmpeg;
 mod protocol;

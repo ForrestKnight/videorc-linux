@@ -4,6 +4,10 @@ use std::time::Duration;
 use tokio::process::Command;
 use tokio::time::timeout;
 
+use crate::audio::{
+    AudioProcessingSettings, list_native_microphones, parse_coreaudio_microphone_id,
+    sample_native_audio_meter,
+};
 use crate::ffmpeg::resolve_ffmpeg_path;
 use crate::protocol::{
     AudioMeterParams, AudioMeterResult, AudioMeterStatus, Device, DeviceKind, DeviceList,
@@ -59,6 +63,11 @@ pub async fn list_devices(ffmpeg_path: &str) -> DeviceList {
         return DeviceList { devices, warnings };
     }
 
+    let native_microphones = list_native_microphones();
+    let native_microphone_available = native_microphones
+        .iter()
+        .any(|device| device.status == DeviceStatus::Available);
+
     match probe_avfoundation_devices(ffmpeg_path).await {
         Ok(av_devices) => {
             let screen = av_devices.iter().find(|device| {
@@ -105,13 +114,20 @@ pub async fn list_devices(ffmpeg_path: &str) -> DeviceList {
                             });
                         }
                     }
-                    AvFoundationDeviceKind::Audio => devices.push(Device {
-                        id: format!("microphone:avfoundation:{}", device.index),
-                        name: device.name,
-                        kind: DeviceKind::Microphone,
-                        status: DeviceStatus::Available,
-                        detail: Some("Detected by FFmpeg avfoundation.".to_string()),
-                    }),
+                    AvFoundationDeviceKind::Audio => {
+                        if !native_microphone_available {
+                            devices.push(Device {
+                                id: format!("microphone:avfoundation:{}", device.index),
+                                name: device.name,
+                                kind: DeviceKind::Microphone,
+                                status: DeviceStatus::Available,
+                                detail: Some(
+                                    "FFmpeg avfoundation fallback; native CoreAudio probe did not return an available input."
+                                        .to_string(),
+                                ),
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -129,6 +145,8 @@ pub async fn list_devices(ffmpeg_path: &str) -> DeviceList {
             warnings.push(format!("FFmpeg device probe failed: {error}"));
         }
     }
+
+    devices.extend(native_microphones);
 
     DeviceList { devices, warnings }
 }
@@ -167,13 +185,27 @@ pub async fn sample_audio_meter(params: AudioMeterParams) -> AudioMeterResult {
             message: Some("Select a microphone before running the audio check.".to_string()),
         };
     };
+
+    if let Some(device_id) = parse_coreaudio_microphone_id(microphone_id) {
+        return sample_native_audio_meter(
+            device_id,
+            AudioProcessingSettings {
+                gain_db: params.microphone_gain_db,
+                muted: params.microphone_muted,
+            },
+        );
+    }
+
     let Some(index) = parse_avfoundation_id(microphone_id) else {
         return AudioMeterResult {
             status: AudioMeterStatus::Unavailable,
             level: None,
             peak_db: None,
             mean_db: None,
-            message: Some("Selected microphone is not an FFmpeg avfoundation input.".to_string()),
+            message: Some(
+                "Selected microphone is not a native CoreAudio or FFmpeg avfoundation input."
+                    .to_string(),
+            ),
         };
     };
 

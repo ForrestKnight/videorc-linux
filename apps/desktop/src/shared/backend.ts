@@ -142,6 +142,12 @@ export interface StartSessionParams {
   sources: SourceSelection
   layout: LayoutSettings
   output: OutputSettings
+  audio?: AudioSettings
+}
+
+export interface AudioSettings {
+  microphoneGainDb: number
+  microphoneMuted: boolean
 }
 
 export interface RemuxSessionParams {
@@ -181,6 +187,8 @@ export interface PreviewLiveParams {
 export interface AudioMeterParams {
   microphoneId?: string
   ffmpegPath?: string
+  microphoneGainDb?: number
+  microphoneMuted?: boolean
 }
 
 export type AudioMeterStatus = 'ready' | 'silent' | 'unavailable' | 'permission-required'

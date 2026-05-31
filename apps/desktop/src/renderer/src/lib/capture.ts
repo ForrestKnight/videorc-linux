@@ -1,4 +1,5 @@
 import type {
+  AudioSettings,
   LayoutSettings,
   RtmpPreset,
   SourceSelection,
@@ -14,6 +15,7 @@ export type SettingsState = {
 export type CaptureConfig = {
   sources: SourceSelection
   layout: LayoutSettings
+  audio: AudioSettings
   video: VideoSettings
   recordEnabled: boolean
   streamEnabled: boolean
@@ -95,6 +97,10 @@ export const defaultCaptureConfig: CaptureConfig = {
     cameraOffsetX: 0,
     cameraOffsetY: 0
   },
+  audio: {
+    microphoneGainDb: 0,
+    microphoneMuted: false
+  },
   video: videoPresets['tutorial-1440p30'],
   recordEnabled: true,
   streamEnabled: false,
@@ -124,6 +130,7 @@ export function loadCaptureConfig(): CaptureConfig {
     ...loaded,
     sources: { ...defaultCaptureConfig.sources, ...(loaded.sources ?? {}) },
     layout: normalizeLayoutSettings(loaded.layout),
+    audio: normalizeAudioSettings(loaded.audio),
     video: normalizeVideoSettings(loaded.video),
     recordEnabled:
       typeof loaded.recordEnabled === 'boolean' ? loaded.recordEnabled : defaultCaptureConfig.recordEnabled,
@@ -132,6 +139,18 @@ export function loadCaptureConfig(): CaptureConfig {
     rtmpPreset: loaded.rtmpPreset ?? defaultCaptureConfig.rtmpPreset,
     rtmpServerUrl: loaded.rtmpServerUrl ?? defaultCaptureConfig.rtmpServerUrl,
     streamKey: loaded.streamKey ?? defaultCaptureConfig.streamKey
+  }
+}
+
+export function normalizeAudioSettings(audio: unknown): AudioSettings {
+  const candidate = audio && typeof audio === 'object' ? (audio as Partial<AudioSettings>) : {}
+
+  return {
+    microphoneGainDb: clampNumber(candidate.microphoneGainDb, defaultCaptureConfig.audio.microphoneGainDb, -24, 24),
+    microphoneMuted:
+      typeof candidate.microphoneMuted === 'boolean'
+        ? candidate.microphoneMuted
+        : defaultCaptureConfig.audio.microphoneMuted
   }
 }
 

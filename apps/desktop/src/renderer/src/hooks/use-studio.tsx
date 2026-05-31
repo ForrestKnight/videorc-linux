@@ -182,7 +182,8 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
           serverUrl: captureConfig.rtmpServerUrl.trim(),
           streamKey: captureConfig.streamKey.trim()
         }
-      }
+      },
+      audio: captureConfig.audio
     }),
     [captureConfig, settings]
   )
@@ -472,7 +473,9 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       setAudioMeterLoading(true)
       const result = await client.request<AudioMeterResult>('audio.meter.sample', {
         microphoneId: captureConfig.sources.microphoneId,
-        ffmpegPath: settings.ffmpegPath.trim() || undefined
+        ffmpegPath: settings.ffmpegPath.trim() || undefined,
+        microphoneGainDb: captureConfig.audio.microphoneGainDb,
+        microphoneMuted: captureConfig.audio.microphoneMuted
       })
       setAudioMeter(result)
     } catch (error) {
@@ -480,7 +483,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     } finally {
       setAudioMeterLoading(false)
     }
-  }, [captureConfig.sources.microphoneId, client, reportError, settings.ffmpegPath])
+  }, [captureConfig.audio.microphoneGainDb, captureConfig.audio.microphoneMuted, captureConfig.sources.microphoneId, client, reportError, settings.ffmpegPath])
 
   const outputEnabled = captureConfig.recordEnabled || captureConfig.streamEnabled
   const streamReady =

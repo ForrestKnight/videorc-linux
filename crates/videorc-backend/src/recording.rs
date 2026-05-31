@@ -11,6 +11,11 @@ use tokio::sync::Mutex;
 use tokio::time::{Duration, sleep, timeout};
 use uuid::Uuid;
 
+use crate::audio::{
+    AudioProcessingSettings, NATIVE_AUDIO_CHANNELS, NATIVE_AUDIO_SAMPLE_RATE,
+    NativeAudioCaptureSession, NativeAudioSource, attach_fifo_writer, create_native_audio_fifo,
+    native_audio_fifo_path, parse_coreaudio_microphone_id, start_native_audio_source,
+};
 use crate::devices::find_avfoundation_screen_index;
 use crate::ffmpeg::resolve_ffmpeg_path;
 use crate::protocol::{
@@ -30,7 +35,7 @@ const STOP_FINALIZE_TIMEOUT: Duration = Duration::from_secs(12);
 const STOP_TERM_DELAY: Duration = Duration::from_secs(3);
 const STOP_KILL_DELAY: Duration = Duration::from_secs(3);
 const SHUTDOWN_GRACE_DELAY: Duration = Duration::from_millis(1200);
-const CAPTURE_AUDIO_FILTER: &str = "aresample=async=1:first_pts=0,volume=12dB";
+const CAPTURE_AUDIO_FILTER: &str = "aresample=async=1:first_pts=0";
 const AVFOUNDATION_VIDEO_PIXEL_FORMAT: &str = "nv12";
 const MJPEG_BOUNDARY: &[u8] = b"--videorc";
 const MJPEG_HEADER_END: &[u8] = b"\r\n\r\n";
@@ -47,6 +52,7 @@ pub struct ActiveRecording {
     pub started_at: String,
     pub mode: String,
     pub audio_tracks: Vec<AudioTrack>,
+    pub native_audio: Option<NativeAudioCaptureSession>,
     pub stop_requested: bool,
 }
 
@@ -185,7 +191,9 @@ pub async fn start_session(state: AppState, params: StartSessionParams) -> Resul
 
     stop_idle_live_preview_for_recording(state.clone()).await;
 
-    let capture = resolve_capture_inputs(&ffmpeg_path, &params).await;
+    let mut capture = resolve_capture_inputs(&ffmpeg_path, &params).await;
+    let native_audio_source =
+        prepare_native_audio_source(&state, &session_id, &mut capture, &params).await;
     let audio_tracks = capture_audio_tracks(&capture);
     if matches!(capture.video, VideoInput::TestPattern) {
         emit_health_event(
@@ -239,6 +247,8 @@ pub async fn start_session(state: AppState, params: StartSessionParams) -> Resul
         started_at: started_at.to_rfc3339(),
         mode: mode.to_string(),
         audio_tracks,
+        native_audio: native_audio_source
+            .map(|prepared| attach_fifo_writer(prepared.source, prepared.fifo_path)),
         stop_requested: false,
     };
     let running_state = if params.output.stream_enabled && !params.output.record_enabled {
@@ -429,9 +439,10 @@ pub async fn create_preview_snapshot(
                 stream_key: "preview".to_string(),
             },
         },
+        audio: Default::default(),
     };
     let mut capture = resolve_capture_inputs(&ffmpeg_path, &session_params).await;
-    capture.microphone_index = None;
+    capture.microphone = None;
     let args = preview_ffmpeg_args(&capture, &session_params, &output_path)?;
     let output = run_preview_command(&ffmpeg_path, &args).await?;
 
@@ -634,7 +645,7 @@ async fn start_idle_live_preview(
     let ffmpeg_path = resolve_ffmpeg_path(params.ffmpeg_path.clone());
     let session_params = live_preview_session_params(params, ffmpeg_path.clone());
     let mut capture = resolve_capture_inputs(&ffmpeg_path, &session_params).await;
-    capture.microphone_index = None;
+    capture.microphone = None;
     let args = live_preview_ffmpeg_args(&capture, &session_params)?;
 
     let mut command = ffmpeg_command(&ffmpeg_path);
@@ -705,6 +716,7 @@ fn live_preview_session_params(
                 stream_key: "preview".to_string(),
             },
         },
+        audio: Default::default(),
     }
 }
 
@@ -1115,6 +1127,18 @@ async fn monitor_session(
         .as_ref()
         .filter(|active| active.session_id == session_id)
         .map(|active| active.stop_requested);
+    let native_audio_stats = guard
+        .as_ref()
+        .filter(|active| active.session_id == session_id)
+        .and_then(|active| {
+            active.native_audio.as_ref().map(|audio| {
+                (
+                    audio.device_name.clone(),
+                    audio.captured_frames(),
+                    audio.dropped_frames(),
+                )
+            })
+        });
     let had_active_recording = active_recording.is_some();
     let stop_requested = active_recording.unwrap_or(false);
     if had_active_recording {
@@ -1124,6 +1148,15 @@ async fn monitor_session(
 
     if !had_active_recording {
         return;
+    }
+
+    if let Some((device_name, captured_frames, dropped_frames)) = native_audio_stats {
+        state.emit_log(
+            if dropped_frames > 0 { "warn" } else { "info" },
+            format!(
+                "Native microphone capture ended for {device_name}: {captured_frames} frames captured, {dropped_frames} frames dropped."
+            ),
+        );
     }
 
     let ended_at = Utc::now().to_rfc3339();
@@ -1219,7 +1252,7 @@ async fn monitor_session(
 struct CaptureInputs {
     video: VideoInput,
     camera_index: Option<usize>,
-    microphone_index: Option<usize>,
+    microphone: Option<MicrophoneInput>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1229,9 +1262,26 @@ enum VideoInput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+enum MicrophoneInput {
+    CoreAudio {
+        device_id: u32,
+        fifo_path: Option<PathBuf>,
+    },
+    AvFoundation {
+        index: usize,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct StreamTarget {
     url: String,
     redacted_url: String,
+}
+
+#[derive(Debug)]
+struct PreparedNativeAudioSource {
+    source: NativeAudioSource,
+    fifo_path: PathBuf,
 }
 
 async fn resolve_capture_inputs(ffmpeg_path: &str, params: &StartSessionParams) -> CaptureInputs {
@@ -1249,11 +1299,16 @@ async fn resolve_capture_inputs(ffmpeg_path: &str, params: &StartSessionParams) 
         .camera_id
         .as_deref()
         .and_then(parse_avfoundation_id);
-    let microphone_index = params
-        .sources
-        .microphone_id
-        .as_deref()
-        .and_then(parse_avfoundation_id);
+    let microphone = params.sources.microphone_id.as_deref().and_then(|id| {
+        parse_coreaudio_microphone_id(id)
+            .map(|device_id| MicrophoneInput::CoreAudio {
+                device_id,
+                fifo_path: None,
+            })
+            .or_else(|| {
+                parse_avfoundation_id(id).map(|index| MicrophoneInput::AvFoundation { index })
+            })
+    });
     let detected_screen = if cfg!(target_os = "macos") && !params.sources.test_pattern {
         selected_screen.or(find_avfoundation_screen_index(ffmpeg_path).await)
     } else {
@@ -1265,7 +1320,80 @@ async fn resolve_capture_inputs(ffmpeg_path: &str, params: &StartSessionParams) 
             .map(|index| VideoInput::MacScreen { index })
             .unwrap_or(VideoInput::TestPattern),
         camera_index,
-        microphone_index,
+        microphone,
+    }
+}
+
+async fn prepare_native_audio_source(
+    state: &AppState,
+    session_id: &str,
+    capture: &mut CaptureInputs,
+    params: &StartSessionParams,
+) -> Option<PreparedNativeAudioSource> {
+    let Some(MicrophoneInput::CoreAudio {
+        device_id,
+        fifo_path,
+    }) = capture.microphone.as_mut()
+    else {
+        return None;
+    };
+
+    let path = native_audio_fifo_path(session_id);
+    if let Err(error) = create_native_audio_fifo(&path) {
+        let message = format!(
+            "Native CoreAudio microphone is unavailable; continuing video-only. Could not create audio FIFO: {error}"
+        );
+        state.emit_log("warn", &message);
+        let _ = emit_health_event(
+            state,
+            Some(session_id),
+            HealthLevel::Warn,
+            "microphone-native-fifo-failed",
+            &message,
+        );
+        capture.microphone = None;
+        return None;
+    }
+
+    let settings = audio_processing_settings(params);
+    match start_native_audio_source(*device_id, settings) {
+        Ok(source) => {
+            let device_name = source.device_name.clone();
+            *fifo_path = Some(path.clone());
+            state.emit_log(
+                "info",
+                format!(
+                    "Native CoreAudio microphone capture started for {device_name} at {} Hz float32 stereo.",
+                    NATIVE_AUDIO_SAMPLE_RATE
+                ),
+            );
+            Some(PreparedNativeAudioSource {
+                source,
+                fifo_path: path,
+            })
+        }
+        Err(error) => {
+            let _ = std::fs::remove_file(&path);
+            let message = format!(
+                "Native CoreAudio microphone is unavailable; continuing video-only. {error}"
+            );
+            state.emit_log("warn", &message);
+            let _ = emit_health_event(
+                state,
+                Some(session_id),
+                if message.to_lowercase().contains("permission")
+                    || message.to_lowercase().contains("unauthor")
+                {
+                    HealthLevel::Error
+                } else {
+                    HealthLevel::Warn
+                },
+                "microphone-native-unavailable",
+                &message,
+            );
+            capture.microphone = None;
+            None
+        }
     }
 }
 
@@ -1406,6 +1534,7 @@ struct InputLayout {
 struct AudioInput {
     input_index: usize,
     track: AudioTrack,
+    channels: u16,
 }
 
 fn append_input_args(
@@ -1422,20 +1551,14 @@ fn append_input_args(
             append_avfoundation_video_input(args, index, video.fps, true);
             next_input_index += 1;
 
-            if include_audio && let Some(microphone_index) = capture.microphone_index {
-                args.extend([
-                    "-f".to_string(),
-                    "avfoundation".to_string(),
-                    "-thread_queue_size".to_string(),
-                    "512".to_string(),
-                    "-i".to_string(),
-                    format!(":{microphone_index}"),
-                ]);
+            if include_audio
+                && append_microphone_input(args, capture.microphone.as_ref(), &mut next_input_index)
+            {
                 audio_inputs.push(AudioInput {
-                    input_index: next_input_index,
+                    input_index: next_input_index - 1,
                     track: microphone_audio_track(),
+                    channels: microphone_channels(capture.microphone.as_ref()),
                 });
-                next_input_index += 1;
             }
         }
         VideoInput::TestPattern => {
@@ -1451,20 +1574,13 @@ fn append_input_args(
             next_input_index += 1;
 
             if include_audio {
-                if let Some(microphone_index) = capture.microphone_index {
-                    args.extend([
-                        "-f".to_string(),
-                        "avfoundation".to_string(),
-                        "-thread_queue_size".to_string(),
-                        "512".to_string(),
-                        "-i".to_string(),
-                        format!(":{microphone_index}"),
-                    ]);
+                if append_microphone_input(args, capture.microphone.as_ref(), &mut next_input_index)
+                {
                     audio_inputs.push(AudioInput {
-                        input_index: next_input_index,
+                        input_index: next_input_index - 1,
                         track: microphone_audio_track(),
+                        channels: microphone_channels(capture.microphone.as_ref()),
                     });
-                    next_input_index += 1;
                 } else {
                     args.extend([
                         "-f".to_string(),
@@ -1475,6 +1591,7 @@ fn append_input_args(
                     audio_inputs.push(AudioInput {
                         input_index: next_input_index,
                         track: test_tone_audio_track(),
+                        channels: 1,
                     });
                     next_input_index += 1;
                 }
@@ -1491,6 +1608,61 @@ fn append_input_args(
     InputLayout {
         camera_input_index,
         audio_inputs,
+    }
+}
+
+fn append_microphone_input(
+    args: &mut Vec<String>,
+    microphone: Option<&MicrophoneInput>,
+    next_input_index: &mut usize,
+) -> bool {
+    let Some(microphone) = microphone else {
+        return false;
+    };
+
+    match microphone {
+        MicrophoneInput::CoreAudio {
+            fifo_path: Some(fifo_path),
+            ..
+        } => {
+            args.extend([
+                "-f".to_string(),
+                "f32le".to_string(),
+                "-ar".to_string(),
+                NATIVE_AUDIO_SAMPLE_RATE.to_string(),
+                "-ac".to_string(),
+                NATIVE_AUDIO_CHANNELS.to_string(),
+                "-thread_queue_size".to_string(),
+                "512".to_string(),
+                "-i".to_string(),
+                fifo_path.display().to_string(),
+            ]);
+            *next_input_index += 1;
+            true
+        }
+        MicrophoneInput::CoreAudio {
+            fifo_path: None, ..
+        } => false,
+        MicrophoneInput::AvFoundation { index } => {
+            args.extend([
+                "-f".to_string(),
+                "avfoundation".to_string(),
+                "-thread_queue_size".to_string(),
+                "512".to_string(),
+                "-i".to_string(),
+                format!(":{index}"),
+            ]);
+            *next_input_index += 1;
+            true
+        }
+    }
+}
+
+fn microphone_channels(microphone: Option<&MicrophoneInput>) -> u16 {
+    match microphone {
+        Some(MicrophoneInput::CoreAudio { .. }) => NATIVE_AUDIO_CHANNELS,
+        Some(MicrophoneInput::AvFoundation { .. }) => 1,
+        None => 0,
     }
 }
 
@@ -1538,7 +1710,13 @@ fn append_audio_encoding_args(args: &mut Vec<String>, input_layout: &InputLayout
         "-ar".to_string(),
         "48000".to_string(),
         "-ac".to_string(),
-        "1".to_string(),
+        input_layout
+            .audio_inputs
+            .iter()
+            .map(|input| input.channels)
+            .max()
+            .unwrap_or(1)
+            .to_string(),
         "-c:a".to_string(),
         if streaming { "aac" } else { "pcm_s16le" }.to_string(),
     ]);
@@ -1566,7 +1744,7 @@ fn append_live_preview_output_args(args: &mut Vec<String>) {
 }
 
 fn capture_audio_tracks(capture: &CaptureInputs) -> Vec<AudioTrack> {
-    if capture.microphone_index.is_some() {
+    if capture.microphone.is_some() {
         return vec![microphone_audio_track()];
     }
 
@@ -1767,6 +1945,13 @@ fn output_mode(record_enabled: bool, stream_enabled: bool) -> &'static str {
         (true, false) => "record",
         (false, true) => "stream",
         (false, false) => "idle",
+    }
+}
+
+fn audio_processing_settings(params: &StartSessionParams) -> AudioProcessingSettings {
+    AudioProcessingSettings {
+        gain_db: params.audio.microphone_gain_db.clamp(-24.0, 24.0),
+        muted: params.audio.microphone_muted,
     }
 }
 
@@ -1985,6 +2170,7 @@ mod tests {
                     stream_key: "abc123".to_string(),
                 },
             },
+            audio: Default::default(),
         }
     }
 
@@ -2031,7 +2217,7 @@ mod tests {
     #[test]
     fn capture_audio_filter_keeps_mic_processing_stable() {
         assert!(CAPTURE_AUDIO_FILTER.contains("aresample=async=1:first_pts=0"));
-        assert!(CAPTURE_AUDIO_FILTER.contains("volume=12dB"));
+        assert!(!CAPTURE_AUDIO_FILTER.contains("volume="));
         assert!(!CAPTURE_AUDIO_FILTER.contains("dynaudnorm="));
         assert!(!CAPTURE_AUDIO_FILTER.contains("alimiter="));
         assert!(!CAPTURE_AUDIO_FILTER.contains("volume=24dB"));
@@ -2152,7 +2338,7 @@ mod tests {
             &CaptureInputs {
                 video: VideoInput::MacScreen { index: 3 },
                 camera_index: Some(0),
-                microphone_index: Some(1),
+                microphone: Some(MicrophoneInput::AvFoundation { index: 1 }),
             },
             &params,
             Some(Path::new("/tmp/videorc-test.mkv")),
@@ -2190,7 +2376,7 @@ mod tests {
             &CaptureInputs {
                 video: VideoInput::MacScreen { index: 3 },
                 camera_index: None,
-                microphone_index: Some(1),
+                microphone: Some(MicrophoneInput::AvFoundation { index: 1 }),
             },
             &params,
             Some(Path::new("/tmp/videorc-test.mkv")),
@@ -2210,13 +2396,53 @@ mod tests {
     }
 
     #[test]
+    fn mac_recording_uses_native_coreaudio_fifo_when_selected() {
+        let params = base_params(true, false);
+        let args = ffmpeg_args(
+            &CaptureInputs {
+                video: VideoInput::MacScreen { index: 3 },
+                camera_index: None,
+                microphone: Some(MicrophoneInput::CoreAudio {
+                    device_id: 42,
+                    fifo_path: Some(PathBuf::from("/tmp/videorc-audio-test.f32le")),
+                }),
+            },
+            &params,
+            Some(Path::new("/tmp/videorc-test.mkv")),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(
+            ffmpeg_inputs(&args),
+            vec!["3:none", "/tmp/videorc-audio-test.f32le"]
+        );
+        assert_eq!(
+            input_arg_value(&args, "/tmp/videorc-audio-test.f32le", "-f"),
+            Some("f32le")
+        );
+        assert_eq!(
+            input_arg_value(&args, "/tmp/videorc-audio-test.f32le", "-ar"),
+            Some("48000")
+        );
+        assert_eq!(
+            input_arg_value(&args, "/tmp/videorc-audio-test.f32le", "-ac"),
+            Some("2")
+        );
+        assert!(args.iter().any(|arg| arg == "1:a?"));
+        assert_eq!(arg_value(&args, "-af"), Some(CAPTURE_AUDIO_FILTER));
+        assert_eq!(arg_value(&args, "-ac"), Some("2"));
+        assert_eq!(arg_value(&args, "-c:a"), Some("pcm_s16le"));
+    }
+
+    #[test]
     fn mac_recording_without_mic_is_video_only() {
         let params = base_params(true, false);
         let args = ffmpeg_args(
             &CaptureInputs {
                 video: VideoInput::MacScreen { index: 3 },
                 camera_index: None,
-                microphone_index: None,
+                microphone: None,
             },
             &params,
             Some(Path::new("/tmp/videorc-test.mkv")),
@@ -2238,7 +2464,7 @@ mod tests {
             &CaptureInputs {
                 video: VideoInput::MacScreen { index: 3 },
                 camera_index: None,
-                microphone_index: Some(1),
+                microphone: Some(MicrophoneInput::AvFoundation { index: 1 }),
             },
             &params,
             Some(Path::new("/tmp/videorc-test.mkv")),
@@ -2263,7 +2489,7 @@ mod tests {
             &CaptureInputs {
                 video: VideoInput::MacScreen { index: 3 },
                 camera_index: Some(0),
-                microphone_index: Some(1),
+                microphone: Some(MicrophoneInput::AvFoundation { index: 1 }),
             },
             &params,
         )
@@ -2322,7 +2548,7 @@ mod tests {
             &CaptureInputs {
                 video: VideoInput::TestPattern,
                 camera_index: None,
-                microphone_index: Some(1),
+                microphone: Some(MicrophoneInput::AvFoundation { index: 1 }),
             },
             &params,
             Some(Path::new("/tmp/videorc-test.mkv")),
@@ -2333,7 +2559,7 @@ mod tests {
             &CaptureInputs {
                 video: VideoInput::TestPattern,
                 camera_index: None,
-                microphone_index: None,
+                microphone: None,
             },
             &params,
             Some(Path::new("/tmp/videorc-test.mkv")),

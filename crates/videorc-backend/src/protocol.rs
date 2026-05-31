@@ -278,6 +278,26 @@ pub struct StartSessionParams {
     pub sources: SourceSelection,
     pub layout: LayoutSettings,
     pub output: OutputSettings,
+    #[serde(default)]
+    pub audio: AudioSettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioSettings {
+    #[serde(default)]
+    pub microphone_gain_db: f32,
+    #[serde(default)]
+    pub microphone_muted: bool,
+}
+
+impl Default for AudioSettings {
+    fn default() -> Self {
+        Self {
+            microphone_gain_db: 0.0,
+            microphone_muted: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -346,6 +366,10 @@ pub enum PreviewLiveSource {
 pub struct AudioMeterParams {
     pub microphone_id: Option<String>,
     pub ffmpeg_path: Option<String>,
+    #[serde(default)]
+    pub microphone_gain_db: f32,
+    #[serde(default)]
+    pub microphone_muted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
