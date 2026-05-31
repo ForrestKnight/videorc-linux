@@ -1,16 +1,28 @@
-import { FrameCorners, Layout, SlidersHorizontal } from '@phosphor-icons/react'
+import {
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  FrameCorners,
+  Layout,
+  Selection,
+  SlidersHorizontal
+} from '@phosphor-icons/react'
 import type { ReactElement } from 'react'
 
 import { PanelSection } from '@/components/panel-section'
 import { PreviewStage } from '@/components/preview-stage'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Field, FieldContent, FieldLabel } from '@/components/ui/field'
 import { Label } from '@/components/ui/label'
+import { Separator } from '@/components/ui/separator'
 import { Slider } from '@/components/ui/slider'
 import { Switch } from '@/components/ui/switch'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useStudio } from '@/hooks/use-studio'
-import type { CameraCorner, CameraFit, CameraShape, CameraSize } from '@/lib/backend'
+import type { CameraCorner, CameraFit, CameraShape, CameraSize, SceneSource } from '@/lib/backend'
+import { cn } from '@/lib/utils'
 
 const LAYOUT_PRESETS = [
   { id: 'screen-camera', label: 'Screen + camera', enabled: true },
@@ -29,9 +41,18 @@ export function LayoutTab(): ReactElement {
     previewLiveStatus,
     refreshPreview,
     revealPermissionTarget,
-    runtimeInfo
+    runtimeInfo,
+    scene,
+    sceneEditMode,
+    selectedSceneSourceId,
+    setSceneEditMode,
+    setSelectedSceneSourceId,
+    resetSceneSource,
+    nudgeSceneSource,
+    moveSceneSource
   } = useStudio()
   const layout = captureConfig.layout
+  const selectedSource = scene?.sources.find((source) => source.id === selectedSceneSourceId)
 
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
@@ -71,7 +92,94 @@ export function LayoutTab(): ReactElement {
             previewLoading={previewLoading}
             previewUrl={previewUrl}
             runtimeInfo={runtimeInfo}
+            scene={scene}
+            sceneEditMode={sceneEditMode}
+            selectedSceneSourceId={selectedSceneSourceId}
+            onSelectSceneSource={setSelectedSceneSourceId}
           />
+        </PanelSection>
+
+        <PanelSection icon={Selection} title="Scene sources">
+          <Field orientation="horizontal">
+            <FieldContent>
+              <FieldLabel htmlFor="layout-edit-mode">Edit transforms</FieldLabel>
+            </FieldContent>
+            <Switch checked={sceneEditMode} id="layout-edit-mode" onCheckedChange={setSceneEditMode} />
+          </Field>
+
+          <div className="flex flex-col gap-2">
+            {scene?.sources.length ? (
+              scene.sources.map((source, index) => (
+                <SourceRow
+                  index={index}
+                  key={source.id}
+                  selected={source.id === selectedSceneSourceId}
+                  source={source}
+                  total={scene.sources.length}
+                  onMove={moveSceneSource}
+                  onSelect={setSelectedSceneSourceId}
+                />
+              ))
+            ) : (
+              <p className="text-sm text-muted-foreground">Scene sources will appear after capture sources are selected.</p>
+            )}
+          </div>
+
+          <Separator />
+
+          {selectedSource ? (
+            <div className="grid gap-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold">{selectedSource.name}</div>
+                  <div className="text-xs text-muted-foreground">{transformLabel(selectedSource)}</div>
+                </div>
+                <Button size="sm" variant="outline" onClick={() => void resetSceneSource(selectedSource.id)}>
+                  Reset
+                </Button>
+              </div>
+              <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 self-start">
+                <span />
+                <Button
+                  aria-label="Nudge source up"
+                  disabled={!sceneEditMode}
+                  size="icon"
+                  variant="outline"
+                  onClick={() => void nudgeSceneSource(selectedSource.id, 0, -1)}
+                >
+                  <ArrowUp />
+                </Button>
+                <span />
+                <Button
+                  aria-label="Nudge source left"
+                  disabled={!sceneEditMode}
+                  size="icon"
+                  variant="outline"
+                  onClick={() => void nudgeSceneSource(selectedSource.id, -1, 0)}
+                >
+                  <ArrowLeft />
+                </Button>
+                <Button
+                  aria-label="Nudge source down"
+                  disabled={!sceneEditMode}
+                  size="icon"
+                  variant="outline"
+                  onClick={() => void nudgeSceneSource(selectedSource.id, 0, 1)}
+                >
+                  <ArrowDown />
+                </Button>
+                <Button
+                  aria-label="Nudge source right"
+                  disabled={!sceneEditMode}
+                  size="icon"
+                  variant="outline"
+                  onClick={() => void nudgeSceneSource(selectedSource.id, 1, 0)}
+                >
+                  <ArrowRight />
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </PanelSection>
       </div>
 
@@ -181,6 +289,70 @@ export function LayoutTab(): ReactElement {
       </PanelSection>
     </div>
   )
+}
+
+function SourceRow({
+  source,
+  index,
+  total,
+  selected,
+  onSelect,
+  onMove
+}: {
+  source: SceneSource
+  index: number
+  total: number
+  selected: boolean
+  onSelect: (sourceId: string) => void
+  onMove: (sourceId: string, direction: -1 | 1) => Promise<void>
+}): ReactElement {
+  return (
+    <div
+      className={cn(
+        'flex items-center justify-between gap-3 rounded-lg border bg-muted/30 px-3 py-2',
+        selected && 'border-primary bg-primary/10'
+      )}
+    >
+      <button className="min-w-0 flex-1 text-left" type="button" onClick={() => onSelect(source.id)}>
+        <div className="truncate text-sm font-medium">{source.name}</div>
+        <div className="text-xs text-muted-foreground capitalize">
+          {source.kind}
+          {source.deviceId ? ` · ${source.deviceId}` : ''}
+        </div>
+      </button>
+      <div className="flex shrink-0 items-center gap-1">
+        <Badge variant={source.visible ? 'success' : 'secondary'}>{source.visible ? 'Visible' : 'Hidden'}</Badge>
+        <Button
+          aria-label="Move source up"
+          disabled={index === 0}
+          size="icon"
+          variant="ghost"
+          onClick={() => void onMove(source.id, -1)}
+        >
+          <ArrowUp />
+        </Button>
+        <Button
+          aria-label="Move source down"
+          disabled={index === total - 1}
+          size="icon"
+          variant="ghost"
+          onClick={() => void onMove(source.id, 1)}
+        >
+          <ArrowDown />
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function transformLabel(source: SceneSource): string {
+  const transform = source.transform
+  return [
+    `x ${Math.round(transform.x * 100)}%`,
+    `y ${Math.round(transform.y * 100)}%`,
+    `w ${Math.round(transform.width * 100)}%`,
+    `h ${Math.round(transform.height * 100)}%`
+  ].join(' · ')
 }
 
 function SliderField({

@@ -3,6 +3,8 @@ import type { ReactElement } from 'react'
 
 import { PanelSection } from '@/components/panel-section'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import {
@@ -15,8 +17,8 @@ import {
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { useStudio } from '@/hooks/use-studio'
-import type { RtmpPreset, VideoPreset } from '@/lib/backend'
-import { formatDroppedFrames, formatMetric } from '@/lib/format'
+import type { RtmpPreset, SessionSummary, VideoPreset } from '@/lib/backend'
+import { dayLabel, durationMsLabel } from '@/lib/format'
 
 export function OutputsTab(): ReactElement {
   const {
@@ -25,10 +27,12 @@ export function OutputsTab(): ReactElement {
     patchVideo,
     applyVideoPreset,
     applyRtmpPreset,
-    streamHealth,
-    streamReady
+    streamReady,
+    sessions,
+    remuxSession
   } = useStudio()
   const { video } = captureConfig
+  const outputSessions = sessions.filter((session) => session.outputPath || session.streamPreset)
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
@@ -153,12 +157,55 @@ export function OutputsTab(): ReactElement {
           </Field>
         </FieldGroup>
 
-        <div className="grid grid-cols-3 gap-2 text-center">
-          <Metric label="FPS" value={formatMetric(streamHealth?.fps, 'fps')} />
-          <Metric label="Dropped" value={formatDroppedFrames(streamHealth?.droppedFrames)} />
-          <Metric label="Speed" value={formatMetric(streamHealth?.speed, 'x')} />
-        </div>
       </PanelSection>
+
+      <PanelSection
+        className="lg:col-span-2"
+        description="Remux and artifact actions live here so Studio remains recording-focused."
+        icon={FileVideo}
+        title="Recording artifacts"
+      >
+        {outputSessions.length ? (
+          <div className="grid gap-2 lg:grid-cols-2">
+            {outputSessions.map((session) => (
+              <OutputSessionRow key={session.id} session={session} onRemux={() => remuxSession(session.id)} />
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">Completed local recordings will appear here.</p>
+        )}
+      </PanelSection>
+    </div>
+  )
+}
+
+function OutputSessionRow({
+  session,
+  onRemux
+}: {
+  session: SessionSummary
+  onRemux: () => void
+}): ReactElement {
+  const canRemux = Boolean(session.status === 'completed' && session.outputPath?.endsWith('.mkv') && !session.mp4Path)
+
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/30 px-3 py-2">
+      <div className="min-w-0">
+        <div className="truncate text-sm font-semibold">{session.title}</div>
+        <div className="truncate text-xs text-muted-foreground">
+          {dayLabel(session.startedAt)} · {session.status} · {session.outputPath ?? session.streamPreset}
+        </div>
+        <div className="mt-1 flex flex-wrap gap-1.5">
+          {session.container ? <Badge variant="outline">{session.container.toUpperCase()}</Badge> : null}
+          {typeof session.durationMs === 'number' ? (
+            <Badge variant="secondary">{durationMsLabel(session.durationMs)}</Badge>
+          ) : null}
+          {session.mp4Path ? <Badge variant="success">MP4</Badge> : <Badge variant="outline">MKV</Badge>}
+        </div>
+      </div>
+      <Button disabled={!canRemux} size="sm" variant="outline" onClick={onRemux}>
+        Remux MP4
+      </Button>
     </div>
   )
 }
@@ -190,14 +237,5 @@ function NumberField({
         onChange={(event) => onChange(Number(event.target.value))}
       />
     </Field>
-  )
-}
-
-function Metric({ label, value }: { label: string; value: string }): ReactElement {
-  return (
-    <div className="rounded-lg border bg-muted/40 px-2 py-1.5">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="text-sm font-semibold tabular-nums">{value}</div>
-    </div>
   )
 }

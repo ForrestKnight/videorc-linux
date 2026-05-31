@@ -42,6 +42,7 @@ import type {
   RecordingStatus,
   RuntimeInfo,
   RtmpPreset,
+  Scene,
   SessionLogEntry,
   SessionSummary,
   StartSessionParams,
@@ -74,6 +75,11 @@ export type StudioContextValue = {
   previewUrl: string | null
   previewLoading: boolean
   previewLiveStatus: PreviewLiveStatus
+  scene: Scene | null
+  sceneEditMode: boolean
+  selectedSceneSourceId: string | null
+  setSceneEditMode: Dispatch<SetStateAction<boolean>>
+  setSelectedSceneSourceId: Dispatch<SetStateAction<string | null>>
   audioMeter: AudioMeterResult | null
   audioMeterLoading: boolean
   // ai + jobs
@@ -98,6 +104,10 @@ export type StudioContextValue = {
   // actions
   refreshBackend: () => Promise<void>
   refreshPreview: () => Promise<void>
+  reloadSceneFromCaptureConfig: () => Promise<void>
+  resetSceneSource: (sourceId?: string) => Promise<void>
+  nudgeSceneSource: (sourceId: string, directionX: number, directionY: number, large?: boolean) => Promise<void>
+  moveSceneSource: (sourceId: string, direction: -1 | 1) => Promise<void>
   openSystemPermission: (pane: SystemPermissionPane) => Promise<void>
   openPreviewPermissions: () => Promise<void>
   revealPermissionTarget: () => Promise<void>
@@ -166,6 +176,9 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     source: 'unavailable',
     message: 'Live preview is not running.'
   })
+  const [scene, setScene] = useState<Scene | null>(null)
+  const [sceneEditMode, setSceneEditMode] = useState(false)
+  const [selectedSceneSourceId, setSelectedSceneSourceId] = useState<string | null>(null)
   const [audioMeter, setAudioMeter] = useState<AudioMeterResult | null>(null)
   const [audioMeterLoading, setAudioMeterLoading] = useState(false)
   const [now, setNow] = useState(() => Date.now())
@@ -217,6 +230,15 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     setPreviewLiveStatus(status)
     setPreviewLoading(status.state === 'connecting' || status.state === 'reconnecting')
     setPreviewUrl(status.url ? `${status.url}${status.url.includes('?') ? '&' : '?'}cache=${Date.now()}` : null)
+  }, [])
+
+  const applyScene = useCallback((nextScene: Scene) => {
+    setScene(nextScene)
+    setSelectedSceneSourceId((current) =>
+      current && nextScene.sources.some((source) => source.id === current)
+        ? current
+        : (nextScene.sources.at(-1)?.id ?? null)
+    )
   }, [])
 
   const refreshSessions = useCallback(async (activeClient: BackendClient | null) => {
@@ -363,6 +385,9 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       nextClient.on('preview.live.status', (payload) => {
         applyPreviewLiveStatus(payload as PreviewLiveStatus)
       }),
+      nextClient.on('scene.changed', (payload) => {
+        applyScene(payload as Scene)
+      }),
       nextClient.on('ai.artifacts.changed', () => {
         void refreshSessions(nextClient)
       }),
@@ -394,6 +419,10 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
         setDiagnosticStats(nextDiagnostics)
         const nextPreview = await nextClient.request<PreviewLiveStatus>('preview.live.status')
         applyPreviewLiveStatus(nextPreview)
+        const nextScene = await nextClient.request<Scene>('scene.get')
+        if (nextScene.sources.length) {
+          applyScene(nextScene)
+        }
         await refreshSessions(nextClient)
       })
       .catch((error: unknown) => {
@@ -410,6 +439,19 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appendLog, applyPreviewLiveStatus, connection, refreshSessions, reportError, settings.ffmpegPath])
+
+  const reloadSceneFromCaptureConfig = useCallback(async () => {
+    if (!client || wsStatus !== 'connected') {
+      return
+    }
+
+    const nextScene = await client.request<Scene>('scene.load_from_capture_config', {
+      sources: captureConfig.sources,
+      layout: captureConfig.layout,
+      video: captureConfig.video
+    })
+    applyScene(nextScene)
+  }, [applyScene, captureConfig.layout, captureConfig.sources, captureConfig.video, client, wsStatus])
 
   const refreshBackend = useCallback(async () => {
     if (!client) {
@@ -428,10 +470,91 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       setDeviceList(nextDevices)
       setSessions(nextSessions)
       setDiagnosticStats(nextDiagnostics)
+      if (!sceneEditMode) {
+        await reloadSceneFromCaptureConfig()
+      }
     } catch (error) {
       reportError(error)
     }
-  }, [client, reportError, settings.ffmpegPath])
+  }, [client, reloadSceneFromCaptureConfig, reportError, sceneEditMode, settings.ffmpegPath])
+
+  useEffect(() => {
+    if (!client || wsStatus !== 'connected' || sceneEditMode) {
+      return
+    }
+
+    const timer = window.setTimeout(() => {
+      void reloadSceneFromCaptureConfig().catch(reportError)
+    }, 250)
+
+    return () => window.clearTimeout(timer)
+  }, [client, reloadSceneFromCaptureConfig, reportError, sceneEditMode, wsStatus])
+
+  const resetSceneSource = useCallback(
+    async (sourceId = selectedSceneSourceId ?? undefined) => {
+      if (!client || !sourceId) {
+        return
+      }
+
+      try {
+        const nextScene = await client.request<Scene>('scene.source.transform.reset', { sourceId })
+        applyScene(nextScene)
+      } catch (error) {
+        reportError(error)
+      }
+    },
+    [applyScene, client, reportError, selectedSceneSourceId]
+  )
+
+  const nudgeSceneSource = useCallback(
+    async (sourceId: string, directionX: number, directionY: number, large = false) => {
+      if (!client) {
+        return
+      }
+
+      try {
+        const nextScene = await client.request<Scene>('scene.source.nudge', {
+          sourceId,
+          directionX,
+          directionY,
+          large
+        })
+        applyScene(nextScene)
+      } catch (error) {
+        reportError(error)
+      }
+    },
+    [applyScene, client, reportError]
+  )
+
+  const moveSceneSource = useCallback(
+    async (sourceId: string, direction: -1 | 1) => {
+      if (!client || !scene) {
+        return
+      }
+
+      const currentIndex = scene.sources.findIndex((source) => source.id === sourceId)
+      const nextIndex = currentIndex + direction
+      if (currentIndex === -1 || nextIndex < 0 || nextIndex >= scene.sources.length) {
+        return
+      }
+
+      const sourceIds = scene.sources.map((source) => source.id)
+      const [moved] = sourceIds.splice(currentIndex, 1)
+      if (!moved) {
+        return
+      }
+      sourceIds.splice(nextIndex, 0, moved)
+
+      try {
+        const nextScene = await client.request<Scene>('scene.sources.reorder', { sourceIds })
+        applyScene(nextScene)
+      } catch (error) {
+        reportError(error)
+      }
+    },
+    [applyScene, client, reportError, scene]
+  )
 
   const refreshPreview = useCallback(async () => {
     if (!client || wsStatus !== 'connected') {
@@ -790,6 +913,11 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     previewUrl,
     previewLoading,
     previewLiveStatus,
+    scene,
+    sceneEditMode,
+    selectedSceneSourceId,
+    setSceneEditMode,
+    setSelectedSceneSourceId,
     audioMeter,
     audioMeterLoading,
     aiConsent,
@@ -810,6 +938,10 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     runtimeInfo,
     refreshBackend,
     refreshPreview,
+    reloadSceneFromCaptureConfig,
+    resetSceneSource,
+    nudgeSceneSource,
+    moveSceneSource,
     openSystemPermission,
     openPreviewPermissions,
     revealPermissionTarget,

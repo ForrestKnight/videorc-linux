@@ -1,14 +1,11 @@
-import { ArrowClockwise, CheckCircle, Database, GearSix, Pulse, Warning } from '@phosphor-icons/react'
+import { ArrowClockwise, CheckCircle, Database, GearSix, LockKey, Warning } from '@phosphor-icons/react'
 import { useTheme } from 'next-themes'
 import type { ReactElement } from 'react'
 
 import { PanelSection } from '@/components/panel-section'
-import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
-import { Empty, EmptyTitle } from '@/components/ui/empty'
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Select,
   SelectContent,
@@ -19,9 +16,7 @@ import {
 } from '@/components/ui/select'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useStudio } from '@/hooks/use-studio'
-import type { HealthEvent, RtmpPreset, VideoPreset } from '@/lib/backend'
-import { compactTime } from '@/lib/format'
-import { cn } from '@/lib/utils'
+import type { RtmpPreset, SystemPermissionPane, VideoPreset } from '@/lib/backend'
 
 export function SettingsTab({ onResetOnboarding }: { onResetOnboarding: () => void }): ReactElement {
   const {
@@ -31,8 +26,7 @@ export function SettingsTab({ onResetOnboarding }: { onResetOnboarding: () => vo
     captureConfig,
     applyVideoPreset,
     applyRtmpPreset,
-    healthEvents,
-    logs
+    openSystemPermission
   } = useStudio()
   const { theme, setTheme } = useTheme()
 
@@ -131,74 +125,30 @@ export function SettingsTab({ onResetOnboarding }: { onResetOnboarding: () => vo
 
       <PanelSection
         className="lg:col-span-2"
-        description="Deterministic health events and raw backend logs."
-        icon={Pulse}
-        title="Diagnostics"
+        description="Open the macOS panes used by screen, camera, and microphone capture."
+        icon={LockKey}
+        title="Permissions"
       >
-        <div className="grid gap-4 md:grid-cols-2">
-          <div className="flex flex-col gap-2">
-            <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Health events</h3>
-            {healthEvents.length === 0 ? (
-              <Empty className="border-0 py-6">
-                <EmptyTitle>No health events yet</EmptyTitle>
-              </Empty>
-            ) : (
-              <ScrollArea className="h-64 pr-3">
-                <div className="flex flex-col gap-1.5">
-                  {healthEvents.map((event) => (
-                    <HealthRow event={event} key={event.id} />
-                  ))}
-                </div>
-              </ScrollArea>
-            )}
-          </div>
-          <div className="flex flex-col gap-2">
-            <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Backend log</h3>
-            {logs.length === 0 ? (
-              <Empty className="border-0 py-6">
-                <EmptyTitle>Waiting for backend logs</EmptyTitle>
-              </Empty>
-            ) : (
-              <ScrollArea className="h-64 pr-3">
-                <div className="flex flex-col gap-1 font-mono text-xs">
-                  {logs.map((log, index) => (
-                    <div className="flex gap-2" key={`${log.timestamp}-${index}`}>
-                      <time className="shrink-0 text-muted-foreground">{compactTime(log.timestamp)}</time>
-                      <span
-                        className={cn(
-                          'shrink-0 uppercase',
-                          log.level === 'error' && 'text-destructive',
-                          log.level === 'warn' && 'text-warning'
-                        )}
-                      >
-                        {log.level}
-                      </span>
-                      <p className="min-w-0 break-words">{log.message}</p>
-                    </div>
-                  ))}
-                </div>
-              </ScrollArea>
-            )}
-          </div>
+        <div className="flex flex-wrap gap-2">
+          {PERMISSION_SHORTCUTS.map((shortcut) => (
+            <Button
+              key={shortcut.pane}
+              size="sm"
+              variant="outline"
+              onClick={() => void openSystemPermission(shortcut.pane)}
+            >
+              {shortcut.label}
+            </Button>
+          ))}
         </div>
       </PanelSection>
     </div>
   )
 }
 
-function HealthRow({ event }: { event: HealthEvent }): ReactElement {
-  const tone = event.level === 'error' ? 'error' : event.level === 'warn' ? 'warn' : 'neutral'
-
-  return (
-    <div className="flex items-start justify-between gap-3 rounded-lg border bg-muted/30 px-3 py-2">
-      <div className="flex min-w-0 flex-col">
-        <span className="text-sm font-medium">{event.code}</span>
-        <span className="text-xs text-muted-foreground">{event.message}</span>
-      </div>
-      <div className="flex shrink-0 items-center gap-2">
-        <StatusBadge tone={tone} value={event.level} />
-        <time className="text-xs text-muted-foreground">{compactTime(event.createdAt)}</time>
-      </div>
-    </div>
-  )
-}
+const PERMISSION_SHORTCUTS: Array<{ label: string; pane: SystemPermissionPane }> = [
+  { label: 'Privacy', pane: 'privacy' },
+  { label: 'Screen Recording', pane: 'screen-recording' },
+  { label: 'Camera', pane: 'camera' },
+  { label: 'Microphone', pane: 'microphone' }
+]

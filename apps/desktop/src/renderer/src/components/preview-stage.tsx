@@ -1,9 +1,9 @@
-import { ArrowsClockwise, FolderOpen, GearSix, Image, VideoCamera } from '@phosphor-icons/react'
+import { ArrowsClockwise, FolderOpen, GearSix, Image, PencilSimpleLine, VideoCamera } from '@phosphor-icons/react'
 import { useEffect, useState, type CSSProperties, type ReactElement } from 'react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import type { LayoutSettings, PreviewLiveStatus, RuntimeInfo } from '@/lib/backend'
+import type { LayoutSettings, PreviewLiveStatus, RuntimeInfo, Scene } from '@/lib/backend'
 import { cn } from '@/lib/utils'
 
 const SIZE_FRACTION: Record<LayoutSettings['cameraSize'], string> = {
@@ -43,6 +43,10 @@ export function PreviewStage({
   onOpenPermissions,
   onRevealPermissionTarget,
   runtimeInfo,
+  scene,
+  sceneEditMode = false,
+  selectedSceneSourceId,
+  onSelectSceneSource,
   className
 }: {
   previewUrl: string | null
@@ -53,6 +57,10 @@ export function PreviewStage({
   onOpenPermissions?: () => void
   onRevealPermissionTarget?: () => void
   runtimeInfo?: RuntimeInfo | null
+  scene?: Scene | null
+  sceneEditMode?: boolean
+  selectedSceneSourceId?: string | null
+  onSelectSceneSource?: (sourceId: string) => void
   className?: string
 }): ReactElement {
   const [imageFailed, setImageFailed] = useState(false)
@@ -112,6 +120,42 @@ export function PreviewStage({
         <Badge className="absolute top-2 left-2" variant={isLive ? 'success' : 'secondary'}>
           {previewLoading ? 'Connecting' : badgeLabel}
         </Badge>
+        {sceneEditMode ? (
+          <Badge className="absolute top-2 right-2" variant="warning">
+            <PencilSimpleLine data-icon="inline-start" />
+            Edit
+          </Badge>
+        ) : null}
+        {sceneEditMode && scene ? (
+          <div className="pointer-events-none absolute inset-0">
+            {scene.sources
+              .filter((source) => source.visible)
+              .map((source) => {
+                const selected = source.id === selectedSceneSourceId
+                return (
+                  <button
+                    aria-label={`Select ${source.name}`}
+                    className={cn(
+                      'pointer-events-auto absolute border text-left transition-colors',
+                      'appearance-none p-0',
+                      selected
+                        ? 'border-primary bg-primary/10 ring-2 ring-primary/40'
+                        : 'border-primary/50 bg-primary/5 hover:bg-primary/10'
+                    )}
+                    key={source.id}
+                    style={sceneSourceStyle(source.transform)}
+                    type="button"
+                    onClick={() => onSelectSceneSource?.(source.id)}
+                  >
+                    <span className="absolute -top-6 left-0 rounded-md bg-background/95 px-1.5 py-0.5 text-[10px] font-medium text-foreground shadow-sm">
+                      {source.name}
+                    </span>
+                    {selected ? <TransformHandles /> : null}
+                  </button>
+                )
+              })}
+          </div>
+        ) : null}
       </div>
       {showUnavailable && (onRetry || onOpenPermissions) ? (
         <div className="flex flex-col gap-2">
@@ -144,5 +188,33 @@ export function PreviewStage({
         </div>
       ) : null}
     </div>
+  )
+}
+
+function sceneSourceStyle(transform: Scene['sources'][number]['transform']): CSSProperties {
+  return {
+    left: `${transform.x * 100}%`,
+    top: `${transform.y * 100}%`,
+    width: `${transform.width * 100}%`,
+    height: `${transform.height * 100}%`
+  }
+}
+
+function TransformHandles(): ReactElement {
+  return (
+    <>
+      {[
+        'top-0 left-0 -translate-x-1/2 -translate-y-1/2',
+        'top-0 left-1/2 -translate-x-1/2 -translate-y-1/2',
+        'top-0 right-0 translate-x-1/2 -translate-y-1/2',
+        'top-1/2 right-0 translate-x-1/2 -translate-y-1/2',
+        'right-0 bottom-0 translate-x-1/2 translate-y-1/2',
+        'bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2',
+        'bottom-0 left-0 -translate-x-1/2 translate-y-1/2',
+        'top-1/2 left-0 -translate-x-1/2 -translate-y-1/2'
+      ].map((position) => (
+        <span className={cn('absolute size-2 rounded-sm border border-background bg-primary', position)} key={position} />
+      ))}
+    </>
   )
 }

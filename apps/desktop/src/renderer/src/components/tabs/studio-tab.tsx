@@ -1,4 +1,4 @@
-import { Broadcast, FolderOpen, Play, Record, StopCircle } from '@phosphor-icons/react'
+import { Broadcast, FolderOpen, Play, Record, SpeakerHigh, SpeakerSlash, StopCircle } from '@phosphor-icons/react'
 import type { ReactElement } from 'react'
 
 import { BlockingBanner } from '@/components/blocking-banner'
@@ -10,7 +10,6 @@ import { Field, FieldContent, FieldLabel } from '@/components/ui/field'
 import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
 import { useStudio } from '@/hooks/use-studio'
-import { formatDroppedFrames, formatMetric } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 const STATE_TONE: Record<string, StatusTone> = {
@@ -47,10 +46,16 @@ export function StudioTab(): ReactElement {
     selectedCaptureDevice,
     selectedCamera,
     selectedMicrophone,
-    streamHealth,
     streamReady,
     wsStatus,
-    health
+    health,
+    audioMeter,
+    meterLevel,
+    scene,
+    sceneEditMode,
+    selectedSceneSourceId,
+    setSceneEditMode,
+    setSelectedSceneSourceId
   } = studio
 
   const active = recording.state === 'recording' || recording.state === 'streaming'
@@ -81,6 +86,10 @@ export function StudioTab(): ReactElement {
           previewLoading={previewLoading}
           previewUrl={previewUrl}
           runtimeInfo={runtimeInfo}
+          scene={scene}
+          sceneEditMode={sceneEditMode}
+          selectedSceneSourceId={selectedSceneSourceId}
+          onSelectSceneSource={setSelectedSceneSourceId}
         />
 
         <div className="flex flex-col gap-4">
@@ -141,6 +150,12 @@ export function StudioTab(): ReactElement {
             <div className="flex flex-col gap-3">
               <Field orientation="horizontal">
                 <FieldContent>
+                  <FieldLabel htmlFor="studio-edit-mode">Edit transforms</FieldLabel>
+                </FieldContent>
+                <Switch checked={sceneEditMode} id="studio-edit-mode" onCheckedChange={setSceneEditMode} />
+              </Field>
+              <Field orientation="horizontal">
+                <FieldContent>
                   <FieldLabel htmlFor="studio-record">Record MKV</FieldLabel>
                 </FieldContent>
                 <Switch
@@ -164,6 +179,16 @@ export function StudioTab(): ReactElement {
                 />
               </Field>
             </div>
+          </PanelSection>
+
+          <PanelSection icon={selectedMicrophone ? SpeakerHigh : SpeakerSlash} title="Mixer">
+            <MixerRow
+              gainDb={captureConfig.audio.microphoneGainDb}
+              meterLevel={meterLevel}
+              muted={captureConfig.audio.microphoneMuted}
+              peakDb={audioMeter?.peakDb}
+              selectedMicrophoneName={selectedMicrophone?.name}
+            />
           </PanelSection>
 
           <PanelSection icon={Broadcast} title="Live summary">
@@ -195,13 +220,47 @@ export function StudioTab(): ReactElement {
                 <StatusBadge label="Stream" tone={streamReady ? 'good' : 'warn'} value={streamReady ? 'ready' : 'setup'} />
               ) : null}
             </div>
-            <div className="grid grid-cols-3 gap-2 text-center">
-              <Metric label="FPS" value={formatMetric(streamHealth?.fps, 'fps')} />
-              <Metric label="Dropped" value={formatDroppedFrames(streamHealth?.droppedFrames)} />
-              <Metric label="Speed" value={formatMetric(streamHealth?.speed, 'x')} />
-            </div>
           </PanelSection>
         </div>
+      </div>
+    </div>
+  )
+}
+
+function MixerRow({
+  selectedMicrophoneName,
+  meterLevel,
+  gainDb,
+  muted,
+  peakDb
+}: {
+  selectedMicrophoneName?: string
+  meterLevel: number
+  gainDb: number
+  muted: boolean
+  peakDb?: number
+}): ReactElement {
+  const meterTone = muted ? 'bg-muted-foreground/30' : meterLevel > 2 ? 'bg-success' : 'bg-warning'
+
+  return (
+    <div className="grid gap-2">
+      <div className="flex items-center justify-between gap-3 text-sm">
+        <span className="min-w-0 truncate text-muted-foreground">
+          {selectedMicrophoneName ?? 'No microphone selected'}
+        </span>
+        <span className="font-mono text-xs tabular-nums text-muted-foreground">
+          {muted ? 'Muted' : `${gainDb > 0 ? '+' : ''}${gainDb} dB`}
+        </span>
+      </div>
+      <div className="h-2.5 w-full overflow-hidden rounded-full bg-muted">
+        <div
+          className={cn('h-full rounded-full transition-all', meterTone)}
+          style={{ width: `${Math.min(100, Math.max(0, meterLevel))}%` }}
+        />
+      </div>
+      <div className="flex items-center justify-between text-xs text-muted-foreground">
+        <span>Source meter</span>
+        <span>{typeof peakDb === 'number' ? `${peakDb.toFixed(1)} dB` : 'Not checked'}</span>
       </div>
     </div>
   )
@@ -227,15 +286,6 @@ function pipelineStatusLabel(status: string): string {
     default:
       return 'Running'
   }
-}
-
-function Metric({ label, value }: { label: string; value: string }): ReactElement {
-  return (
-    <div className="rounded-lg border bg-muted/40 px-2 py-1.5">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="text-sm font-semibold tabular-nums">{value}</div>
-    </div>
-  )
 }
 
 function studioBlocker(studio: ReturnType<typeof useStudio>): {

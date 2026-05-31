@@ -11,7 +11,7 @@ import type { SessionSummary } from '@/lib/backend'
 import { dayLabel, durationMsLabel } from '@/lib/format'
 
 export function LibraryTab({ onOpenInAi }: { onOpenInAi: (sessionId: string) => void }): ReactElement {
-  const { sessions, remuxSession } = useStudio()
+  const { sessions } = useStudio()
 
   return (
     <PanelSection
@@ -34,7 +34,6 @@ export function LibraryTab({ onOpenInAi }: { onOpenInAi: (sessionId: string) => 
               <SessionRow
                 key={session.id}
                 onOpenInAi={() => onOpenInAi(session.id)}
-                onRemux={() => remuxSession(session.id)}
                 session={session}
               />
             ))}
@@ -47,15 +46,11 @@ export function LibraryTab({ onOpenInAi }: { onOpenInAi: (sessionId: string) => 
 
 function SessionRow({
   session,
-  onRemux,
   onOpenInAi
 }: {
   session: SessionSummary
-  onRemux: () => void
   onOpenInAi: () => void
 }): ReactElement {
-  const canRemux = Boolean(session.status === 'completed' && session.outputPath?.endsWith('.mkv') && !session.mp4Path)
-
   return (
     <div className="flex flex-col gap-2 rounded-xl border bg-card p-3">
       <div className="flex items-start justify-between gap-3">
@@ -83,9 +78,6 @@ function SessionRow({
         {session.outputPath ?? session.streamPreset ?? 'No local file'}
       </p>
       <div className="flex flex-wrap gap-2">
-        <Button disabled={!canRemux} size="sm" variant="outline" onClick={onRemux}>
-          Remux MP4
-        </Button>
         <Button size="sm" variant="secondary" onClick={onOpenInAi}>
           <Sparkle data-icon="inline-start" weight="fill" />
           Open in AI
