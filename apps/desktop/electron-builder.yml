@@ -18,6 +18,8 @@ extraResources:
     to: videorc-backend
     filter:
       - videorc-backend
+  - from: src/renderer/src/assets/videorc-logo.png
+    to: videorc-logo.png
   - from: ../../vendor/ffmpeg/current
     to: ffmpeg
     filter:

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, nativeImage, shell, type NativeImage } from 'electron'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
@@ -10,6 +10,7 @@ let mainWindow: BrowserWindow | null = null
 let backendProcess: ChildProcessWithoutNullStreams | null = null
 let backendConnection: BackendConnection | null = null
 let stdoutBuffer = ''
+let appIcon: NativeImage | null | undefined
 const backendLogs: BackendLogEvent[] = []
 
 const MACOS_PERMISSION_URLS: Record<SystemPermissionPane, string> = {
@@ -20,6 +21,7 @@ const MACOS_PERMISSION_URLS: Record<SystemPermissionPane, string> = {
 }
 
 function createWindow(): void {
+  const icon = resolveAppIcon()
   mainWindow = new BrowserWindow({
     width: 1180,
     height: 780,
@@ -27,6 +29,7 @@ function createWindow(): void {
     minHeight: 660,
     title: 'Videorc',
     backgroundColor: '#ffffff',
+    ...(icon ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -50,6 +53,44 @@ function createWindow(): void {
     mainWindow.webContents.once('did-finish-load', () => {
       mainWindow?.webContents.send('backend:connection', backendConnection)
     })
+  }
+}
+
+function resolveAppIcon(): NativeImage | null {
+  if (appIcon !== undefined) {
+    return appIcon
+  }
+
+  const iconPath = resolveAppIconPath()
+  if (!iconPath) {
+    appIcon = null
+    return appIcon
+  }
+
+  const image = nativeImage.createFromPath(iconPath)
+  appIcon = image.isEmpty() ? null : image
+  return appIcon
+}
+
+function resolveAppIconPath(): string | null {
+  const candidates = app.isPackaged
+    ? [join(process.resourcesPath, 'videorc-logo.png'), join(process.resourcesPath, 'icon.icns')]
+    : [
+        resolve(workspaceRoot(), 'apps/desktop/src/renderer/src/assets/videorc-logo.png'),
+        resolve(workspaceRoot(), 'apps/desktop/build-resources/icon.icns')
+      ]
+
+  return candidates.find((path) => existsSync(path)) ?? null
+}
+
+function setDockIcon(): void {
+  if (process.platform !== 'darwin') {
+    return
+  }
+
+  const icon = resolveAppIcon()
+  if (icon) {
+    app.dock?.setIcon(icon)
   }
 }
 
@@ -215,6 +256,7 @@ app.whenReady().then(() => {
   ipcMain.handle('backend:get-logs', () => backendLogs)
   ipcMain.handle('system:open-permissions', (_event, pane?: SystemPermissionPane) => openSystemPermissions(pane))
 
+  setDockIcon()
   startBackend()
   createWindow()
 
