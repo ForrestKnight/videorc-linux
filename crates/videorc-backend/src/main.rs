@@ -38,7 +38,7 @@ use recording::{
 };
 use scene::{
     nudge_source, reorder_sources, reset_source_transform, scene_from_capture_config,
-    update_source_transform,
+    update_source_transform, update_source_visibility,
 };
 use serde::Deserialize;
 use tokio::net::TcpListener;
@@ -384,6 +384,28 @@ async fn handle_text_message(state: &AppState, text: &str) -> ServerResponse {
                         }
                         Err(error) => {
                             ServerResponse::error(command.id, "scene-reset-failed", error)
+                        }
+                    }
+                }
+                Err(error) => {
+                    ServerResponse::error(command.id, "invalid-params", error.to_string())
+                }
+            }
+        }
+        "scene.source.visibility.update" => {
+            match serde_json::from_value::<protocol::SceneSourceVisibilityParams>(command.params) {
+                Ok(params) => {
+                    let result = {
+                        let mut guard = state.scene.lock().await;
+                        update_source_visibility(&mut guard, params)
+                    };
+                    match result {
+                        Ok(scene) => {
+                            state.emit_event("scene.changed", &scene);
+                            ServerResponse::ok(command.id, scene)
+                        }
+                        Err(error) => {
+                            ServerResponse::error(command.id, "scene-visibility-failed", error)
                         }
                     }
                 }

@@ -204,6 +204,11 @@ export interface SceneSourceParams {
   sourceId: string
 }
 
+export interface SceneSourceVisibilityParams {
+  sourceId: string
+  visible: boolean
+}
+
 export interface SceneSourceOrderParams {
   sourceIds: string[]
 }

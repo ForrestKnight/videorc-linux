@@ -1,7 +1,8 @@
 use crate::protocol::{
     CameraCorner, CameraFit, CameraShape, CameraSize, Scene, SceneConfigParams, SceneOutput,
     SceneOutputKind, SceneSource, SceneSourceKind, SceneSourceOrderParams, SceneSourceParams,
-    SceneTransform, SceneTransformPatch, SceneTransformUpdateParams, SourceSelection,
+    SceneSourceVisibilityParams, SceneTransform, SceneTransformPatch, SceneTransformUpdateParams,
+    SourceSelection,
 };
 
 const DEFAULT_SCENE_ID: &str = "scene:default";
@@ -84,6 +85,15 @@ pub fn reset_source_transform(
 ) -> Result<Scene, String> {
     let source = find_source_mut(scene, &params.source_id)?;
     source.transform = source.default_transform.clone();
+    Ok(scene.clone())
+}
+
+pub fn update_source_visibility(
+    scene: &mut Scene,
+    params: SceneSourceVisibilityParams,
+) -> Result<Scene, String> {
+    let source = find_source_mut(scene, &params.source_id)?;
+    source.visible = params.visible;
     Ok(scene.clone())
 }
 
@@ -490,6 +500,22 @@ mod tests {
 
         assert_eq!(scene.sources[0].id, CAMERA_SOURCE_ID);
         assert_eq!(scene.sources[1].id, BASE_SOURCE_ID);
+    }
+
+    #[test]
+    fn updates_source_visibility() {
+        let mut scene = scene_from_capture_config(base_params());
+
+        update_source_visibility(
+            &mut scene,
+            SceneSourceVisibilityParams {
+                source_id: CAMERA_SOURCE_ID.to_string(),
+                visible: false,
+            },
+        )
+        .unwrap();
+
+        assert!(!scene.sources[1].visible);
     }
 
     #[test]

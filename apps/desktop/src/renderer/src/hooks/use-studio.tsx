@@ -107,6 +107,7 @@ export type StudioContextValue = {
   reloadSceneFromCaptureConfig: () => Promise<void>
   resetSceneSource: (sourceId?: string) => Promise<void>
   nudgeSceneSource: (sourceId: string, directionX: number, directionY: number, large?: boolean) => Promise<void>
+  setSceneSourceVisible: (sourceId: string, visible: boolean) => Promise<void>
   moveSceneSource: (sourceId: string, direction: -1 | 1) => Promise<void>
   openSystemPermission: (pane: SystemPermissionPane) => Promise<void>
   openPreviewPermissions: () => Promise<void>
@@ -527,6 +528,25 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     [applyScene, client, reportError]
   )
 
+  const setSceneSourceVisible = useCallback(
+    async (sourceId: string, visible: boolean) => {
+      if (!client) {
+        return
+      }
+
+      try {
+        const nextScene = await client.request<Scene>('scene.source.visibility.update', {
+          sourceId,
+          visible
+        })
+        applyScene(nextScene)
+      } catch (error) {
+        reportError(error)
+      }
+    },
+    [applyScene, client, reportError]
+  )
+
   const moveSceneSource = useCallback(
     async (sourceId: string, direction: -1 | 1) => {
       if (!client || !scene) {
@@ -893,11 +913,49 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
         event.preventDefault()
         void refreshPreview()
       }
+
+      if (sceneEditMode && selectedSceneSourceId) {
+        const large = event.shiftKey
+        if (event.key === 'ArrowUp') {
+          event.preventDefault()
+          void nudgeSceneSource(selectedSceneSourceId, 0, -1, large)
+          return
+        }
+        if (event.key === 'ArrowDown') {
+          event.preventDefault()
+          void nudgeSceneSource(selectedSceneSourceId, 0, 1, large)
+          return
+        }
+        if (event.key === 'ArrowLeft') {
+          event.preventDefault()
+          void nudgeSceneSource(selectedSceneSourceId, -1, 0, large)
+          return
+        }
+        if (event.key === 'ArrowRight') {
+          event.preventDefault()
+          void nudgeSceneSource(selectedSceneSourceId, 1, 0, large)
+          return
+        }
+        if (event.key.toLowerCase() === 'r') {
+          event.preventDefault()
+          void resetSceneSource(selectedSceneSourceId)
+        }
+      }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [canStart, canStop, refreshPreview, startSession, stopSession])
+  }, [
+    canStart,
+    canStop,
+    nudgeSceneSource,
+    refreshPreview,
+    resetSceneSource,
+    sceneEditMode,
+    selectedSceneSourceId,
+    startSession,
+    stopSession
+  ])
 
   const value: StudioContextValue = {
     connection,
@@ -941,6 +999,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     reloadSceneFromCaptureConfig,
     resetSceneSource,
     nudgeSceneSource,
+    setSceneSourceVisible,
     moveSceneSource,
     openSystemPermission,
     openPreviewPermissions,

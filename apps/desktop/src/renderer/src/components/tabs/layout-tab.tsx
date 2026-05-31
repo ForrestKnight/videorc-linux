@@ -49,6 +49,7 @@ export function LayoutTab(): ReactElement {
     setSelectedSceneSourceId,
     resetSceneSource,
     nudgeSceneSource,
+    setSceneSourceVisible,
     moveSceneSource
   } = useStudio()
   const layout = captureConfig.layout
@@ -118,6 +119,7 @@ export function LayoutTab(): ReactElement {
                   total={scene.sources.length}
                   onMove={moveSceneSource}
                   onSelect={setSelectedSceneSourceId}
+                  onVisibilityChange={setSceneSourceVisible}
                 />
               ))
             ) : (
@@ -297,7 +299,8 @@ function SourceRow({
   total,
   selected,
   onSelect,
-  onMove
+  onMove,
+  onVisibilityChange
 }: {
   source: SceneSource
   index: number
@@ -305,6 +308,7 @@ function SourceRow({
   selected: boolean
   onSelect: (sourceId: string) => void
   onMove: (sourceId: string, direction: -1 | 1) => Promise<void>
+  onVisibilityChange: (sourceId: string, visible: boolean) => Promise<void>
 }): ReactElement {
   return (
     <div
@@ -321,7 +325,14 @@ function SourceRow({
         </div>
       </button>
       <div className="flex shrink-0 items-center gap-1">
-        <Badge variant={source.visible ? 'success' : 'secondary'}>{source.visible ? 'Visible' : 'Hidden'}</Badge>
+        <Button
+          aria-label={source.visible ? `Hide ${source.name}` : `Show ${source.name}`}
+          size="sm"
+          variant={source.visible ? 'secondary' : 'outline'}
+          onClick={() => void onVisibilityChange(source.id, !source.visible)}
+        >
+          {source.visible ? 'Visible' : 'Hidden'}
+        </Button>
         <Button
           aria-label="Move source up"
           disabled={index === 0}

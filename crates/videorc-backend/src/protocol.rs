@@ -380,6 +380,13 @@ pub struct SceneSourceParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SceneSourceVisibilityParams {
+    pub source_id: String,
+    pub visible: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SceneSourceOrderParams {
     pub source_ids: Vec<String>,
 }
