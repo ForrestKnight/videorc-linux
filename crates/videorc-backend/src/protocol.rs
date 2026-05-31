@@ -578,6 +578,37 @@ pub struct StreamHealth {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagnosticStats {
+    pub session_id: Option<String>,
+    pub target_fps: Option<f64>,
+    pub capture_fps: Option<f64>,
+    pub render_fps: Option<f64>,
+    pub skipped_frames: u64,
+    pub dropped_frames: u64,
+    pub encoder_speed: Option<f64>,
+    pub preview_latency_ms: Option<u64>,
+    pub mic_captured_frames: Option<u64>,
+    pub mic_dropped_frames: u64,
+    pub device_disconnected: bool,
+    pub bottleneck: DiagnosticBottleneck,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum DiagnosticBottleneck {
+    None,
+    Capture,
+    Render,
+    Encoder,
+    Preview,
+    Audio,
+    Device,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum AudioMeterStatus {
     Ready,
@@ -603,7 +634,17 @@ pub struct SessionSummary {
     pub layout: LayoutSettings,
     pub sources: SourceSelection,
     pub health_events: Vec<HealthEvent>,
+    pub session_logs: Vec<SessionLogEntry>,
     pub ai_artifacts: Vec<AiArtifact>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum PermissionPane {
+    Privacy,
+    ScreenRecording,
+    Camera,
+    Microphone,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -614,6 +655,20 @@ pub struct HealthEvent {
     pub level: HealthLevel,
     pub code: String,
     pub message: String,
+    pub permission_pane: Option<PermissionPane>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionLogEntry {
+    pub id: String,
+    pub session_id: String,
+    pub level: HealthLevel,
+    pub code: String,
+    pub message: String,
+    pub source_id: Option<String>,
+    pub permission_pane: Option<PermissionPane>,
     pub created_at: String,
 }
 

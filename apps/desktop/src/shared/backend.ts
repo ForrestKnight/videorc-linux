@@ -312,7 +312,26 @@ export interface StreamHealth {
   createdAt: string
 }
 
+export type DiagnosticBottleneck = 'none' | 'capture' | 'render' | 'encoder' | 'preview' | 'audio' | 'device' | 'unknown'
+
+export interface DiagnosticStats {
+  sessionId?: string
+  targetFps?: number
+  captureFps?: number
+  renderFps?: number
+  skippedFrames: number
+  droppedFrames: number
+  encoderSpeed?: number
+  previewLatencyMs?: number
+  micCapturedFrames?: number
+  micDroppedFrames: number
+  deviceDisconnected: boolean
+  bottleneck: DiagnosticBottleneck
+  updatedAt: string
+}
+
 export type HealthLevel = 'info' | 'warn' | 'error'
+export type SystemPermissionPane = 'privacy' | 'screen-recording' | 'camera' | 'microphone'
 
 export interface HealthEvent {
   id: string
@@ -320,6 +339,18 @@ export interface HealthEvent {
   level: HealthLevel
   code: string
   message: string
+  permissionPane?: SystemPermissionPane
+  createdAt: string
+}
+
+export interface SessionLogEntry {
+  id: string
+  sessionId: string
+  level: HealthLevel
+  code: string
+  message: string
+  sourceId?: string
+  permissionPane?: SystemPermissionPane
   createdAt: string
 }
 
@@ -378,10 +409,9 @@ export interface SessionSummary {
   layout: LayoutSettings
   sources: SourceSelection
   healthEvents: HealthEvent[]
+  sessionLogs: SessionLogEntry[]
   aiArtifacts: AiArtifact[]
 }
-
-export type SystemPermissionPane = 'privacy' | 'screen-recording' | 'camera' | 'microphone'
 
 export interface RuntimeInfo {
   isPackaged: boolean

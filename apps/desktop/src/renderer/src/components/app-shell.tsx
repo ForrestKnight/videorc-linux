@@ -5,6 +5,7 @@ import logoUrl from '@/assets/videorc-logo.png'
 import { OnboardingDialog } from '@/components/onboarding-dialog'
 import { StatusBadge } from '@/components/status-badge'
 import { AiTab } from '@/components/tabs/ai-tab'
+import { DiagnosticsTab } from '@/components/tabs/diagnostics-tab'
 import { LayoutTab } from '@/components/tabs/layout-tab'
 import { LibraryTab } from '@/components/tabs/library-tab'
 import { OutputsTab } from '@/components/tabs/outputs-tab'
@@ -109,6 +110,9 @@ export function AppShell(): ReactElement {
           </TabsContent>
           <TabsContent value="ai">
             <AiTab selectedSessionId={selectedSessionId} setSelectedSessionId={setSelectedSessionId} />
+          </TabsContent>
+          <TabsContent value="diagnostics">
+            <DiagnosticsTab />
           </TabsContent>
           <TabsContent value="settings">
             <SettingsTab onResetOnboarding={resetOnboarding} />

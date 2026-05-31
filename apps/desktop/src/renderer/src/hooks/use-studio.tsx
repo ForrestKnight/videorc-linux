@@ -32,6 +32,7 @@ import type {
   BackendConnection,
   BackendHealth,
   BackendLogEvent,
+  DiagnosticStats,
   Device,
   DeviceList,
   ExportPublishPackResult,
@@ -41,9 +42,11 @@ import type {
   RecordingStatus,
   RuntimeInfo,
   RtmpPreset,
+  SessionLogEntry,
   SessionSummary,
   StartSessionParams,
   StreamHealth,
+  SystemPermissionPane,
   VideoPreset,
   VideoSettings
 } from '@/lib/backend'
@@ -65,6 +68,7 @@ export type StudioContextValue = {
   logs: BackendLogEvent[]
   healthEvents: HealthEvent[]
   streamHealth: StreamHealth | null
+  diagnosticStats: DiagnosticStats
   sessions: SessionSummary[]
   // preview + audio
   previewUrl: string | null
@@ -94,6 +98,7 @@ export type StudioContextValue = {
   // actions
   refreshBackend: () => Promise<void>
   refreshPreview: () => Promise<void>
+  openSystemPermission: (pane: SystemPermissionPane) => Promise<void>
   openPreviewPermissions: () => Promise<void>
   revealPermissionTarget: () => Promise<void>
   sampleAudioMeter: () => Promise<void>
@@ -121,6 +126,15 @@ export type StudioContextValue = {
 
 const StudioContext = createContext<StudioContextValue | null>(null)
 
+const idleDiagnosticStats = (): DiagnosticStats => ({
+  skippedFrames: 0,
+  droppedFrames: 0,
+  micDroppedFrames: 0,
+  deviceDisconnected: false,
+  bottleneck: 'none',
+  updatedAt: new Date().toISOString()
+})
+
 function sourceStillAvailable(sourceId: string | undefined, devices: Device[]): boolean {
   return Boolean(sourceId && devices.some((device) => device.id === sourceId))
 }
@@ -143,6 +157,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   const [logs, setLogs] = useState<BackendLogEvent[]>([])
   const [healthEvents, setHealthEvents] = useState<HealthEvent[]>([])
   const [streamHealth, setStreamHealth] = useState<StreamHealth | null>(null)
+  const [diagnosticStats, setDiagnosticStats] = useState<DiagnosticStats>(idleDiagnosticStats)
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
@@ -319,10 +334,31 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
         }
       }),
       nextClient.on('health.event', (payload) => {
-        setHealthEvents((current) => [payload as HealthEvent, ...current].slice(0, 40))
+        const event = payload as HealthEvent
+        setHealthEvents((current) => [event, ...current].slice(0, 40))
+        setSessions((current) =>
+          current.map((session) =>
+            session.id === event.sessionId
+              ? { ...session, healthEvents: [...session.healthEvents, event] }
+              : session
+          )
+        )
+      }),
+      nextClient.on('session.log', (payload) => {
+        const entry = payload as SessionLogEntry
+        setSessions((current) =>
+          current.map((session) =>
+            session.id === entry.sessionId
+              ? { ...session, sessionLogs: [...session.sessionLogs, entry] }
+              : session
+          )
+        )
       }),
       nextClient.on('stream.health', (payload) => {
         setStreamHealth((current) => mergeStreamHealth(current, payload as StreamHealth))
+      }),
+      nextClient.on('diagnostics.stats', (payload) => {
+        setDiagnosticStats(payload as DiagnosticStats)
       }),
       nextClient.on('preview.live.status', (payload) => {
         applyPreviewLiveStatus(payload as PreviewLiveStatus)
@@ -354,6 +390,8 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
         setDeviceList(nextDevices)
         const nextRecording = await nextClient.request<RecordingStatus>('recording.status')
         setRecording(nextRecording)
+        const nextDiagnostics = await nextClient.request<DiagnosticStats>('diagnostics.stats')
+        setDiagnosticStats(nextDiagnostics)
         const nextPreview = await nextClient.request<PreviewLiveStatus>('preview.live.status')
         applyPreviewLiveStatus(nextPreview)
         await refreshSessions(nextClient)
@@ -380,14 +418,16 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
 
     try {
       setLastError(null)
-      const [nextHealth, nextDevices, nextSessions] = await Promise.all([
+      const [nextHealth, nextDevices, nextSessions, nextDiagnostics] = await Promise.all([
         client.request<BackendHealth>('health.ping', { ffmpegPath: settings.ffmpegPath.trim() || undefined }),
         client.request<DeviceList>('devices.list', { ffmpegPath: settings.ffmpegPath.trim() || undefined }),
-        client.request<SessionSummary[]>('sessions.list')
+        client.request<SessionSummary[]>('sessions.list'),
+        client.request<DiagnosticStats>('diagnostics.stats')
       ])
       setHealth(nextHealth)
       setDeviceList(nextDevices)
       setSessions(nextSessions)
+      setDiagnosticStats(nextDiagnostics)
     } catch (error) {
       reportError(error)
     }
@@ -440,18 +480,22 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     wsStatus
   ])
 
-  const openPreviewPermissions = useCallback(async () => {
+  const openSystemPermission = useCallback(async (pane: SystemPermissionPane) => {
     if (!window.videorc?.openSystemPermissions) {
       toast.error('Permission shortcut is unavailable outside Electron.')
       return
     }
 
     try {
-      await window.videorc.openSystemPermissions('screen-recording')
+      await window.videorc.openSystemPermissions(pane)
     } catch (error) {
       reportError(error)
     }
   }, [reportError])
+
+  const openPreviewPermissions = useCallback(async () => {
+    await openSystemPermission('screen-recording')
+  }, [openSystemPermission])
 
   const revealPermissionTarget = useCallback(async () => {
     if (!window.videorc?.revealPermissionTarget) {
@@ -741,6 +785,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     logs,
     healthEvents,
     streamHealth,
+    diagnosticStats,
     sessions,
     previewUrl,
     previewLoading,
@@ -765,6 +810,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     runtimeInfo,
     refreshBackend,
     refreshPreview,
+    openSystemPermission,
     openPreviewPermissions,
     revealPermissionTarget,
     sampleAudioMeter,

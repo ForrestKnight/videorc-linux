@@ -18,6 +18,7 @@ use crate::audio::{
 };
 use crate::camera_capture::{native_camera_name_for_id, parse_native_camera_id};
 use crate::devices::{find_avfoundation_camera_index, find_avfoundation_screen_index};
+use crate::diagnostics::{apply_audio_stats, apply_stream_health, starting_diagnostics};
 use crate::ffmpeg::resolve_ffmpeg_path;
 use crate::pipeline::{RecordingPipeline, container_for_outputs, container_key};
 use crate::protocol::{
@@ -195,6 +196,13 @@ pub async fn start_session(state: AppState, params: StartSessionParams) -> Resul
     state
         .database
         .save_setting("last_capture_session", &params)?;
+    let _ = state.database.add_session_log(
+        &session_id,
+        HealthLevel::Info,
+        "recording-start-requested",
+        &format!("Starting {mode} session."),
+        None,
+    );
 
     emit_foundation_health_events(&state, &session_id, &params)?;
     if params.output.record_enabled {
@@ -232,6 +240,12 @@ pub async fn start_session(state: AppState, params: StartSessionParams) -> Resul
         params.output.stream_enabled,
         &audio_tracks,
     );
+    let initial_diagnostics = starting_diagnostics(&session_id, params.output.video.fps);
+    {
+        let mut diagnostics = state.diagnostics.lock().await;
+        *diagnostics = initial_diagnostics.clone();
+    }
+    state.emit_event("diagnostics.stats", initial_diagnostics);
     let args = ffmpeg_args(
         &capture,
         &params,
@@ -298,6 +312,7 @@ pub async fn start_session(state: AppState, params: StartSessionParams) -> Resul
     if let Some(stderr) = stderr {
         let log_state = state.clone();
         let log_session_id = session_id.clone();
+        let target_fps = params.output.video.fps;
         tokio::spawn(async move {
             let mut lines = BufReader::new(stderr).lines();
             while let Ok(Some(line)) = lines.next_line().await {
@@ -308,6 +323,14 @@ pub async fn start_session(state: AppState, params: StartSessionParams) -> Resul
 
                 log_state.emit_log("warn", trimmed);
                 if let Some(stream_health) = parse_ffmpeg_stream_health(&log_session_id, trimmed) {
+                    let diagnostic_stats = {
+                        let mut diagnostics = log_state.diagnostics.lock().await;
+                        let next =
+                            apply_stream_health(diagnostics.clone(), &stream_health, target_fps);
+                        *diagnostics = next.clone();
+                        next
+                    };
+                    log_state.emit_event("diagnostics.stats", diagnostic_stats);
                     if stream_health.dropped_frames.unwrap_or_default() > 0 {
                         let _ = emit_health_event(
                             &log_state,
@@ -381,6 +404,14 @@ pub async fn stop_recording(state: AppState) -> Result<RecordingStatus> {
     drop(guard);
 
     state.emit_event("recording.status", status.clone());
+    let _ = emit_session_log(
+        &state,
+        &wait_session_id,
+        HealthLevel::Info,
+        "recording-stop-requested",
+        "Stop requested; waiting for FFmpeg to finalize outputs.",
+        None,
+    );
     if force_stop_now {
         state.emit_log("warn", "Stop requested again; sending SIGTERM to FFmpeg.");
         let _ = send_process_signal(pid, "TERM").await;
@@ -1183,6 +1214,17 @@ async fn monitor_session(
     };
 
     if let Some(native_audio_stats) = monitored_recording.native_audio_stats {
+        let diagnostic_stats = {
+            let mut diagnostics = state.diagnostics.lock().await;
+            let next = apply_audio_stats(
+                diagnostics.clone(),
+                native_audio_stats.captured_frames,
+                native_audio_stats.dropped_frames,
+            );
+            *diagnostics = next.clone();
+            next
+        };
+        state.emit_event("diagnostics.stats", diagnostic_stats);
         state.emit_log(
             if native_audio_stats.dropped_frames > 0 {
                 "warn"
@@ -1196,6 +1238,19 @@ async fn monitor_session(
                 native_audio_stats.dropped_frames
             ),
         );
+        if native_audio_stats.dropped_frames > 0 {
+            let message = format!(
+                "Native microphone dropped {} frames during capture.",
+                native_audio_stats.dropped_frames
+            );
+            let _ = emit_health_event(
+                &state,
+                Some(&session_id),
+                HealthLevel::Warn,
+                "mic-dropped-frames",
+                &message,
+            );
+        }
     }
 
     let ended_at = Utc::now().to_rfc3339();
@@ -2231,7 +2286,28 @@ pub fn emit_health_event(
     let event = state
         .database
         .add_health_event(session_id, level, code, message)?;
+    if let Some(session_id) = session_id {
+        let _ =
+            state
+                .database
+                .add_session_log(session_id, event.level.clone(), code, message, None);
+    }
     state.emit_event("health.event", event);
+    Ok(())
+}
+
+fn emit_session_log(
+    state: &AppState,
+    session_id: &str,
+    level: HealthLevel,
+    code: &str,
+    message: &str,
+    source_id: Option<&str>,
+) -> Result<()> {
+    let entry = state
+        .database
+        .add_session_log(session_id, level, code, message, source_id)?;
+    state.emit_event("session.log", entry);
     Ok(())
 }
 

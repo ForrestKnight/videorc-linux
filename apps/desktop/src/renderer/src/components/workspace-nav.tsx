@@ -1,6 +1,7 @@
 import {
   Broadcast,
   FilmReel,
+  Gauge,
   GearSix,
   Layout,
   Monitor,
@@ -10,7 +11,15 @@ import {
 } from '@phosphor-icons/react'
 import { createContext, useContext } from 'react'
 
-export type WorkspaceTab = 'studio' | 'sources' | 'layout' | 'outputs' | 'library' | 'ai' | 'settings'
+export type WorkspaceTab =
+  | 'studio'
+  | 'sources'
+  | 'layout'
+  | 'outputs'
+  | 'library'
+  | 'ai'
+  | 'diagnostics'
+  | 'settings'
 
 export type WorkspaceTabMeta = {
   id: WorkspaceTab
@@ -25,6 +34,7 @@ export const WORKSPACE_TABS: WorkspaceTabMeta[] = [
   { id: 'outputs', label: 'Outputs', icon: Broadcast },
   { id: 'library', label: 'Library', icon: FilmReel },
   { id: 'ai', label: 'AI', icon: Sparkle },
+  { id: 'diagnostics', label: 'Diagnostics', icon: Gauge },
   { id: 'settings', label: 'Settings', icon: GearSix }
 ]
 

@@ -2,6 +2,7 @@ mod ai;
 mod audio;
 mod camera_capture;
 mod devices;
+mod diagnostics;
 mod ffmpeg;
 mod pipeline;
 mod protocol;
@@ -312,6 +313,10 @@ async fn handle_text_message(state: &AppState, text: &str) -> ServerResponse {
             let devices = devices::list_devices(&ffmpeg_path).await;
             state.emit_event("devices.changed", &devices);
             ServerResponse::ok(command.id, devices)
+        }
+        "diagnostics.stats" => {
+            let stats = state.diagnostics.lock().await.clone();
+            ServerResponse::ok(command.id, stats)
         }
         "audio.meter.sample" => {
             match serde_json::from_value::<protocol::AudioMeterParams>(command.params) {

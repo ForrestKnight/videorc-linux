@@ -6,9 +6,10 @@ use chrono::Utc;
 use rusqlite::{Connection, OptionalExtension, params};
 use uuid::Uuid;
 
+use crate::diagnostics::permission_pane_for_log;
 use crate::protocol::{
     AiArtifact, AiArtifactKind, AiArtifactStatus, HealthEvent, HealthLevel, LayoutSettings,
-    OutputSettings, SessionSummary, SourceSelection,
+    OutputSettings, SessionLogEntry, SessionSummary, SourceSelection,
 };
 
 #[derive(Clone)]
@@ -162,28 +163,77 @@ impl Database {
         code: &str,
         message: &str,
     ) -> Result<HealthEvent> {
+        let permission_pane = permission_pane_for_log(code, message);
         let event = HealthEvent {
             id: Uuid::new_v4().to_string(),
             session_id: session_id.map(str::to_string),
             level,
             code: code.to_string(),
             message: message.to_string(),
+            permission_pane,
             created_at: Utc::now().to_rfc3339(),
         };
         let conn = self.lock()?;
         conn.execute(
-            "INSERT INTO health_events (id, session_id, level, code, message, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO health_events (id, session_id, level, code, message, permission_pane, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 event.id,
                 event.session_id,
                 serde_json::to_string(&event.level)?,
                 event.code,
                 event.message,
+                event
+                    .permission_pane
+                    .as_ref()
+                    .map(serde_json::to_string)
+                    .transpose()?,
                 event.created_at,
             ],
         )?;
         Ok(event)
+    }
+
+    pub fn add_session_log(
+        &self,
+        session_id: &str,
+        level: HealthLevel,
+        code: &str,
+        message: &str,
+        source_id: Option<&str>,
+    ) -> Result<SessionLogEntry> {
+        let permission_pane = permission_pane_for_log(code, message);
+        let entry = SessionLogEntry {
+            id: Uuid::new_v4().to_string(),
+            session_id: session_id.to_string(),
+            level,
+            code: code.to_string(),
+            message: message.to_string(),
+            source_id: source_id.map(str::to_string),
+            permission_pane,
+            created_at: Utc::now().to_rfc3339(),
+        };
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO session_logs (
+                id, session_id, level, code, message, source_id, permission_pane, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                entry.id,
+                entry.session_id,
+                serde_json::to_string(&entry.level)?,
+                entry.code,
+                entry.message,
+                entry.source_id,
+                entry
+                    .permission_pane
+                    .as_ref()
+                    .map(serde_json::to_string)
+                    .transpose()?,
+                entry.created_at,
+            ],
+        )?;
+        Ok(entry)
     }
 
     pub fn list_sessions(&self, limit: usize) -> Result<Vec<SessionSummary>> {
@@ -236,6 +286,7 @@ impl Database {
 
             sessions.push(SessionSummary {
                 health_events: self.health_events_for_session_locked(&conn, &id)?,
+                session_logs: self.session_logs_for_session_locked(&conn, &id)?,
                 ai_artifacts: self.ai_artifacts_for_session_locked(&conn, &id)?,
                 id,
                 title,
@@ -296,6 +347,19 @@ impl Database {
                 level TEXT NOT NULL,
                 code TEXT NOT NULL,
                 message TEXT NOT NULL,
+                permission_pane TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS session_logs (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                level TEXT NOT NULL,
+                code TEXT NOT NULL,
+                message TEXT NOT NULL,
+                source_id TEXT,
+                permission_pane TEXT,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
             );
@@ -320,6 +384,12 @@ impl Database {
         )?;
         ensure_column(&conn, "sessions", "container", "container TEXT")?;
         ensure_column(&conn, "sessions", "duration_ms", "duration_ms INTEGER")?;
+        ensure_column(
+            &conn,
+            "health_events",
+            "permission_pane",
+            "permission_pane TEXT",
+        )?;
         Ok(())
     }
 
@@ -359,20 +429,55 @@ impl Database {
         session_id: &str,
     ) -> Result<Vec<HealthEvent>> {
         let mut stmt = conn.prepare(
-            "SELECT id, session_id, level, code, message, created_at
+            "SELECT id, session_id, level, code, message, permission_pane, created_at
              FROM health_events
              WHERE session_id = ?1
              ORDER BY created_at ASC",
         )?;
         let rows = stmt.query_map(params![session_id], |row| {
             let level_json: String = row.get(2)?;
+            let permission_json: Option<String> = row.get(5)?;
             Ok(HealthEvent {
                 id: row.get(0)?,
                 session_id: row.get(1)?,
                 level: serde_json::from_str(&level_json).unwrap_or(HealthLevel::Warn),
                 code: row.get(3)?,
                 message: row.get(4)?,
-                created_at: row.get(5)?,
+                permission_pane: permission_json
+                    .as_deref()
+                    .and_then(|value| serde_json::from_str(value).ok()),
+                created_at: row.get(6)?,
+            })
+        })?;
+
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    fn session_logs_for_session_locked(
+        &self,
+        conn: &Connection,
+        session_id: &str,
+    ) -> Result<Vec<SessionLogEntry>> {
+        let mut stmt = conn.prepare(
+            "SELECT id, session_id, level, code, message, source_id, permission_pane, created_at
+             FROM session_logs
+             WHERE session_id = ?1
+             ORDER BY created_at ASC",
+        )?;
+        let rows = stmt.query_map(params![session_id], |row| {
+            let level_json: String = row.get(2)?;
+            let permission_json: Option<String> = row.get(6)?;
+            Ok(SessionLogEntry {
+                id: row.get(0)?,
+                session_id: row.get(1)?,
+                level: serde_json::from_str(&level_json).unwrap_or(HealthLevel::Warn),
+                code: row.get(3)?,
+                message: row.get(4)?,
+                source_id: row.get(5)?,
+                permission_pane: permission_json
+                    .as_deref()
+                    .and_then(|value| serde_json::from_str(value).ok()),
+                created_at: row.get(7)?,
             })
         })?;
 
@@ -435,9 +540,66 @@ pub fn default_artifacts_dir() -> PathBuf {
 mod tests {
     use super::*;
     use crate::protocol::{
-        CameraCorner, CameraFit, CameraShape, CameraSize, OutputSettings, RtmpPreset, RtmpSettings,
-        VideoPreset, VideoSettings,
+        CameraCorner, CameraFit, CameraShape, CameraSize, OutputSettings, PermissionPane,
+        RtmpPreset, RtmpSettings, VideoPreset, VideoSettings,
     };
+
+    fn test_database() -> Database {
+        let database = Database {
+            conn: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
+            path: PathBuf::from(":memory:"),
+        };
+        database.migrate().unwrap();
+        database
+    }
+
+    fn sample_session(id: &str) -> NewSession {
+        NewSession {
+            id: id.to_string(),
+            title: "Test session".to_string(),
+            started_at: "2026-05-31T00:00:00Z".to_string(),
+            mode: "record".to_string(),
+            output_path: Some("/tmp/videorc-test.mkv".to_string()),
+            container: Some("mkv".to_string()),
+            stream_preset: None,
+            sources: SourceSelection {
+                screen_id: Some("screen:avfoundation:1".to_string()),
+                window_id: None,
+                camera_id: None,
+                microphone_id: None,
+                test_pattern: false,
+            },
+            layout: LayoutSettings {
+                camera_corner: CameraCorner::BottomRight,
+                camera_size: CameraSize::Medium,
+                camera_shape: CameraShape::Rectangle,
+                camera_margin: 32,
+                camera_fit: CameraFit::Fill,
+                camera_mirror: false,
+                camera_zoom: 100,
+                camera_offset_x: 0,
+                camera_offset_y: 0,
+            },
+            output: OutputSettings {
+                record_enabled: true,
+                stream_enabled: false,
+                output_directory: None,
+                ffmpeg_path: None,
+                video: VideoSettings {
+                    preset: VideoPreset::Tutorial1440p30,
+                    width: 2560,
+                    height: 1440,
+                    fps: 30,
+                    bitrate_kbps: 8000,
+                },
+                rtmp: RtmpSettings {
+                    preset: RtmpPreset::Custom,
+                    server_url: String::new(),
+                    stream_key: String::new(),
+                },
+            },
+        }
+    }
 
     #[test]
     fn default_database_path_uses_application_support_on_macos() {
@@ -494,5 +656,47 @@ mod tests {
         );
         assert!(serde_json::to_string(&sources).unwrap().contains("screen:"));
         assert!(serde_json::to_string(&output).unwrap().contains("youtube"));
+    }
+
+    #[test]
+    fn session_logs_and_permission_actions_round_trip() {
+        let database = test_database();
+        database
+            .create_session(&sample_session("session-1"))
+            .unwrap();
+
+        database
+            .add_health_event(
+                Some("session-1"),
+                HealthLevel::Warn,
+                "camera-source-unavailable",
+                "Camera permission denied.",
+            )
+            .unwrap();
+        database
+            .add_session_log(
+                "session-1",
+                HealthLevel::Error,
+                "screen-capture-fallback",
+                "Screen recording permission denied.",
+                Some("screen:avfoundation:1"),
+            )
+            .unwrap();
+
+        let sessions = database.list_sessions(1).unwrap();
+        let session = sessions.first().unwrap();
+
+        assert_eq!(
+            session.health_events[0].permission_pane,
+            Some(PermissionPane::Camera)
+        );
+        assert_eq!(
+            session.session_logs[0].permission_pane,
+            Some(PermissionPane::ScreenRecording)
+        );
+        assert_eq!(
+            session.session_logs[0].source_id.as_deref(),
+            Some("screen:avfoundation:1")
+        );
     }
 }
