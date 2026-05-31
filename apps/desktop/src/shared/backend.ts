@@ -256,6 +256,7 @@ export interface StartSessionParams {
 export interface AudioSettings {
   microphoneGainDb: number
   microphoneMuted: boolean
+  microphoneSyncOffsetMs: number
 }
 
 export interface RemuxSessionParams {

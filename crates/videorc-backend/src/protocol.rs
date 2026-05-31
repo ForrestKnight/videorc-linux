@@ -481,6 +481,8 @@ pub struct AudioSettings {
     pub microphone_gain_db: f32,
     #[serde(default)]
     pub microphone_muted: bool,
+    #[serde(default = "default_microphone_sync_offset_ms")]
+    pub microphone_sync_offset_ms: i32,
 }
 
 impl Default for AudioSettings {
@@ -488,8 +490,13 @@ impl Default for AudioSettings {
         Self {
             microphone_gain_db: 0.0,
             microphone_muted: false,
+            microphone_sync_offset_ms: default_microphone_sync_offset_ms(),
         }
     }
+}
+
+fn default_microphone_sync_offset_ms() -> i32 {
+    -250
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

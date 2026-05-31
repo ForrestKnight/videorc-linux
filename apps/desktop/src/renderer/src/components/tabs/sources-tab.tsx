@@ -158,6 +158,27 @@ export function SourcesTab(): ReactElement {
               }
             />
           </div>
+          <div className="grid gap-2">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-xs font-medium text-muted-foreground">Sync</span>
+              <span className="font-mono text-xs tabular-nums">
+                {captureConfig.audio.microphoneSyncOffsetMs > 0 ? '+' : ''}
+                {captureConfig.audio.microphoneSyncOffsetMs} ms
+              </span>
+            </div>
+            <Slider
+              max={1000}
+              min={-1000}
+              step={25}
+              value={[captureConfig.audio.microphoneSyncOffsetMs]}
+              onValueChange={([microphoneSyncOffsetMs]) =>
+                setCaptureConfig((current) => ({
+                  ...current,
+                  audio: { ...current.audio, microphoneSyncOffsetMs: microphoneSyncOffsetMs ?? -250 }
+                }))
+              }
+            />
+          </div>
         </div>
         <div className="h-2.5 w-full overflow-hidden rounded-full bg-muted">
           <div

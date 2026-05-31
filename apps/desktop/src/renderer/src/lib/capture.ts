@@ -99,7 +99,8 @@ export const defaultCaptureConfig: CaptureConfig = {
   },
   audio: {
     microphoneGainDb: 0,
-    microphoneMuted: false
+    microphoneMuted: false,
+    microphoneSyncOffsetMs: -250
   },
   video: videoPresets['tutorial-1440p30'],
   recordEnabled: true,
@@ -150,7 +151,13 @@ export function normalizeAudioSettings(audio: unknown): AudioSettings {
     microphoneMuted:
       typeof candidate.microphoneMuted === 'boolean'
         ? candidate.microphoneMuted
-        : defaultCaptureConfig.audio.microphoneMuted
+        : defaultCaptureConfig.audio.microphoneMuted,
+    microphoneSyncOffsetMs: clampNumber(
+      candidate.microphoneSyncOffsetMs,
+      defaultCaptureConfig.audio.microphoneSyncOffsetMs,
+      -1000,
+      1000
+    )
   }
 }
 

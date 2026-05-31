@@ -23,11 +23,11 @@ use crate::diagnostics::{apply_audio_stats, apply_stream_health, starting_diagno
 use crate::ffmpeg::resolve_ffmpeg_path;
 use crate::pipeline::{RecordingPipeline, container_for_outputs, container_key};
 use crate::protocol::{
-    AudioTrack, AudioTrackSource, CameraCorner, CameraFit, CameraShape, CameraSize, HealthLevel,
-    PreviewLiveParams, PreviewLiveSource, PreviewLiveState, PreviewLiveStatus, PreviewSnapshot,
-    PreviewSnapshotParams, RecordingPipelineStage, RecordingState, RecordingStatus,
-    RemuxSessionParams, RtmpPreset, RtmpSettings, StartSessionParams, StreamHealth, VideoPreset,
-    VideoSettings,
+    AudioSettings, AudioTrack, AudioTrackSource, CameraCorner, CameraFit, CameraShape, CameraSize,
+    HealthLevel, PreviewLiveParams, PreviewLiveSource, PreviewLiveState, PreviewLiveStatus,
+    PreviewSnapshot, PreviewSnapshotParams, RecordingPipelineStage, RecordingState,
+    RecordingStatus, RemuxSessionParams, RtmpPreset, RtmpSettings, StartSessionParams,
+    StreamHealth, VideoPreset, VideoSettings,
 };
 use crate::screen_capture::{parse_screencapturekit_display_id, parse_screencapturekit_window_id};
 use crate::state::AppState;
@@ -42,6 +42,8 @@ const STOP_TERM_DELAY: Duration = Duration::from_secs(3);
 const STOP_KILL_DELAY: Duration = Duration::from_secs(3);
 const SHUTDOWN_GRACE_DELAY: Duration = Duration::from_millis(1200);
 const CAPTURE_AUDIO_FILTER: &str = "aresample=async=1:first_pts=0";
+const MICROPHONE_SYNC_OFFSET_MIN_MS: i32 = -1000;
+const MICROPHONE_SYNC_OFFSET_MAX_MS: i32 = 1000;
 const AVFOUNDATION_VIDEO_PIXEL_FORMAT: &str = "nv12";
 const MJPEG_BOUNDARY: &[u8] = b"--videorc";
 const MJPEG_HEADER_END: &[u8] = b"\r\n\r\n";
@@ -1623,7 +1625,12 @@ fn ffmpeg_args(
         "-bufsize".to_string(),
         format!("{}k", params.output.video.bitrate_kbps.saturating_mul(2)),
     ]);
-    append_audio_encoding_args(&mut args, &input_layout, stream_target.is_some());
+    append_audio_encoding_args(
+        &mut args,
+        &input_layout,
+        &params.audio,
+        stream_target.is_some(),
+    );
 
     match (output_path, stream_target) {
         (Some(path), Some(target)) => {
@@ -1888,14 +1895,20 @@ fn append_audio_output_args(args: &mut Vec<String>, input_layout: &InputLayout) 
     }
 }
 
-fn append_audio_encoding_args(args: &mut Vec<String>, input_layout: &InputLayout, streaming: bool) {
+fn append_audio_encoding_args(
+    args: &mut Vec<String>,
+    input_layout: &InputLayout,
+    audio: &AudioSettings,
+    streaming: bool,
+) {
     if input_layout.audio_inputs.is_empty() {
         return;
     }
 
+    let filter = capture_audio_filter(input_layout, audio);
     args.extend([
         "-af".to_string(),
-        CAPTURE_AUDIO_FILTER.to_string(),
+        filter,
         "-ar".to_string(),
         "48000".to_string(),
         "-ac".to_string(),
@@ -1913,6 +1926,26 @@ fn append_audio_encoding_args(args: &mut Vec<String>, input_layout: &InputLayout
     if streaming {
         args.extend(["-b:a".to_string(), "160k".to_string()]);
     }
+}
+
+fn capture_audio_filter(input_layout: &InputLayout, audio: &AudioSettings) -> String {
+    if !input_layout
+        .audio_inputs
+        .iter()
+        .any(|input| input.track.source == AudioTrackSource::Microphone)
+    {
+        return CAPTURE_AUDIO_FILTER.to_string();
+    }
+
+    let offset_ms = audio
+        .microphone_sync_offset_ms
+        .clamp(MICROPHONE_SYNC_OFFSET_MIN_MS, MICROPHONE_SYNC_OFFSET_MAX_MS);
+    if offset_ms == 0 {
+        return CAPTURE_AUDIO_FILTER.to_string();
+    }
+
+    let offset_seconds = f64::from(offset_ms) / 1000.0;
+    format!("asetpts=PTS{offset_seconds:+.3}/TB,{CAPTURE_AUDIO_FILTER}")
 }
 
 fn append_live_preview_output_args(args: &mut Vec<String>) {
@@ -2623,7 +2656,10 @@ mod tests {
         assert!(args.iter().any(|arg| arg == "1:a?"));
         assert!(args.iter().any(|arg| arg.contains("[2:v]")));
         assert!(args.iter().any(|arg| arg == "title=Microphone"));
-        assert_eq!(arg_value(&args, "-af"), Some(CAPTURE_AUDIO_FILTER));
+        assert_eq!(
+            arg_value(&args, "-af"),
+            Some("asetpts=PTS-0.250/TB,aresample=async=1:first_pts=0")
+        );
         assert_eq!(arg_value(&args, "-ar"), Some("48000"));
         assert_eq!(arg_value(&args, "-ac"), Some("1"));
         assert_eq!(arg_value(&args, "-c:a"), Some("aac"));
@@ -2657,7 +2693,10 @@ mod tests {
         assert!(args.iter().any(|arg| arg == "1:a?"));
         assert!(args.iter().any(|arg| arg == "-metadata:s:a:0"));
         assert!(args.iter().any(|arg| arg == "title=Microphone"));
-        assert_eq!(arg_value(&args, "-af"), Some(CAPTURE_AUDIO_FILTER));
+        assert_eq!(
+            arg_value(&args, "-af"),
+            Some("asetpts=PTS-0.250/TB,aresample=async=1:first_pts=0")
+        );
         assert_eq!(arg_value(&args, "-ar"), Some("48000"));
         assert_eq!(arg_value(&args, "-ac"), Some("1"));
         assert_eq!(arg_value(&args, "-c:a"), Some("pcm_s16le"));
@@ -2703,9 +2742,66 @@ mod tests {
             Some("64")
         );
         assert!(args.iter().any(|arg| arg == "1:a?"));
-        assert_eq!(arg_value(&args, "-af"), Some(CAPTURE_AUDIO_FILTER));
+        assert_eq!(
+            arg_value(&args, "-af"),
+            Some("asetpts=PTS-0.250/TB,aresample=async=1:first_pts=0")
+        );
         assert_eq!(arg_value(&args, "-ac"), Some("2"));
         assert_eq!(arg_value(&args, "-c:a"), Some("pcm_s16le"));
+    }
+
+    #[test]
+    fn microphone_sync_offset_can_be_tuned_or_disabled() {
+        let mut params = base_params(true, false);
+        params.audio.microphone_sync_offset_ms = 120;
+        let delayed = ffmpeg_args(
+            &CaptureInputs {
+                video: VideoInput::MacScreen { index: 3 },
+                camera_index: None,
+                microphone: Some(MicrophoneInput::AvFoundation { index: 1 }),
+            },
+            &params,
+            Some(Path::new("/tmp/videorc-test.mkv")),
+            None,
+        )
+        .unwrap();
+
+        params.audio.microphone_sync_offset_ms = 0;
+        let disabled = ffmpeg_args(
+            &CaptureInputs {
+                video: VideoInput::MacScreen { index: 3 },
+                camera_index: None,
+                microphone: Some(MicrophoneInput::AvFoundation { index: 1 }),
+            },
+            &params,
+            Some(Path::new("/tmp/videorc-test.mkv")),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(
+            arg_value(&delayed, "-af"),
+            Some("asetpts=PTS+0.120/TB,aresample=async=1:first_pts=0")
+        );
+        assert_eq!(arg_value(&disabled, "-af"), Some(CAPTURE_AUDIO_FILTER));
+    }
+
+    #[test]
+    fn microphone_sync_offset_does_not_shift_test_tone() {
+        let params = base_params(true, false);
+        let args = ffmpeg_args(
+            &CaptureInputs {
+                video: VideoInput::TestPattern,
+                camera_index: None,
+                microphone: None,
+            },
+            &params,
+            Some(Path::new("/tmp/videorc-test.mkv")),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(arg_value(&args, "-af"), Some(CAPTURE_AUDIO_FILTER));
     }
 
     #[test]

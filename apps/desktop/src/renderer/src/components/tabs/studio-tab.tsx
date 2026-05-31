@@ -188,6 +188,7 @@ export function StudioTab(): ReactElement {
               muted={captureConfig.audio.microphoneMuted}
               peakDb={audioMeter?.peakDb}
               selectedMicrophoneName={selectedMicrophone?.name}
+              syncOffsetMs={captureConfig.audio.microphoneSyncOffsetMs}
             />
           </PanelSection>
 
@@ -232,13 +233,15 @@ function MixerRow({
   meterLevel,
   gainDb,
   muted,
-  peakDb
+  peakDb,
+  syncOffsetMs
 }: {
   selectedMicrophoneName?: string
   meterLevel: number
   gainDb: number
   muted: boolean
   peakDb?: number
+  syncOffsetMs: number
 }): ReactElement {
   const meterTone = muted ? 'bg-muted-foreground/30' : meterLevel > 2 ? 'bg-success' : 'bg-warning'
 
@@ -261,6 +264,10 @@ function MixerRow({
       <div className="flex items-center justify-between text-xs text-muted-foreground">
         <span>Source meter</span>
         <span>{typeof peakDb === 'number' ? `${peakDb.toFixed(1)} dB` : 'Not checked'}</span>
+      </div>
+      <div className="flex items-center justify-between text-xs text-muted-foreground">
+        <span>Sync</span>
+        <span>{`${syncOffsetMs > 0 ? '+' : ''}${syncOffsetMs} ms`}</span>
       </div>
     </div>
   )
