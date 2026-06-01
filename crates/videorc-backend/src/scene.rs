@@ -10,6 +10,8 @@ const BASE_SOURCE_ID: &str = "source:base";
 const CAMERA_SOURCE_ID: &str = "source:camera";
 const TEST_PATTERN_SOURCE_ID: &str = "source:test-pattern";
 const SNAP_THRESHOLD: f64 = 0.015;
+const CAMERA_REFERENCE_WIDTH: u32 = 1280;
+const CAMERA_REFERENCE_HEIGHT: u32 = 720;
 
 pub fn default_scene() -> Scene {
     Scene {
@@ -214,10 +216,12 @@ fn camera_transform(
 ) -> SceneTransform {
     let output_width = f64::from(output_width.max(1));
     let output_height = f64::from(output_height.max(1));
-    let (camera_width, camera_height) = camera_box_size(&layout.camera_size, &layout.camera_shape);
+    let scale = camera_output_scale(output_width, output_height);
+    let (camera_width, camera_height) =
+        scaled_camera_box_size(&layout.camera_size, &layout.camera_shape, scale);
     let camera_width = f64::from(camera_width);
     let camera_height = f64::from(camera_height);
-    let margin = f64::from(layout.camera_margin.min(160));
+    let margin = f64::from(scale_camera_dimension(layout.camera_margin.min(160), scale));
     let x = match layout.camera_corner {
         CameraCorner::TopLeft | CameraCorner::BottomLeft => margin / output_width,
         CameraCorner::TopRight | CameraCorner::BottomRight => {
@@ -266,6 +270,24 @@ fn camera_box_size(size: &CameraSize, shape: &CameraShape) -> (u32, u32) {
         CameraShape::Circle => width,
     };
     (width, height)
+}
+
+fn scaled_camera_box_size(size: &CameraSize, shape: &CameraShape, scale: f64) -> (u32, u32) {
+    let (width, height) = camera_box_size(size, shape);
+
+    (
+        scale_camera_dimension(width, scale),
+        scale_camera_dimension(height, scale),
+    )
+}
+
+fn camera_output_scale(output_width: f64, output_height: f64) -> f64 {
+    (output_width / f64::from(CAMERA_REFERENCE_WIDTH))
+        .min(output_height / f64::from(CAMERA_REFERENCE_HEIGHT))
+}
+
+fn scale_camera_dimension(value: u32, scale: f64) -> u32 {
+    (f64::from(value) * scale).round().max(1.0) as u32
 }
 
 fn full_frame_transform() -> SceneTransform {
@@ -412,6 +434,36 @@ mod tests {
         assert_eq!(scene.sources[0].transform.width, 1.0);
         assert!(scene.sources[1].transform.x > 0.6);
         assert!(scene.sources[1].transform.y > 0.6);
+    }
+
+    #[test]
+    fn camera_scene_transform_keeps_relative_size_across_output_resolutions() {
+        let mut preview_params = base_params();
+        preview_params.video = Some(crate::protocol::VideoSettings {
+            preset: crate::protocol::VideoPreset::Custom,
+            width: 1280,
+            height: 720,
+            fps: 30,
+            bitrate_kbps: 4000,
+        });
+        let mut recording_params = base_params();
+        recording_params.video = Some(crate::protocol::VideoSettings {
+            preset: crate::protocol::VideoPreset::Custom,
+            width: 2560,
+            height: 1440,
+            fps: 30,
+            bitrate_kbps: 8000,
+        });
+
+        let preview_scene = scene_from_capture_config(preview_params);
+        let recording_scene = scene_from_capture_config(recording_params);
+        let preview_camera = &preview_scene.sources[1].transform;
+        let recording_camera = &recording_scene.sources[1].transform;
+
+        assert!((preview_camera.width - recording_camera.width).abs() < 0.0001);
+        assert!((preview_camera.height - recording_camera.height).abs() < 0.0001);
+        assert!((preview_camera.x - recording_camera.x).abs() < 0.0001);
+        assert!((preview_camera.y - recording_camera.y).abs() < 0.0001);
     }
 
     #[test]

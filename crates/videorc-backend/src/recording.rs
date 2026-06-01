@@ -37,6 +37,8 @@ const PREVIEW_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(5);
 const LIVE_PREVIEW_WIDTH: u32 = 1280;
 const LIVE_PREVIEW_HEIGHT: u32 = 720;
 const LIVE_PREVIEW_FPS: u32 = 30;
+const CAMERA_REFERENCE_WIDTH: u32 = LIVE_PREVIEW_WIDTH;
+const CAMERA_REFERENCE_HEIGHT: u32 = LIVE_PREVIEW_HEIGHT;
 const STOP_FINALIZE_TIMEOUT: Duration = Duration::from_secs(12);
 const STOP_TERM_DELAY: Duration = Duration::from_secs(3);
 const STOP_KILL_DELAY: Duration = Duration::from_secs(3);
@@ -2036,7 +2038,7 @@ fn video_filter(
 
     if let Some(camera_input_index) = camera_input_index {
         let camera = camera_chain_filter(camera_input_index, params);
-        let margin = params.layout.camera_margin.min(160);
+        let margin = scaled_camera_margin(&params.layout, &params.output.video);
         let (x, y) = match params.layout.camera_corner {
             CameraCorner::TopLeft => (format!("{margin}"), format!("{margin}")),
             CameraCorner::TopRight => (format!("W-w-{margin}"), format!("{margin}")),
@@ -2065,7 +2067,11 @@ fn output_scale_filter(video: &VideoSettings) -> String {
 }
 
 fn camera_chain_filter(camera_input_index: usize, params: &StartSessionParams) -> String {
-    let (width, height) = camera_box_size(&params.layout.camera_size, &params.layout.camera_shape);
+    let (width, height) = scaled_camera_box_size(
+        &params.layout.camera_size,
+        &params.layout.camera_shape,
+        &params.output.video,
+    );
     let zoom = params.layout.camera_zoom.clamp(100, 200);
     let scaled_width = width * zoom / 100;
     let scaled_height = height * zoom / 100;
@@ -2108,6 +2114,33 @@ fn camera_box_size(size: &CameraSize, shape: &CameraShape) -> (u32, u32) {
     };
 
     (width, height)
+}
+
+fn scaled_camera_box_size(
+    size: &CameraSize,
+    shape: &CameraShape,
+    video: &VideoSettings,
+) -> (u32, u32) {
+    let scale = camera_output_scale(video);
+    let (width, height) = camera_box_size(size, shape);
+
+    (
+        scale_camera_dimension(width, scale),
+        scale_camera_dimension(height, scale),
+    )
+}
+
+fn scaled_camera_margin(layout: &crate::protocol::LayoutSettings, video: &VideoSettings) -> u32 {
+    scale_camera_dimension(layout.camera_margin.min(160), camera_output_scale(video))
+}
+
+fn camera_output_scale(video: &VideoSettings) -> f64 {
+    (f64::from(video.width) / f64::from(CAMERA_REFERENCE_WIDTH))
+        .min(f64::from(video.height) / f64::from(CAMERA_REFERENCE_HEIGHT))
+}
+
+fn scale_camera_dimension(value: u32, scale: f64) -> u32 {
+    (f64::from(value) * scale).round().max(1.0) as u32
 }
 
 fn crop_offset_expr(offset: i32, input_size: &str, output_size: &str) -> String {
@@ -2942,6 +2975,27 @@ mod tests {
     }
 
     #[test]
+    fn recording_camera_overlay_scales_to_match_idle_preview_size() {
+        let recording = base_params(true, false);
+        let recording_filter = recording_video_filter(Some(1), &recording, true);
+        let preview_session = live_preview_session_params(
+            PreviewLiveParams {
+                sources: recording.sources.clone(),
+                layout: recording.layout.clone(),
+                ffmpeg_path: None,
+                video: Some(recording.output.video.clone()),
+            },
+            "ffmpeg".to_string(),
+        );
+        let preview_filter = live_preview_filter(Some(1), &preview_session);
+
+        assert!(recording_filter.contains("scale=720:406"));
+        assert!(recording_filter.contains("overlay=x=W-w-64:y=H-h-64"));
+        assert!(preview_filter.contains("scale=360:203"));
+        assert!(preview_filter.contains("overlay=x=W-w-32:y=H-h-32"));
+    }
+
+    #[test]
     fn mjpeg_stdout_parser_drains_complete_parts() {
         let mut pending = b"junk--videorc\r\nContent-type: image/jpeg\r\nContent-length: 4\r\n\r\n\xff\xd8\xff\xd9\r\n--videorc\r\nContent-length: 3\r\n\r\nabc".to_vec();
 
@@ -3034,8 +3088,8 @@ mod tests {
         let filter = camera_chain_filter(1, &params);
 
         assert!(filter.starts_with("[1:v]setpts=PTS-STARTPTS,hflip,"));
-        assert!(filter.contains("scale=540:304"));
-        assert!(filter.contains("crop=w=360:h=203"));
+        assert!(filter.contains("scale=1080:609"));
+        assert!(filter.contains("crop=w=720:h=406"));
         assert!(filter.contains("(40)*(iw-ow)/200"));
         assert!(filter.contains("(-20)*(ih-oh)/200"));
     }
@@ -3047,7 +3101,7 @@ mod tests {
         let filter = camera_chain_filter(1, &params);
 
         assert!(filter.contains("force_original_aspect_ratio=decrease"));
-        assert!(filter.contains("pad=360:203"));
+        assert!(filter.contains("pad=720:406"));
     }
 
     #[test]
