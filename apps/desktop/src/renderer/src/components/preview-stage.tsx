@@ -11,7 +11,7 @@ import {
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import type { LayoutSettings, PreviewLiveStatus, RuntimeInfo, Scene } from '@/lib/backend'
+import type { LayoutSettings, PreviewLiveStatus, RuntimeInfo, Scene, StreamScreen } from '@/lib/backend'
 import { cn } from '@/lib/utils'
 
 // Widths mirror the backend camera_box_size() (260/360/480 over the 1280px
@@ -80,6 +80,7 @@ export function PreviewStage({
   previewUrl,
   previewLoading,
   previewLiveStatus,
+  activeScreen,
   layout,
   onRetry,
   onOpenPermissions,
@@ -96,6 +97,7 @@ export function PreviewStage({
   previewUrl: string | null
   previewLoading: boolean
   previewLiveStatus: PreviewLiveStatus
+  activeScreen?: StreamScreen | null
   layout: LayoutSettings
   onRetry?: () => void
   onOpenPermissions?: () => void
@@ -110,10 +112,12 @@ export function PreviewStage({
   className?: string
 }): ReactElement {
   const [imageFailed, setImageFailed] = useState(false)
+  const [screenImageFailed, setScreenImageFailed] = useState(false)
   const [displayPreviewUrl, setDisplayPreviewUrl] = useState<string | null>(previewUrl)
   const isLive = previewLiveStatus.state === 'live'
   const latestFrameUrl = useMemo(() => latestPreviewFrameUrl(previewUrl), [previewUrl])
-  const showUnavailable = previewLiveStatus.state === 'unavailable' || imageFailed
+  const showActiveScreen = Boolean(activeScreen && activeScreen.status === 'ready' && !screenImageFailed)
+  const showUnavailable = !showActiveScreen && (previewLiveStatus.state === 'unavailable' || imageFailed)
   const badgeLabel =
     previewLiveStatus.state === 'connecting'
       ? 'Connecting'
@@ -128,6 +132,10 @@ export function PreviewStage({
   useEffect(() => {
     setImageFailed(false)
   }, [previewUrl])
+
+  useEffect(() => {
+    setScreenImageFailed(false)
+  }, [activeScreen?.id, activeScreen?.imagePath])
 
   useEffect(() => {
     if (!previewUrl) {
@@ -211,7 +219,14 @@ export function PreviewStage({
   return (
     <div className={cn('flex flex-col gap-3', className)}>
       <div className="relative aspect-video w-full overflow-hidden rounded-xl border bg-muted">
-        {displayPreviewUrl && !imageFailed ? (
+        {showActiveScreen && activeScreen ? (
+          <img
+            alt="Active Screen preview"
+            className="size-full object-cover"
+            src={fileUrlFromPath(activeScreen.imagePath)}
+            onError={() => setScreenImageFailed(true)}
+          />
+        ) : displayPreviewUrl && !imageFailed ? (
           <img
             alt="Selected scene preview"
             className="size-full object-contain"
@@ -251,8 +266,13 @@ export function PreviewStage({
         <Badge className="absolute top-2 left-2" variant={isLive ? 'success' : 'secondary'}>
           {previewLoading ? 'Connecting' : badgeLabel}
         </Badge>
+        {activeScreen ? (
+          <Badge className="absolute top-2 right-2" variant={showActiveScreen ? 'warning' : 'destructive'}>
+            {showActiveScreen ? activeScreen.name : 'Screen missing'}
+          </Badge>
+        ) : null}
         {sceneEditMode ? (
-          <Badge className="absolute top-2 right-2" variant="warning">
+          <Badge className={cn('absolute right-2', activeScreen ? 'top-9' : 'top-2')} variant="warning">
             <PencilSimpleLine data-icon="inline-start" />
             Edit
           </Badge>
@@ -341,6 +361,12 @@ function latestPreviewFrameUrl(previewUrl: string | null): string | null {
   return previewUrl.includes('/preview/live.mjpeg')
     ? previewUrl.replace('/preview/live.mjpeg', '/preview/live.jpg')
     : null
+}
+
+function fileUrlFromPath(path: string): string {
+  const normalized = path.replace(/\\/g, '/')
+  const prefix = /^[A-Za-z]:/.test(normalized) ? 'file:///' : 'file://'
+  return `${prefix}${encodeURI(normalized)}`
 }
 
 function withCacheBust(url: string): string {

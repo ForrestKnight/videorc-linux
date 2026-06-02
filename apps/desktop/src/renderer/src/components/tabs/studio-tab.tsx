@@ -95,6 +95,7 @@ export function StudioTab(): ReactElement {
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)]">
         <PreviewStage
+          activeScreen={activeScreen}
           layout={captureConfig.layout}
           onOpenPermissions={openPreviewPermissions}
           onRevealPermissionTarget={revealPermissionTarget}
