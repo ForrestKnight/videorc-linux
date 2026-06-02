@@ -106,6 +106,7 @@ pub struct OAuthCompleteOutcome {
 pub struct PendingOAuthExchange {
     pub platform: StreamPlatform,
     pub token_url: String,
+    pub profile_url: String,
     pub client_id: String,
     pub client_secret: Option<String>,
     pub redirect_uri: String,
@@ -117,6 +118,7 @@ pub struct PendingOAuthExchange {
 struct OAuthProviderConfig {
     authorization_url: String,
     token_url: String,
+    profile_url: String,
     client_id: String,
     client_secret: Option<String>,
     scopes: Vec<String>,
@@ -196,6 +198,7 @@ impl OAuthSessions {
                 exchange: Some(PendingOAuthExchange {
                     platform: params.platform,
                     token_url: config.token_url,
+                    profile_url: config.profile_url,
                     client_id: config.client_id,
                     client_secret: config.client_secret,
                     redirect_uri: redirect_uri.clone(),
@@ -331,6 +334,7 @@ where
     if token.access_token.trim().is_empty() {
         anyhow::bail!("OAuth token response did not include an access token.");
     }
+    let profile = fetch_provider_profile(exchange, &token.access_token, client).await?;
 
     let platform_id = stream_platform_id(exchange.platform);
     let access_ref = format!("platform:{platform_id}:oauth:access");
@@ -356,10 +360,10 @@ where
 
     Ok(UpsertPlatformAccount {
         platform: exchange.platform,
-        account_id: format!("{platform_id}:oauth"),
-        account_label: format!("{} OAuth account", stream_platform_label(exchange.platform)),
-        account_handle: None,
-        avatar_url: None,
+        account_id: profile.account_id,
+        account_label: profile.account_label,
+        account_handle: profile.account_handle,
+        avatar_url: profile.avatar_url,
         scopes,
         token_secret_ref: Some(access_ref),
         refresh_token_secret_ref: refresh_ref,
@@ -367,6 +371,146 @@ where
         expires_at,
         status: PlatformAccountStatus::Connected,
     })
+}
+
+async fn fetch_provider_profile(
+    exchange: &PendingOAuthExchange,
+    access_token: &str,
+    client: &reqwest::Client,
+) -> Result<ProviderProfile> {
+    let request = client.get(&exchange.profile_url).bearer_auth(access_token);
+    let request = if exchange.platform == StreamPlatform::Twitch {
+        request.header("Client-Id", &exchange.client_id)
+    } else {
+        request
+    };
+    let response = request.send().await.with_context(|| {
+        format!(
+            "Could not fetch {} account profile",
+            stream_platform_label(exchange.platform)
+        )
+    })?;
+    if !response.status().is_success() {
+        let status = response.status();
+        anyhow::bail!(
+            "{} profile lookup failed with HTTP {status}",
+            stream_platform_label(exchange.platform)
+        );
+    }
+    let value = response
+        .json::<serde_json::Value>()
+        .await
+        .context("Could not parse OAuth profile response")?;
+    parse_provider_profile(exchange.platform, value)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProviderProfile {
+    account_id: String,
+    account_label: String,
+    account_handle: Option<String>,
+    avatar_url: Option<String>,
+}
+
+fn parse_provider_profile(
+    platform: StreamPlatform,
+    value: serde_json::Value,
+) -> Result<ProviderProfile> {
+    match platform {
+        StreamPlatform::Youtube => parse_youtube_profile(value),
+        StreamPlatform::Twitch => parse_twitch_profile(value),
+        StreamPlatform::X => parse_x_profile(value),
+        StreamPlatform::Custom => anyhow::bail!("Custom RTMP does not support OAuth profiles."),
+    }
+}
+
+fn parse_youtube_profile(value: serde_json::Value) -> Result<ProviderProfile> {
+    let channel = value
+        .get("items")
+        .and_then(|items| items.as_array())
+        .and_then(|items| items.first())
+        .context("YouTube profile response did not include a channel.")?;
+    let account_id = required_json_string(channel.get("id"), "YouTube channel id")?;
+    let snippet = channel.get("snippet").unwrap_or(&serde_json::Value::Null);
+    let account_label = required_json_string(snippet.get("title"), "YouTube channel title")?;
+    let avatar_url = snippet
+        .get("thumbnails")
+        .and_then(|thumbnails| {
+            thumbnails
+                .get("high")
+                .or_else(|| thumbnails.get("medium"))
+                .or_else(|| thumbnails.get("default"))
+        })
+        .and_then(|thumbnail| thumbnail.get("url"))
+        .and_then(|url| url.as_str())
+        .map(str::to_string);
+
+    Ok(ProviderProfile {
+        account_id,
+        account_label,
+        account_handle: snippet
+            .get("customUrl")
+            .and_then(|handle| handle.as_str())
+            .map(str::to_string),
+        avatar_url,
+    })
+}
+
+fn parse_twitch_profile(value: serde_json::Value) -> Result<ProviderProfile> {
+    let user = value
+        .get("data")
+        .and_then(|data| data.as_array())
+        .and_then(|items| items.first())
+        .context("Twitch profile response did not include a user.")?;
+    let account_id = required_json_string(user.get("id"), "Twitch user id")?;
+    let account_label = required_json_string(user.get("display_name"), "Twitch display name")?;
+    let account_handle = user
+        .get("login")
+        .and_then(|login| login.as_str())
+        .map(|login| format!("@{login}"));
+    let avatar_url = user
+        .get("profile_image_url")
+        .and_then(|url| url.as_str())
+        .map(str::to_string);
+
+    Ok(ProviderProfile {
+        account_id,
+        account_label,
+        account_handle,
+        avatar_url,
+    })
+}
+
+fn parse_x_profile(value: serde_json::Value) -> Result<ProviderProfile> {
+    let user = value
+        .get("data")
+        .context("X profile response did not include a user.")?;
+    let account_id = required_json_string(user.get("id"), "X user id")?;
+    let account_label = required_json_string(user.get("name"), "X display name")?;
+    let account_handle = user
+        .get("username")
+        .and_then(|username| username.as_str())
+        .map(|username| format!("@{username}"));
+    let avatar_url = user
+        .get("profile_image_url")
+        .and_then(|url| url.as_str())
+        .map(str::to_string);
+
+    Ok(ProviderProfile {
+        account_id,
+        account_label,
+        account_handle,
+        avatar_url,
+    })
+}
+
+fn required_json_string(value: Option<&serde_json::Value>, field: &str) -> Result<String> {
+    let value = value
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("{field} is missing."))?;
+    Ok(value.to_string())
 }
 
 #[derive(Debug, Deserialize)]
@@ -403,6 +547,8 @@ fn provider_config(platform: StreamPlatform) -> Result<OAuthProviderConfig> {
         StreamPlatform::Youtube => Ok(OAuthProviderConfig {
             authorization_url: "https://accounts.google.com/o/oauth2/v2/auth".to_string(),
             token_url: "https://oauth2.googleapis.com/token".to_string(),
+            profile_url: "https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true"
+                .to_string(),
             client_id: required_env("VIDEORC_YOUTUBE_CLIENT_ID")?,
             client_secret: optional_env("VIDEORC_YOUTUBE_CLIENT_SECRET"),
             scopes: vec![
@@ -418,6 +564,7 @@ fn provider_config(platform: StreamPlatform) -> Result<OAuthProviderConfig> {
         StreamPlatform::Twitch => Ok(OAuthProviderConfig {
             authorization_url: "https://id.twitch.tv/oauth2/authorize".to_string(),
             token_url: "https://id.twitch.tv/oauth2/token".to_string(),
+            profile_url: "https://api.twitch.tv/helix/users".to_string(),
             client_id: required_env("VIDEORC_TWITCH_CLIENT_ID")?,
             client_secret: optional_env("VIDEORC_TWITCH_CLIENT_SECRET"),
             scopes: vec![
@@ -430,6 +577,7 @@ fn provider_config(platform: StreamPlatform) -> Result<OAuthProviderConfig> {
         StreamPlatform::X => Ok(OAuthProviderConfig {
             authorization_url: "https://x.com/i/oauth2/authorize".to_string(),
             token_url: "https://api.x.com/2/oauth2/token".to_string(),
+            profile_url: "https://api.x.com/2/users/me?user.fields=profile_image_url".to_string(),
             client_id: required_env("VIDEORC_X_CLIENT_ID")?,
             client_secret: optional_env("VIDEORC_X_CLIENT_SECRET"),
             scopes: vec![
@@ -550,7 +698,7 @@ mod tests {
     use axum::extract::Form;
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
-    use axum::routing::post;
+    use axum::routing::{get, post};
     use axum::{Json, Router};
     use tokio::net::TcpListener;
 
@@ -680,13 +828,37 @@ mod tests {
             }))
             .into_response()
         }
+        async fn profile_endpoint(headers: axum::http::HeaderMap) -> impl IntoResponse {
+            if headers
+                .get("authorization")
+                .and_then(|value| value.to_str().ok())
+                != Some("Bearer access-token-value")
+                || headers
+                    .get("client-id")
+                    .and_then(|value| value.to_str().ok())
+                    != Some("client-id")
+            {
+                return (StatusCode::UNAUTHORIZED, "bad auth").into_response();
+            }
+            Json(serde_json::json!({
+                "data": [{
+                    "id": "twitch-user-123",
+                    "login": "orcdev",
+                    "display_name": "The Orc Dev",
+                    "profile_image_url": "https://static-cdn.jtvnw.net/avatar.png"
+                }]
+            }))
+            .into_response()
+        }
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         tokio::spawn(async move {
             axum::serve(
                 listener,
-                Router::new().route("/token", post(token_endpoint)),
+                Router::new()
+                    .route("/token", post(token_endpoint))
+                    .route("/profile", get(profile_endpoint)),
             )
             .await
             .unwrap();
@@ -695,6 +867,7 @@ mod tests {
         let exchange = PendingOAuthExchange {
             platform: StreamPlatform::Twitch,
             token_url: format!("http://{address}/token"),
+            profile_url: format!("http://{address}/profile"),
             client_id: "client-id".to_string(),
             client_secret: Some("client-secret".to_string()),
             redirect_uri: "http://127.0.0.1:61234/oauth/callback".to_string(),
@@ -715,8 +888,13 @@ mod tests {
         .unwrap();
 
         assert_eq!(account.platform, StreamPlatform::Twitch);
-        assert_eq!(account.account_id, "twitch:oauth");
-        assert_eq!(account.account_label, "Twitch OAuth account");
+        assert_eq!(account.account_id, "twitch-user-123");
+        assert_eq!(account.account_label, "The Orc Dev");
+        assert_eq!(account.account_handle.as_deref(), Some("@orcdev"));
+        assert_eq!(
+            account.avatar_url.as_deref(),
+            Some("https://static-cdn.jtvnw.net/avatar.png")
+        );
         assert_eq!(
             account.scopes,
             vec![
@@ -744,6 +922,58 @@ mod tests {
                     "refresh-token-value".to_string()
                 )
             ]
+        );
+    }
+
+    #[test]
+    fn parses_youtube_channel_identity() {
+        let profile = parse_provider_profile(
+            StreamPlatform::Youtube,
+            serde_json::json!({
+                "items": [{
+                    "id": "UC123",
+                    "snippet": {
+                        "title": "Videogre Channel",
+                        "customUrl": "@videogre",
+                        "thumbnails": {
+                            "high": { "url": "https://yt.example/avatar.jpg" }
+                        }
+                    }
+                }]
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(profile.account_id, "UC123");
+        assert_eq!(profile.account_label, "Videogre Channel");
+        assert_eq!(profile.account_handle.as_deref(), Some("@videogre"));
+        assert_eq!(
+            profile.avatar_url.as_deref(),
+            Some("https://yt.example/avatar.jpg")
+        );
+    }
+
+    #[test]
+    fn parses_x_user_identity() {
+        let profile = parse_provider_profile(
+            StreamPlatform::X,
+            serde_json::json!({
+                "data": {
+                    "id": "x-123",
+                    "name": "Videogre",
+                    "username": "videogre",
+                    "profile_image_url": "https://x.example/avatar.jpg"
+                }
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(profile.account_id, "x-123");
+        assert_eq!(profile.account_label, "Videogre");
+        assert_eq!(profile.account_handle.as_deref(), Some("@videogre"));
+        assert_eq!(
+            profile.avatar_url.as_deref(),
+            Some("https://x.example/avatar.jpg")
         );
     }
 }
