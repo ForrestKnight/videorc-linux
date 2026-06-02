@@ -464,6 +464,9 @@ impl Database {
             "DELETE FROM stream_screens WHERE id = ?1",
             params![screen_id],
         )?;
+        if self.active_screen_id_locked(&conn)?.as_deref() == Some(screen_id) {
+            self.save_setting_locked(&conn, "activeScreenId", &Option::<String>::None)?;
+        }
         Ok(())
     }
 
@@ -493,6 +496,33 @@ impl Database {
 
         drop(conn);
         self.list_stream_screens()
+    }
+
+    pub fn active_stream_screen(&self) -> Result<Option<StreamScreen>> {
+        let conn = self.lock()?;
+        let Some(screen_id) = self.active_screen_id_locked(&conn)? else {
+            return Ok(None);
+        };
+        drop(conn);
+        Ok(self
+            .list_stream_screens()?
+            .into_iter()
+            .find(|screen| screen.id == screen_id && screen.status == StreamScreenStatus::Ready))
+    }
+
+    pub fn activate_stream_screen(&self, screen_id: &str) -> Result<StreamScreen> {
+        let conn = self.lock()?;
+        let screen = self.stream_screen_by_id_locked(&conn, screen_id)?;
+        if screen.status != StreamScreenStatus::Ready {
+            anyhow::bail!("Screen image is missing and cannot be activated.");
+        }
+        self.save_setting_locked(&conn, "activeScreenId", &Some(screen_id.to_string()))?;
+        Ok(screen)
+    }
+
+    pub fn clear_active_stream_screen(&self) -> Result<()> {
+        let conn = self.lock()?;
+        self.save_setting_locked(&conn, "activeScreenId", &Option::<String>::None)
     }
 
     fn stream_screen_by_id_locked(
@@ -527,6 +557,35 @@ impl Database {
             },
         )?;
         Ok(screen)
+    }
+
+    fn active_screen_id_locked(&self, conn: &Connection) -> Result<Option<String>> {
+        let value_json = conn
+            .query_row(
+                "SELECT value_json FROM app_settings WHERE key = 'activeScreenId'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        match value_json {
+            Some(value) => Ok(serde_json::from_str::<Option<String>>(&value)?),
+            None => Ok(None),
+        }
+    }
+
+    fn save_setting_locked<T: serde::Serialize>(
+        &self,
+        conn: &Connection,
+        key: &str,
+        value: &T,
+    ) -> Result<()> {
+        conn.execute(
+            "INSERT INTO app_settings (key, value_json, updated_at)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at",
+            params![key, serde_json::to_string(value)?, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
     }
 
     fn screen_assets_dir(&self) -> PathBuf {
@@ -1170,5 +1229,45 @@ mod tests {
 
         let screens = database.list_stream_screens().unwrap();
         assert_eq!(screens[0].status, StreamScreenStatus::Missing);
+    }
+
+    #[test]
+    fn active_stream_screen_persists_and_clears() {
+        let database = test_database();
+        let first = import_stub_screen(&database, "first.png");
+        let second = import_stub_screen(&database, "second.png");
+
+        assert!(database.active_stream_screen().unwrap().is_none());
+
+        let active = database.activate_stream_screen(&first.id).unwrap();
+        assert_eq!(active.id, first.id);
+        assert_eq!(
+            database.active_stream_screen().unwrap().unwrap().id,
+            first.id
+        );
+
+        database.activate_stream_screen(&second.id).unwrap();
+        assert_eq!(
+            database.active_stream_screen().unwrap().unwrap().id,
+            second.id
+        );
+
+        database.clear_active_stream_screen().unwrap();
+        assert!(database.active_stream_screen().unwrap().is_none());
+    }
+
+    #[test]
+    fn active_stream_screen_rejects_missing_images_and_clears_on_delete() {
+        let database = test_database();
+        let screen = import_stub_screen(&database, "break.png");
+
+        database.activate_stream_screen(&screen.id).unwrap();
+        database.delete_stream_screen(&screen.id).unwrap();
+        assert!(database.active_stream_screen().unwrap().is_none());
+
+        let missing = import_stub_screen(&database, "missing.png");
+        std::fs::remove_file(&missing.image_path).unwrap();
+        let error = database.activate_stream_screen(&missing.id).unwrap_err();
+        assert!(error.to_string().contains("missing"));
     }
 }

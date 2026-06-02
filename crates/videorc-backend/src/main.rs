@@ -538,6 +538,12 @@ async fn handle_text_message(state: &AppState, text: &str) -> ServerResponse {
                 ServerResponse::error(command.id, "screens-list-failed", error.to_string())
             }
         },
+        "screens.active" => match state.database.active_stream_screen() {
+            Ok(screen) => ServerResponse::ok(command.id, screen),
+            Err(error) => {
+                ServerResponse::error(command.id, "screen-active-failed", error.to_string())
+            }
+        },
         "screens.importImage" => {
             match serde_json::from_value::<protocol::ImportScreenImageParams>(command.params) {
                 Ok(params) => {
@@ -574,6 +580,11 @@ async fn handle_text_message(state: &AppState, text: &str) -> ServerResponse {
                         if let Ok(screens) = state.database.list_stream_screens() {
                             state.emit_event("screens.changed", screens);
                         }
+                        if let Ok(active) = state.database.active_stream_screen()
+                            && active.as_ref().map(|active| &active.id) == Some(&screen.id)
+                        {
+                            state.emit_event("screens.active.changed", active);
+                        }
                         ServerResponse::ok(command.id, screen)
                     }
                     Err(error) => {
@@ -591,6 +602,9 @@ async fn handle_text_message(state: &AppState, text: &str) -> ServerResponse {
                     Ok(()) => match state.database.list_stream_screens() {
                         Ok(screens) => {
                             state.emit_event("screens.changed", screens.clone());
+                            if let Ok(active) = state.database.active_stream_screen() {
+                                state.emit_event("screens.active.changed", active);
+                            }
                             ServerResponse::ok(command.id, screens)
                         }
                         Err(error) => ServerResponse::error(
@@ -626,6 +640,36 @@ async fn handle_text_message(state: &AppState, text: &str) -> ServerResponse {
                 }
             }
         }
+        "screens.activate" => {
+            match serde_json::from_value::<protocol::ScreenIdParams>(command.params) {
+                Ok(params) => match state.database.activate_stream_screen(&params.screen_id) {
+                    Ok(screen) => {
+                        state.emit_event("screens.active.changed", Some(screen.clone()));
+                        ServerResponse::ok(command.id, screen)
+                    }
+                    Err(error) => ServerResponse::error(
+                        command.id,
+                        "screen-activate-failed",
+                        error.to_string(),
+                    ),
+                },
+                Err(error) => {
+                    ServerResponse::error(command.id, "invalid-params", error.to_string())
+                }
+            }
+        }
+        "screens.clear" => match state.database.clear_active_stream_screen() {
+            Ok(()) => {
+                state.emit_event(
+                    "screens.active.changed",
+                    Option::<protocol::StreamScreen>::None,
+                );
+                ServerResponse::ok(command.id, Option::<protocol::StreamScreen>::None)
+            }
+            Err(error) => {
+                ServerResponse::error(command.id, "screen-clear-failed", error.to_string())
+            }
+        },
         "session.remux_mp4" => {
             match serde_json::from_value::<protocol::RemuxSessionParams>(command.params) {
                 Ok(params) => match remux_session(state.clone(), params).await {

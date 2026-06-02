@@ -1,4 +1,13 @@
-import { Broadcast, FolderOpen, Play, Record, SpeakerHigh, SpeakerSlash, StopCircle } from '@phosphor-icons/react'
+import {
+  Broadcast,
+  FolderOpen,
+  ImageSquare,
+  Play,
+  Record,
+  SpeakerHigh,
+  SpeakerSlash,
+  StopCircle
+} from '@phosphor-icons/react'
 import type { ReactElement } from 'react'
 
 import { BlockingBanner } from '@/components/blocking-banner'
@@ -9,7 +18,9 @@ import { Button } from '@/components/ui/button'
 import { Field, FieldContent, FieldLabel } from '@/components/ui/field'
 import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
+import { useWorkspaceNav } from '@/components/workspace-nav'
 import { useStudio } from '@/hooks/use-studio'
+import type { StreamScreen } from '@/lib/backend'
 import { cn } from '@/lib/utils'
 
 const STATE_TONE: Record<string, StatusTone> = {
@@ -23,6 +34,7 @@ const STATE_TONE: Record<string, StatusTone> = {
 
 export function StudioTab(): ReactElement {
   const studio = useStudio()
+  const { setActive } = useWorkspaceNav()
   const {
     recording,
     elapsed,
@@ -55,7 +67,11 @@ export function StudioTab(): ReactElement {
     sceneEditMode,
     selectedSceneSourceId,
     setSceneEditMode,
-    setSelectedSceneSourceId
+    setSelectedSceneSourceId,
+    screens,
+    activeScreen,
+    activateScreen,
+    clearActiveScreen
   } = studio
 
   const active = recording.state === 'recording' || recording.state === 'streaming'
@@ -170,6 +186,16 @@ export function StudioTab(): ReactElement {
             </div>
           </PanelSection>
 
+          <PanelSection icon={ImageSquare} title="Screens">
+            <StudioScreensRow
+              activeScreen={activeScreen}
+              screens={screens}
+              onActivate={(screenId) => void activateScreen(screenId)}
+              onClear={() => void clearActiveScreen()}
+              onOpenScreens={() => setActive('screens')}
+            />
+          </PanelSection>
+
           <PanelSection icon={selectedMicrophone ? SpeakerHigh : SpeakerSlash} title="Mixer">
             <MixerRow
               gainDb={captureConfig.audio.microphoneGainDb}
@@ -184,6 +210,7 @@ export function StudioTab(): ReactElement {
           <PanelSection icon={Broadcast} title="Live summary">
             <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
               <SummaryRow label="Screen" value={selectedCaptureDevice?.name ?? 'None'} />
+              <SummaryRow label="Screen takeover" value={activeScreen?.name ?? 'Normal'} />
               <SummaryRow label="Camera" value={selectedCamera?.name ?? 'Off'} />
               <SummaryRow label="Audio" value={audioSummary} />
               <SummaryRow
@@ -258,6 +285,60 @@ function MixerRow({
         <span>Sync</span>
         <span>{`${syncOffsetMs > 0 ? '+' : ''}${syncOffsetMs} ms`}</span>
       </div>
+    </div>
+  )
+}
+
+function StudioScreensRow({
+  screens,
+  activeScreen,
+  onActivate,
+  onClear,
+  onOpenScreens
+}: {
+  screens: StreamScreen[]
+  activeScreen: StreamScreen | null
+  onActivate: (screenId: string) => void
+  onClear: () => void
+  onOpenScreens: () => void
+}): ReactElement {
+  if (screens.length === 0) {
+    return (
+      <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/30 px-3 py-2">
+        <span className="min-w-0 truncate text-sm text-muted-foreground">No Screens uploaded</span>
+        <Button size="sm" variant="secondary" onClick={onOpenScreens}>
+          <ImageSquare data-icon="inline-start" weight="duotone" />
+          Add
+        </Button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      <Button
+        size="sm"
+        variant={activeScreen ? 'outline' : 'default'}
+        onClick={activeScreen ? onClear : undefined}
+      >
+        Normal
+      </Button>
+      {screens.map((screen) => {
+        const selected = activeScreen?.id === screen.id
+        const missing = screen.status === 'missing'
+        return (
+          <Button
+            disabled={missing}
+            key={screen.id}
+            size="sm"
+            title={missing ? 'Screen image is missing' : screen.name}
+            variant={selected ? 'default' : 'outline'}
+            onClick={() => (selected ? onClear() : onActivate(screen.id))}
+          >
+            <span className="max-w-32 truncate">{screen.name}</span>
+          </Button>
+        )
+      })}
     </div>
   )
 }

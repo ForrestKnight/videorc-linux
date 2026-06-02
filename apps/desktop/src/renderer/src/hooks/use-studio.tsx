@@ -79,6 +79,7 @@ export type StudioContextValue = {
   diagnosticStats: DiagnosticStats
   sessions: SessionSummary[]
   screens: StreamScreen[]
+  activeScreen: StreamScreen | null
   // preview + audio
   previewUrl: string | null
   previewLoading: boolean
@@ -119,6 +120,8 @@ export type StudioContextValue = {
   renameScreen: (screenId: string, name: string) => Promise<void>
   deleteScreen: (screenId: string) => Promise<void>
   moveScreen: (screenId: string, direction: -1 | 1) => Promise<void>
+  activateScreen: (screenId: string) => Promise<void>
+  clearActiveScreen: () => Promise<void>
   refreshPreview: () => Promise<void>
   reloadSceneFromCaptureConfig: () => Promise<void>
   resetSceneSource: (sourceId?: string) => Promise<void>
@@ -214,6 +217,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   const [diagnosticStats, setDiagnosticStats] = useState<DiagnosticStats>(idleDiagnosticStats)
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [screens, setScreens] = useState<StreamScreen[]>([])
+  const [activeScreen, setActiveScreen] = useState<StreamScreen | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewLiveStatus, setPreviewLiveStatus] = useState<PreviewLiveStatus>({
@@ -321,8 +325,12 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       return
     }
 
-    const nextScreens = await activeClient.request<StreamScreen[]>('screens.list')
+    const [nextScreens, nextActiveScreen] = await Promise.all([
+      activeClient.request<StreamScreen[]>('screens.list'),
+      activeClient.request<StreamScreen | null>('screens.active')
+    ])
     setScreens(nextScreens)
+    setActiveScreen(nextActiveScreen)
   }, [])
 
   const refreshScreens = useCallback(async () => {
@@ -486,6 +494,9 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       nextClient.on('screens.changed', (payload) => {
         setScreens(payload as StreamScreen[])
       }),
+      nextClient.on('screens.active.changed', (payload) => {
+        setActiveScreen(payload as StreamScreen | null)
+      }),
       nextClient.on('ai.artifacts.changed', () => {
         void refreshSessions(nextClient)
       }),
@@ -598,18 +609,20 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
 
     try {
       setLastError(null)
-      const [nextHealth, nextDevices, nextSessions, nextDiagnostics, nextScreens] = await Promise.all([
+      const [nextHealth, nextDevices, nextSessions, nextDiagnostics, nextScreens, nextActiveScreen] = await Promise.all([
         client.request<BackendHealth>('health.ping', { ffmpegPath: settings.ffmpegPath.trim() || undefined }),
         client.request<DeviceList>('devices.list', { ffmpegPath: settings.ffmpegPath.trim() || undefined }),
         client.request<SessionSummary[]>('sessions.list'),
         client.request<DiagnosticStats>('diagnostics.stats'),
-        client.request<StreamScreen[]>('screens.list')
+        client.request<StreamScreen[]>('screens.list'),
+        client.request<StreamScreen | null>('screens.active')
       ])
       setHealth(nextHealth)
       setDeviceList(nextDevices)
       setSessions(nextSessions)
       setDiagnosticStats(nextDiagnostics)
       setScreens(nextScreens)
+      setActiveScreen(nextActiveScreen)
       if (!sceneEditMode) {
         await reloadSceneFromCaptureConfig()
       }
@@ -968,6 +981,39 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     [client, isSessionActive, reportError, screens]
   )
 
+  const activateScreen = useCallback(
+    async (screenId: string) => {
+      if (!client) {
+        toast.error('Backend socket is not connected.')
+        return
+      }
+
+      try {
+        setLastError(null)
+        const screen = await client.request<StreamScreen>('screens.activate', { screenId })
+        setActiveScreen(screen)
+      } catch (error) {
+        reportError(error)
+      }
+    },
+    [client, reportError]
+  )
+
+  const clearActiveScreen = useCallback(async () => {
+    if (!client) {
+      toast.error('Backend socket is not connected.')
+      return
+    }
+
+    try {
+      setLastError(null)
+      await client.request<StreamScreen | null>('screens.clear')
+      setActiveScreen(null)
+    } catch (error) {
+      reportError(error)
+    }
+  }, [client, reportError])
+
   useEffect(() => {
     if (!client || wsStatus !== 'connected' || isSessionActive || !health?.ffmpeg.available || !deviceList.devices.length) {
       return
@@ -1283,6 +1329,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     diagnosticStats,
     sessions,
     screens,
+    activeScreen,
     previewUrl,
     previewLoading,
     previewLiveStatus,
@@ -1317,6 +1364,8 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     renameScreen,
     deleteScreen,
     moveScreen,
+    activateScreen,
+    clearActiveScreen,
     refreshPreview,
     reloadSceneFromCaptureConfig,
     resetSceneSource,
