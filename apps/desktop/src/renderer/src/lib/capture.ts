@@ -5,6 +5,8 @@ import type {
   LayoutPreset,
   LayoutSettings,
   RtmpPreset,
+  SideBySideCameraSide,
+  SideBySideSplit,
   SourceSelection,
   VideoPreset,
   VideoSettings
@@ -101,7 +103,9 @@ export const defaultCaptureConfig: CaptureConfig = {
     cameraMirror: false,
     cameraZoom: 100,
     cameraOffsetX: 0,
-    cameraOffsetY: 0
+    cameraOffsetY: 0,
+    sideBySideSplit: '70-30',
+    sideBySideCameraSide: 'right'
   },
   audio: {
     microphoneGainDb: 0,
@@ -178,6 +182,12 @@ function isLayoutPreset(value: unknown): value is LayoutPreset {
   return typeof value === 'string' && (LAYOUT_PRESET_VALUES as readonly string[]).includes(value)
 }
 
+const SIDE_BY_SIDE_SPLITS: readonly SideBySideSplit[] = ['50-50', '60-40', '70-30']
+
+function isSideBySideSplit(value: unknown): value is SideBySideSplit {
+  return typeof value === 'string' && (SIDE_BY_SIDE_SPLITS as readonly string[]).includes(value)
+}
+
 function clampUnit(value: number): number {
   return Math.min(1, Math.max(0, value))
 }
@@ -222,7 +232,14 @@ export function normalizeLayoutSettings(layout: unknown): LayoutSettings {
     cameraFit:
       candidate.cameraFit === 'fit' || candidate.cameraFit === 'fill'
         ? candidate.cameraFit
-        : defaultCaptureConfig.layout.cameraFit
+        : defaultCaptureConfig.layout.cameraFit,
+    sideBySideSplit: isSideBySideSplit(candidate.sideBySideSplit)
+      ? candidate.sideBySideSplit
+      : defaultCaptureConfig.layout.sideBySideSplit,
+    sideBySideCameraSide:
+      candidate.sideBySideCameraSide === 'left' || candidate.sideBySideCameraSide === 'right'
+        ? candidate.sideBySideCameraSide
+        : defaultCaptureConfig.layout.sideBySideCameraSide
   }
 }
 

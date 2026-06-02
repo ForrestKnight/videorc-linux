@@ -2,7 +2,8 @@ use crate::protocol::{
     CameraCorner, CameraFit, CameraShape, CameraSize, CameraTransformMode, LayoutPreset, Scene,
     SceneConfigParams, SceneOutput, SceneOutputKind, SceneSource, SceneSourceKind,
     SceneSourceOrderParams, SceneSourceParams, SceneSourceVisibilityParams, SceneTransform,
-    SceneTransformPatch, SceneTransformUpdateParams, SourceSelection,
+    SceneTransformPatch, SceneTransformUpdateParams, SideBySideCameraSide, SideBySideSplit,
+    SourceSelection,
 };
 
 const DEFAULT_SCENE_ID: &str = "scene:default";
@@ -72,6 +73,33 @@ pub fn scene_from_capture_config(params: SceneConfigParams) -> Scene {
         LayoutPreset::ScreenOnly => {
             // Screen-only never composites the camera.
             scene.sources.push(base_source(&params.sources));
+        }
+        LayoutPreset::SideBySide => {
+            // Screen and camera occupy fixed side-by-side regions (screen larger).
+            let (screen_fraction, camera_fraction) =
+                side_by_side_fractions(params.layout.side_by_side_split);
+            let camera_right = matches!(
+                params.layout.side_by_side_camera_side,
+                SideBySideCameraSide::Right
+            );
+            let (screen_x, camera_x) = if camera_right {
+                (0.0, screen_fraction)
+            } else {
+                (camera_fraction, 0.0)
+            };
+
+            let mut base = base_source(&params.sources);
+            base.transform = region_transform(screen_x, screen_fraction);
+            base.default_transform = base.transform.clone();
+            scene.sources.push(base);
+
+            if let Some(camera_id) = params.sources.camera_id.clone() {
+                let mut camera =
+                    camera_source(camera_id, &params.layout, output_width, output_height);
+                camera.transform = region_transform(camera_x, camera_fraction);
+                camera.default_transform = camera.transform.clone();
+                scene.sources.push(camera);
+            }
         }
         _ => {
             scene.sources.push(base_source(&params.sources));
@@ -333,6 +361,27 @@ fn full_frame_transform() -> SceneTransform {
     }
 }
 
+fn side_by_side_fractions(split: SideBySideSplit) -> (f64, f64) {
+    match split {
+        SideBySideSplit::Even => (0.5, 0.5),
+        SideBySideSplit::SixtyForty => (0.6, 0.4),
+        SideBySideSplit::SeventyThirty => (0.7, 0.3),
+    }
+}
+
+fn region_transform(x: f64, width: f64) -> SceneTransform {
+    SceneTransform {
+        x,
+        y: 0.0,
+        width,
+        height: 1.0,
+        crop_left: 0.0,
+        crop_top: 0.0,
+        crop_right: 0.0,
+        crop_bottom: 0.0,
+    }
+}
+
 fn apply_transform_patch(
     mut transform: SceneTransform,
     patch: SceneTransformPatch,
@@ -452,6 +501,8 @@ mod tests {
                 camera_zoom: 100,
                 camera_offset_x: 0,
                 camera_offset_y: 0,
+                side_by_side_split: SideBySideSplit::SeventyThirty,
+                side_by_side_camera_side: SideBySideCameraSide::Right,
             },
             video: None,
         }
@@ -512,6 +563,60 @@ mod tests {
         assert!((camera.transform.height - 1.0).abs() < 1e-9);
         assert!(camera.transform.x.abs() < 1e-9);
         assert!(camera.transform.y.abs() < 1e-9);
+    }
+
+    #[test]
+    fn side_by_side_scene_places_sources_in_regions() {
+        let mut params = base_params();
+        params.layout.layout_preset = LayoutPreset::SideBySide;
+        params.layout.side_by_side_split = SideBySideSplit::SeventyThirty;
+        params.layout.side_by_side_camera_side = SideBySideCameraSide::Right;
+
+        let scene = scene_from_capture_config(params);
+        assert_eq!(scene.sources.len(), 2);
+        let base = scene
+            .sources
+            .iter()
+            .find(|source| source.kind != SceneSourceKind::Camera)
+            .expect("base source");
+        let camera = scene
+            .sources
+            .iter()
+            .find(|source| source.kind == SceneSourceKind::Camera)
+            .expect("camera source");
+
+        // Screen left at 70% wide, camera right at 30% wide, full height.
+        assert!(base.transform.x.abs() < 1e-9);
+        assert!((base.transform.width - 0.7).abs() < 1e-9);
+        assert!((camera.transform.x - 0.7).abs() < 1e-9);
+        assert!((camera.transform.width - 0.3).abs() < 1e-9);
+        assert!((camera.transform.height - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn side_by_side_camera_left_swaps_regions() {
+        let mut params = base_params();
+        params.layout.layout_preset = LayoutPreset::SideBySide;
+        params.layout.side_by_side_split = SideBySideSplit::SixtyForty;
+        params.layout.side_by_side_camera_side = SideBySideCameraSide::Left;
+
+        let scene = scene_from_capture_config(params);
+        let base = scene
+            .sources
+            .iter()
+            .find(|source| source.kind != SceneSourceKind::Camera)
+            .expect("base source");
+        let camera = scene
+            .sources
+            .iter()
+            .find(|source| source.kind == SceneSourceKind::Camera)
+            .expect("camera source");
+
+        // Camera left at 40% wide, screen right at 60% wide.
+        assert!(camera.transform.x.abs() < 1e-9);
+        assert!((camera.transform.width - 0.4).abs() < 1e-9);
+        assert!((base.transform.x - 0.4).abs() < 1e-9);
+        assert!((base.transform.width - 0.6).abs() < 1e-9);
     }
 
     #[test]

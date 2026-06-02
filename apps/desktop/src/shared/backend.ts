@@ -127,6 +127,8 @@ export type CameraShape = 'rectangle' | 'circle'
 export type CameraFit = 'fit' | 'fill'
 export type LayoutPreset = 'screen-camera' | 'screen-only' | 'camera-only' | 'side-by-side'
 export type CameraTransformMode = 'preset' | 'custom'
+export type SideBySideSplit = '50-50' | '60-40' | '70-30'
+export type SideBySideCameraSide = 'left' | 'right'
 
 export interface CameraTransform {
   x: number
@@ -148,6 +150,8 @@ export interface LayoutSettings {
   cameraZoom: number
   cameraOffsetX: number
   cameraOffsetY: number
+  sideBySideSplit: SideBySideSplit
+  sideBySideCameraSide: SideBySideCameraSide
 }
 
 export type SceneSourceKind = 'screen' | 'window' | 'camera' | 'test-pattern'

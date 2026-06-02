@@ -21,14 +21,22 @@ import { Slider } from '@/components/ui/slider'
 import { Switch } from '@/components/ui/switch'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useStudio } from '@/hooks/use-studio'
-import type { CameraCorner, CameraFit, CameraShape, CameraSize, SceneSource } from '@/lib/backend'
+import type {
+  CameraCorner,
+  CameraFit,
+  CameraShape,
+  CameraSize,
+  SceneSource,
+  SideBySideCameraSide,
+  SideBySideSplit
+} from '@/lib/backend'
 import { cn } from '@/lib/utils'
 
 const LAYOUT_PRESETS = [
   { id: 'screen-camera', label: 'Screen + camera', enabled: true },
   { id: 'screen-only', label: 'Screen only', enabled: true },
   { id: 'camera-only', label: 'Camera only', enabled: true },
-  { id: 'side-by-side', label: 'Side-by-side', enabled: false }
+  { id: 'side-by-side', label: 'Side-by-side', enabled: true }
 ] as const
 
 export function LayoutTab(): ReactElement {
@@ -60,6 +68,7 @@ export function LayoutTab(): ReactElement {
   const hasCamera = Boolean(captureConfig.sources.cameraId)
   const isScreenOnly = layout.layoutPreset === 'screen-only'
   const isCameraOnly = layout.layoutPreset === 'camera-only'
+  const isSideBySide = layout.layoutPreset === 'side-by-side'
   const showOverlayControls = layout.layoutPreset === 'screen-camera'
 
   return (
@@ -72,7 +81,7 @@ export function LayoutTab(): ReactElement {
         >
           <div className="flex flex-wrap gap-2">
             {LAYOUT_PRESETS.map((preset) => {
-              const needsCamera = preset.id === 'camera-only'
+              const needsCamera = preset.id === 'camera-only' || preset.id === 'side-by-side'
               const disabled = !preset.enabled || isSessionActive || (needsCamera && !hasCamera)
               return (
                 <button
@@ -96,7 +105,9 @@ export function LayoutTab(): ReactElement {
           {isSessionActive ? (
             <p className="text-xs text-muted-foreground">Stop the session to change the layout preset.</p>
           ) : !hasCamera ? (
-            <p className="text-xs text-muted-foreground">Select a camera in Studio to enable Camera only.</p>
+            <p className="text-xs text-muted-foreground">
+              Select a camera in Studio to enable Camera only and Side-by-side.
+            </p>
           ) : null}
         </PanelSection>
 
@@ -226,6 +237,40 @@ export function LayoutTab(): ReactElement {
           </p>
         ) : (
           <>
+            {isSideBySide ? (
+              <>
+                <Field>
+                  <FieldLabel>Split</FieldLabel>
+                  <ToggleGroup
+                    className="w-full"
+                    type="single"
+                    value={layout.sideBySideSplit}
+                    variant="outline"
+                    onValueChange={(value) => value && applyCameraPreset({ sideBySideSplit: value as SideBySideSplit })}
+                  >
+                    <ToggleGroupItem value="50-50">50/50</ToggleGroupItem>
+                    <ToggleGroupItem value="60-40">60/40</ToggleGroupItem>
+                    <ToggleGroupItem value="70-30">70/30</ToggleGroupItem>
+                  </ToggleGroup>
+                </Field>
+                <Field>
+                  <FieldLabel>Camera side</FieldLabel>
+                  <ToggleGroup
+                    className="w-full"
+                    type="single"
+                    value={layout.sideBySideCameraSide}
+                    variant="outline"
+                    onValueChange={(value) =>
+                      value && applyCameraPreset({ sideBySideCameraSide: value as SideBySideCameraSide })
+                    }
+                  >
+                    <ToggleGroupItem value="left">Camera left</ToggleGroupItem>
+                    <ToggleGroupItem value="right">Camera right</ToggleGroupItem>
+                  </ToggleGroup>
+                </Field>
+              </>
+            ) : null}
+
             {isCameraOnly ? (
               <p className="text-sm text-muted-foreground">
                 Camera only fills the frame as a rectangle. Corner, size, and shape do not apply — use fit, mirror,

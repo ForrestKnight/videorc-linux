@@ -27,7 +27,8 @@ use crate::protocol::{
     CameraTransformMode, HealthLevel, LayoutPreset, PreviewLiveParams, PreviewLiveSource,
     PreviewLiveState, PreviewLiveStatus, PreviewSnapshot, PreviewSnapshotParams,
     RecordingPipelineStage, RecordingState, RecordingStatus, RemuxSessionParams, RtmpPreset,
-    RtmpSettings, StartSessionParams, StreamHealth, VideoPreset, VideoSettings,
+    RtmpSettings, SideBySideCameraSide, SideBySideSplit, StartSessionParams, StreamHealth,
+    VideoPreset, VideoSettings,
 };
 use crate::screen_capture::{parse_screencapturekit_display_id, parse_screencapturekit_window_id};
 use crate::state::AppState;
@@ -236,11 +237,13 @@ pub async fn start_session(state: AppState, params: StartSessionParams) -> Resul
         };
         emit_health_event(&state, Some(&session_id), HealthLevel::Warn, code, message)?;
     }
-    // Only the screen+camera overlay path can lose the camera; camera-only handles
-    // an unavailable camera via the test-pattern fallback above and screen-only
-    // deliberately omits the camera.
-    if matches!(params.layout.layout_preset, LayoutPreset::ScreenCamera)
-        && params.sources.camera_id.is_some()
+    // The screen+camera overlay and side-by-side paths both rely on the camera;
+    // camera-only handles an unavailable camera via the test-pattern fallback
+    // above and screen-only deliberately omits the camera.
+    if matches!(
+        params.layout.layout_preset,
+        LayoutPreset::ScreenCamera | LayoutPreset::SideBySide
+    ) && params.sources.camera_id.is_some()
         && capture.camera_index.is_none()
     {
         emit_health_event(
@@ -248,7 +251,7 @@ pub async fn start_session(state: AppState, params: StartSessionParams) -> Resul
             Some(&session_id),
             HealthLevel::Warn,
             "camera-source-unavailable",
-            "Selected camera could not be bridged to the current FFmpeg recording path; continuing without the camera overlay.",
+            "Selected camera could not be bridged to the current FFmpeg recording path; continuing without the camera.",
         )?;
     }
     emit_audio_track_health_events(&state, &session_id, &params, &audio_tracks)?;
@@ -2179,6 +2182,10 @@ fn video_filter(
         return camera_only_video_filter(params, preview);
     }
 
+    if matches!(params.layout.layout_preset, LayoutPreset::SideBySide) {
+        return side_by_side_video_filter(camera_input_index, params, preview);
+    }
+
     let base_scale = if preview {
         "scale=w=960:h=-2".to_string()
     } else {
@@ -2214,6 +2221,56 @@ fn camera_only_video_filter(params: &StartSessionParams, preview: bool) -> Strin
     let frame = camera_frame_filter(video.width, video.height, &params.layout);
     let final_scale = if preview { ",scale=w=960:h=-2" } else { "" };
     format!("{prefix}{frame},fps={}{final_scale}[v]", video.fps)
+}
+
+/// Splits the canvas width into the screen and camera regions. The screen always
+/// gets the larger (or equal) share, and the two widths sum to the canvas width.
+fn side_by_side_widths(split: SideBySideSplit, total_width: u32) -> (u32, u32) {
+    let screen_fraction = match split {
+        SideBySideSplit::Even => 0.5,
+        SideBySideSplit::SixtyForty => 0.6,
+        SideBySideSplit::SeventyThirty => 0.7,
+    };
+    let mut screen_width = (f64::from(total_width) * screen_fraction).round() as u32;
+    screen_width -= screen_width % 2;
+    screen_width = screen_width.clamp(2, total_width.saturating_sub(2));
+    (screen_width, total_width - screen_width)
+}
+
+fn side_by_side_video_filter(
+    camera_input_index: Option<usize>,
+    params: &StartSessionParams,
+    preview: bool,
+) -> String {
+    let video = &params.output.video;
+    let (screen_width, camera_width) =
+        side_by_side_widths(params.layout.side_by_side_split, video.width);
+    let height = video.height;
+    let fps = video.fps;
+
+    // Each region covers its area (scale to fill + center crop) so the two halves
+    // tile the canvas with no black gap between them.
+    let screen = format!(
+        "[0:v]setpts=PTS-STARTPTS,scale={screen_width}:{height}:force_original_aspect_ratio=increase,crop={screen_width}:{height},fps={fps}[sbs_screen]"
+    );
+    let camera = match camera_input_index {
+        Some(index) => {
+            let mirror = if params.layout.camera_mirror {
+                "hflip,"
+            } else {
+                ""
+            };
+            let frame = camera_frame_filter(camera_width, height, &params.layout);
+            format!("[{index}:v]setpts=PTS-STARTPTS,{mirror}{frame},fps={fps}[sbs_camera]")
+        }
+        None => format!("color=c=black:s={camera_width}x{height}:r={fps}[sbs_camera]"),
+    };
+    let (left, right) = match params.layout.side_by_side_camera_side {
+        SideBySideCameraSide::Right => ("sbs_screen", "sbs_camera"),
+        SideBySideCameraSide::Left => ("sbs_camera", "sbs_screen"),
+    };
+    let final_scale = if preview { ",scale=w=960:h=-2" } else { "" };
+    format!("{screen};{camera};[{left}][{right}]hstack=inputs=2{final_scale}[v]")
 }
 
 fn output_scale_filter(video: &VideoSettings) -> String {
@@ -2684,6 +2741,8 @@ mod tests {
                 camera_zoom: 100,
                 camera_offset_x: 0,
                 camera_offset_y: 0,
+                side_by_side_split: SideBySideSplit::SeventyThirty,
+                side_by_side_camera_side: SideBySideCameraSide::Right,
             },
             output: OutputSettings {
                 record_enabled,
@@ -2788,6 +2847,40 @@ mod tests {
         let capture = resolve_capture_inputs("ffmpeg", &params).await;
 
         assert!(capture.camera_index.is_none());
+    }
+
+    #[test]
+    fn side_by_side_widths_keep_screen_larger_and_tile_the_canvas() {
+        for (split, expected_screen) in [
+            (SideBySideSplit::Even, 1280u32),
+            (SideBySideSplit::SixtyForty, 1536),
+            (SideBySideSplit::SeventyThirty, 1792),
+        ] {
+            let (screen, camera) = side_by_side_widths(split, 2560);
+            assert_eq!(screen, expected_screen);
+            assert_eq!(screen + camera, 2560);
+            assert!(screen >= camera);
+            assert_eq!(screen % 2, 0);
+            assert_eq!(camera % 2, 0);
+        }
+    }
+
+    #[test]
+    fn side_by_side_filter_orders_regions_by_camera_side() {
+        let mut params = base_params(true, false);
+        params.layout.layout_preset = LayoutPreset::SideBySide;
+        params.layout.side_by_side_split = SideBySideSplit::SeventyThirty;
+        params.layout.side_by_side_camera_side = SideBySideCameraSide::Right;
+
+        let right = video_filter(Some(1), &params, false);
+        assert!(right.contains("crop=1792:1440"), "screen region: {right}");
+        assert!(right.contains("[1:v]setpts=PTS-STARTPTS,"));
+        assert!(right.contains("[sbs_screen][sbs_camera]hstack=inputs=2"));
+        assert!(!right.contains("overlay"));
+
+        params.layout.side_by_side_camera_side = SideBySideCameraSide::Left;
+        let left = video_filter(Some(1), &params, false);
+        assert!(left.contains("[sbs_camera][sbs_screen]hstack=inputs=2"));
     }
 
     fn ffmpeg_inputs(args: &[String]) -> Vec<&str> {

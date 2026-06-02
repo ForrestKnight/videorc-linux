@@ -247,6 +247,10 @@ pub struct LayoutSettings {
     pub camera_offset_x: i32,
     #[serde(default)]
     pub camera_offset_y: i32,
+    #[serde(default = "default_side_by_side_split")]
+    pub side_by_side_split: SideBySideSplit,
+    #[serde(default = "default_side_by_side_camera_side")]
+    pub side_by_side_camera_side: SideBySideCameraSide,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -303,6 +307,23 @@ pub struct CameraTransform {
     pub y: f64,
     pub width: f64,
     pub height: f64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SideBySideSplit {
+    #[serde(rename = "50-50")]
+    Even,
+    #[serde(rename = "60-40")]
+    SixtyForty,
+    #[serde(rename = "70-30")]
+    SeventyThirty,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum SideBySideCameraSide {
+    Left,
+    Right,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -450,6 +471,14 @@ fn default_layout_preset() -> LayoutPreset {
 
 fn default_camera_transform_mode() -> CameraTransformMode {
     CameraTransformMode::Preset
+}
+
+fn default_side_by_side_split() -> SideBySideSplit {
+    SideBySideSplit::SeventyThirty
+}
+
+fn default_side_by_side_camera_side() -> SideBySideCameraSide {
+    SideBySideCameraSide::Right
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -887,6 +916,8 @@ mod tests {
             camera_zoom: 100,
             camera_offset_x: 0,
             camera_offset_y: 0,
+            side_by_side_split: SideBySideSplit::SixtyForty,
+            side_by_side_camera_side: SideBySideCameraSide::Left,
         };
         let json = serde_json::to_string(&layout).unwrap();
         assert!(json.contains("\"layoutPreset\":\"side-by-side\""));
@@ -924,5 +955,29 @@ mod tests {
         let layout: LayoutSettings = serde_json::from_value(legacy).unwrap();
         assert_eq!(layout.camera_transform_mode, CameraTransformMode::Preset);
         assert!(layout.camera_transform.is_none());
+    }
+
+    #[test]
+    fn side_by_side_enums_serialize_to_expected_labels() {
+        assert_eq!(
+            serde_json::to_value(SideBySideSplit::Even).unwrap(),
+            serde_json::json!("50-50")
+        );
+        assert_eq!(
+            serde_json::to_value(SideBySideSplit::SixtyForty).unwrap(),
+            serde_json::json!("60-40")
+        );
+        assert_eq!(
+            serde_json::to_value(SideBySideSplit::SeventyThirty).unwrap(),
+            serde_json::json!("70-30")
+        );
+        assert_eq!(
+            serde_json::to_value(SideBySideCameraSide::Left).unwrap(),
+            serde_json::json!("left")
+        );
+        assert_eq!(
+            serde_json::to_value(SideBySideCameraSide::Right).unwrap(),
+            serde_json::json!("right")
+        );
     }
 }

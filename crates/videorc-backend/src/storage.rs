@@ -554,7 +554,8 @@ mod tests {
     use super::*;
     use crate::protocol::{
         CameraCorner, CameraFit, CameraShape, CameraSize, CameraTransformMode, LayoutPreset,
-        OutputSettings, PermissionPane, RtmpPreset, RtmpSettings, VideoPreset, VideoSettings,
+        OutputSettings, PermissionPane, RtmpPreset, RtmpSettings, SideBySideCameraSide,
+        SideBySideSplit, VideoPreset, VideoSettings,
     };
 
     fn test_database() -> Database {
@@ -595,6 +596,8 @@ mod tests {
                 camera_zoom: 100,
                 camera_offset_x: 0,
                 camera_offset_y: 0,
+                side_by_side_split: SideBySideSplit::SeventyThirty,
+                side_by_side_camera_side: SideBySideCameraSide::Right,
             },
             output: OutputSettings {
                 record_enabled: true,
@@ -641,6 +644,8 @@ mod tests {
             camera_zoom: 125,
             camera_offset_x: 10,
             camera_offset_y: -5,
+            side_by_side_split: SideBySideSplit::SixtyForty,
+            side_by_side_camera_side: SideBySideCameraSide::Left,
         };
         let sources = SourceSelection {
             screen_id: Some("screen:avfoundation:1".to_string()),
