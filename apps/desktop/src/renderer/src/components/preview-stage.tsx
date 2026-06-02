@@ -14,10 +14,12 @@ import { Button } from '@/components/ui/button'
 import type { LayoutSettings, PreviewLiveStatus, RuntimeInfo, Scene } from '@/lib/backend'
 import { cn } from '@/lib/utils'
 
+// Widths mirror the backend camera_box_size() (260/360/480 over the 1280px
+// reference) so the schematic placeholder matches the recorded camera geometry.
 const SIZE_FRACTION: Record<LayoutSettings['cameraSize'], string> = {
-  small: '20%',
-  medium: '26%',
-  large: '34%'
+  small: '20.3125%',
+  medium: '28.125%',
+  large: '37.5%'
 }
 
 type SceneSource = Scene['sources'][number]
@@ -50,7 +52,9 @@ function cameraBoxStyle(layout: LayoutSettings): CSSProperties {
   const margin = `${layout.cameraMargin / 16}rem`
   const style: CSSProperties = {
     width: SIZE_FRACTION[layout.cameraSize],
-    aspectRatio: '16 / 9',
+    // A circle records as a square masked frame, so the schematic box must be
+    // 1:1 (not 16:9) or it would suggest an ellipse the output cannot produce.
+    aspectRatio: layout.cameraShape === 'circle' ? '1 / 1' : '16 / 9',
     position: 'absolute'
   }
 

@@ -3306,6 +3306,68 @@ mod tests {
     }
 
     #[test]
+    fn custom_transform_keeps_circle_mask_in_recording() {
+        let mut params = base_params(true, false);
+        params.layout.camera_shape = CameraShape::Circle;
+        params.layout.camera_transform_mode = CameraTransformMode::Custom;
+        params.layout.camera_transform = Some(CameraTransform {
+            x: 0.1,
+            y: 0.1,
+            width: 0.3,
+            height: 0.3,
+        });
+
+        let filter = video_filter(Some(1), &params, false);
+
+        // The dragged position drives the overlay placement...
+        assert!(
+            filter.contains("overlay=x=W*0.10000:y=H*0.10000"),
+            "missing custom overlay position: {filter}"
+        );
+        // ...while the circle alpha mask still applies to the camera content.
+        assert!(filter.contains("format=rgba"));
+        assert!(filter.contains("geq="));
+    }
+
+    #[test]
+    fn preview_and_recording_share_camera_treatment() {
+        let mut params = base_params(true, false);
+        params.layout.camera_shape = CameraShape::Circle;
+        params.layout.camera_mirror = true;
+        params.layout.camera_fit = CameraFit::Fit;
+
+        let recording = recording_video_filter(Some(1), &params, false);
+        let preview_session = live_preview_session_params(
+            PreviewLiveParams {
+                sources: params.sources.clone(),
+                layout: params.layout.clone(),
+                ffmpeg_path: None,
+                video: Some(params.output.video.clone()),
+            },
+            "ffmpeg".to_string(),
+        );
+        let preview = live_preview_filter(Some(1), &preview_session);
+
+        // Mirror, circle mask, and fit padding must appear identically in the
+        // live preview and the recording so the two never drift apart.
+        for marker in [
+            "hflip",
+            "format=rgba",
+            "geq=",
+            "force_original_aspect_ratio=decrease",
+        ] {
+            assert!(
+                recording.contains(marker),
+                "recording missing {marker}: {recording}"
+            );
+            assert!(
+                preview.contains(marker),
+                "preview missing {marker}: {preview}"
+            );
+        }
+    }
+
+    #[test]
     fn stream_requires_manual_key() {
         let mut params = base_params(false, true);
         params.output.rtmp.stream_key.clear();
