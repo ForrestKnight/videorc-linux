@@ -12,6 +12,9 @@ import type { StreamScreen } from '@/lib/backend'
 
 export function ScreensTab(): ReactElement {
   const {
+    activeScreen,
+    activateScreen,
+    clearActiveScreen,
     deleteScreen,
     importScreenImage,
     isSessionActive,
@@ -49,11 +52,16 @@ export function ScreensTab(): ReactElement {
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {screens.map((screen, index) => (
               <ScreenTile
+                active={activeScreen?.id === screen.id}
+                activationDisabled={wsStatus !== 'connected'}
                 disabled={managementDisabled}
                 index={index}
                 key={screen.id}
                 screen={screen}
                 total={screens.length}
+                onActivate={() =>
+                  void (activeScreen?.id === screen.id ? clearActiveScreen() : activateScreen(screen.id))
+                }
                 onDelete={() => void deleteScreen(screen.id)}
                 onMove={(direction) => void moveScreen(screen.id, direction)}
                 onRename={(name) => void renameScreen(screen.id, name)}
@@ -68,17 +76,23 @@ export function ScreensTab(): ReactElement {
 
 function ScreenTile({
   screen,
+  active,
+  activationDisabled,
   disabled,
   index,
   total,
+  onActivate,
   onDelete,
   onMove,
   onRename
 }: {
   screen: StreamScreen
+  active: boolean
+  activationDisabled: boolean
   disabled: boolean
   index: number
   total: number
+  onActivate: () => void
   onDelete: () => void
   onMove: (direction: -1 | 1) => void
   onRename: (name: string) => void
@@ -119,6 +133,11 @@ function ScreenTile({
         <Badge className="absolute right-2 top-2" variant={missing ? 'destructive' : 'success'}>
           {missing ? 'Missing' : 'Ready'}
         </Badge>
+        {active ? (
+          <Badge className="absolute left-2 top-2" variant="warning">
+            Active
+          </Badge>
+        ) : null}
       </div>
       <form
         className="flex min-w-0 flex-col gap-2 p-3"
@@ -147,6 +166,15 @@ function ScreenTile({
         </div>
         <span className="truncate text-xs text-muted-foreground">{screen.imagePath}</span>
         <div className="flex items-center gap-2">
+          <Button
+            disabled={activationDisabled || missing}
+            type="button"
+            variant={active ? 'default' : 'secondary'}
+            onClick={onActivate}
+          >
+            <ImageSquare data-icon="inline-start" weight="duotone" />
+            {active ? 'Active' : 'Activate'}
+          </Button>
           <Button
             aria-label="Move Screen up"
             disabled={disabled || index === 0}

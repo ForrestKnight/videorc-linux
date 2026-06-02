@@ -336,7 +336,16 @@ function StudioScreensRow({
             variant={selected ? 'default' : 'outline'}
             onClick={() => (selected ? onClear() : onActivate(screen.id))}
           >
-            <span className="max-w-32 truncate">{screen.name}</span>
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="h-5 w-8 shrink-0 overflow-hidden rounded border bg-muted">
+                {!missing ? (
+                  <img alt="" className="size-full object-cover" src={fileUrlFromPath(screen.imagePath)} />
+                ) : (
+                  <span className="block size-full bg-destructive/20" />
+                )}
+              </span>
+              <span className="max-w-32 truncate">{screen.name}</span>
+            </span>
           </Button>
         )
       })}
@@ -351,6 +360,12 @@ function SummaryRow({ label, value }: { label: string; value: string }): ReactEl
       <dd className="truncate text-right font-medium">{value}</dd>
     </>
   )
+}
+
+function fileUrlFromPath(path: string): string {
+  const normalized = path.replace(/\\/g, '/')
+  const prefix = /^[A-Za-z]:/.test(normalized) ? 'file:///' : 'file://'
+  return `${prefix}${encodeURI(normalized)}`
 }
 
 function pipelineStatusLabel(status: string): string {
