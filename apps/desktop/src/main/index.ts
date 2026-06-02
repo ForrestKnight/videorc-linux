@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, nativeImage, shell, type NativeImage } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell, type NativeImage } from 'electron'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
@@ -251,10 +251,31 @@ async function openSystemPermissions(pane: SystemPermissionPane = 'privacy'): Pr
   await shell.openExternal(MACOS_PERMISSION_URLS[pane] ?? MACOS_PERMISSION_URLS.privacy)
 }
 
+async function pickScreenImage(): Promise<string | null> {
+  const options: Electron.OpenDialogOptions = {
+    title: 'Choose Screen image',
+    properties: ['openFile'],
+    filters: [
+      {
+        name: 'Images',
+        extensions: ['png', 'jpg', 'jpeg', 'webp']
+      }
+    ]
+  }
+  const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options)
+
+  if (result.canceled) {
+    return null
+  }
+
+  return result.filePaths[0] ?? null
+}
+
 app.whenReady().then(() => {
   ipcMain.handle('backend:get-connection', () => backendConnection)
   ipcMain.handle('backend:get-logs', () => backendLogs)
   ipcMain.handle('system:open-permissions', (_event, pane?: SystemPermissionPane) => openSystemPermissions(pane))
+  ipcMain.handle('screens:pick-image', () => pickScreenImage())
 
   setDockIcon()
   startBackend()

@@ -770,6 +770,7 @@ pub struct StreamScreen {
 #[serde(rename_all = "camelCase")]
 pub struct ImportScreenImageParams {
     pub path: String,
+    pub ffmpeg_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

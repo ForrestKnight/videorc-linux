@@ -611,6 +611,7 @@ export interface StreamScreen {
 
 export interface ImportScreenImageParams {
   path: string
+  ffmpegPath?: string
 }
 
 export interface RuntimeInfo {
@@ -623,6 +624,7 @@ export interface VideorcApi {
   getBackendConnection: () => Promise<BackendConnection | null>
   getBackendLogs: () => Promise<BackendLogEvent[]>
   getRuntimeInfo: () => Promise<RuntimeInfo>
+  pickScreenImage: () => Promise<string | null>
   openSystemPermissions: (pane?: SystemPermissionPane) => Promise<void>
   revealPermissionTarget: () => Promise<void>
   onBackendConnection: (callback: (connection: BackendConnection) => void) => () => void

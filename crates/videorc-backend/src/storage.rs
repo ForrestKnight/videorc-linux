@@ -1,4 +1,5 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
@@ -332,7 +333,22 @@ impl Database {
         Ok(())
     }
 
-    pub fn import_screen_image(&self, image_path: &str) -> Result<StreamScreen> {
+    pub fn import_screen_image(&self, image_path: &str, ffmpeg_path: &str) -> Result<StreamScreen> {
+        self.import_screen_image_with_optimizer(image_path, |source, destination| {
+            optimize_screen_image(source, destination, ffmpeg_path)
+        })
+    }
+
+    fn import_screen_image_with_optimizer<F>(
+        &self,
+        image_path: &str,
+        optimize: F,
+    ) -> Result<StreamScreen>
+    where
+        F: FnOnce(&Path, &Path) -> Result<()>,
+    {
+        let source_path = Path::new(image_path);
+        validate_screen_image_source(source_path)?;
         let conn = self.lock()?;
         let now = Utc::now().to_rfc3339();
         let next_order: i64 = conn.query_row(
@@ -340,17 +356,19 @@ impl Database {
             [],
             |row| row.get(0),
         )?;
+        let id = Uuid::new_v4().to_string();
+        let screen_dir = self.screen_assets_dir();
+        std::fs::create_dir_all(&screen_dir)
+            .with_context(|| format!("Could not create {}", screen_dir.display()))?;
+        let optimized_path = screen_dir.join(format!("{id}.png"));
+        optimize(source_path, &optimized_path)?;
         let screen = StreamScreen {
-            id: Uuid::new_v4().to_string(),
+            id,
             name: screen_name_from_path(image_path),
-            image_path: image_path.to_string(),
+            image_path: optimized_path.display().to_string(),
             thumbnail_path: None,
             sort_order: next_order,
-            status: if std::path::Path::new(image_path).exists() {
-                StreamScreenStatus::Ready
-            } else {
-                StreamScreenStatus::Missing
-            },
+            status: StreamScreenStatus::Ready,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -395,6 +413,18 @@ impl Database {
         })?;
 
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    fn screen_assets_dir(&self) -> PathBuf {
+        if let Some(parent) = self
+            .path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            return parent.join("Screens");
+        }
+
+        std::env::temp_dir().join("videorc-screens")
     }
 
     fn migrate(&self) -> Result<()> {
@@ -626,8 +656,71 @@ pub fn default_artifacts_dir() -> PathBuf {
         .join("Artifacts")
 }
 
+fn validate_screen_image_source(path: &Path) -> Result<()> {
+    if !path.exists() {
+        anyhow::bail!("Screen image does not exist: {}", path.display());
+    }
+    if !path.is_file() {
+        anyhow::bail!("Screen image is not a file: {}", path.display());
+    }
+
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::to_lowercase)
+        .unwrap_or_default();
+    if !matches!(extension.as_str(), "png" | "jpg" | "jpeg" | "webp") {
+        anyhow::bail!("Screen image must be PNG, JPEG, or WebP.");
+    }
+
+    Ok(())
+}
+
+fn optimize_screen_image(
+    source_path: &Path,
+    destination_path: &Path,
+    ffmpeg_path: &str,
+) -> Result<()> {
+    let filter = concat!(
+        "[0:v]scale=3840:2160:force_original_aspect_ratio=increase,",
+        "crop=3840:2160,gblur=sigma=30,format=rgba,colorchannelmixer=aa=1[bg];",
+        "[0:v]scale=3840:2160:force_original_aspect_ratio=decrease[fg];",
+        "[bg][fg]overlay=(W-w)/2:(H-h)/2:format=auto,format=rgb24[out]"
+    );
+    let output = Command::new(ffmpeg_path)
+        .arg("-hide_banner")
+        .arg("-loglevel")
+        .arg("error")
+        .arg("-y")
+        .arg("-i")
+        .arg(source_path)
+        .arg("-filter_complex")
+        .arg(filter)
+        .arg("-map")
+        .arg("[out]")
+        .arg("-frames:v")
+        .arg("1")
+        .arg(destination_path)
+        .output()
+        .with_context(|| format!("Could not start {ffmpeg_path} for Screen image import"))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    anyhow::bail!(
+        "Could not optimize Screen image{}",
+        if stderr.is_empty() {
+            ".".to_string()
+        } else {
+            format!(": {stderr}")
+        }
+    );
+}
+
 fn screen_name_from_path(image_path: &str) -> String {
-    let stem = std::path::Path::new(image_path)
+    let stem = Path::new(image_path)
         .file_stem()
         .and_then(|value| value.to_str())
         .unwrap_or("Screen");
@@ -667,6 +760,14 @@ mod tests {
         };
         database.migrate().unwrap();
         database
+    }
+
+    fn temp_screen_image(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("videorc-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(name);
+        std::fs::write(&path, b"not a real image").unwrap();
+        path
     }
 
     fn sample_session(id: &str) -> NewSession {
@@ -877,15 +978,28 @@ mod tests {
     #[test]
     fn imported_screen_images_infer_names_and_persist_in_order() {
         let database = test_database();
+        let first_path = temp_screen_image("be-right_back.png");
+        let second_path = temp_screen_image("ending.png");
 
         let first = database
-            .import_screen_image("/tmp/be-right_back.png")
+            .import_screen_image_with_optimizer(first_path.to_str().unwrap(), |_, destination| {
+                std::fs::write(destination, b"optimized").unwrap();
+                Ok(())
+            })
             .unwrap();
-        let second = database.import_screen_image("/tmp/ending.png").unwrap();
+        let second = database
+            .import_screen_image_with_optimizer(second_path.to_str().unwrap(), |_, destination| {
+                std::fs::write(destination, b"optimized").unwrap();
+                Ok(())
+            })
+            .unwrap();
 
         assert_eq!(first.name, "Be Right Back");
-        assert_eq!(first.status, StreamScreenStatus::Missing);
+        assert_eq!(first.status, StreamScreenStatus::Ready);
         assert_eq!(first.sort_order, 0);
+        assert!(first.image_path.ends_with(".png"));
+        assert_ne!(first.image_path, first_path.display().to_string());
+        assert!(Path::new(&first.image_path).exists());
         assert_eq!(second.name, "Ending");
         assert_eq!(second.sort_order, 1);
 
@@ -893,5 +1007,19 @@ mod tests {
         assert_eq!(screens.len(), 2);
         assert_eq!(screens[0].id, first.id);
         assert_eq!(screens[1].id, second.id);
+    }
+
+    #[test]
+    fn imported_screen_images_reject_unsupported_formats() {
+        let database = test_database();
+        let path = temp_screen_image("notes.txt");
+
+        let error = database
+            .import_screen_image_with_optimizer(path.to_str().unwrap(), |_, _| {
+                panic!("unsupported inputs should not be optimized");
+            })
+            .unwrap_err();
+
+        assert!(error.to_string().contains("PNG, JPEG, or WebP"));
     }
 }

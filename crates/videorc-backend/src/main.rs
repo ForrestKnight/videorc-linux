@@ -540,17 +540,25 @@ async fn handle_text_message(state: &AppState, text: &str) -> ServerResponse {
         },
         "screens.importImage" => {
             match serde_json::from_value::<protocol::ImportScreenImageParams>(command.params) {
-                Ok(params) => match state.database.import_screen_image(&params.path) {
-                    Ok(screen) => {
-                        if let Ok(screens) = state.database.list_stream_screens() {
-                            state.emit_event("screens.changed", screens);
+                Ok(params) => {
+                    let ffmpeg_path = resolve_ffmpeg_path_ref(params.ffmpeg_path.as_deref());
+                    match state
+                        .database
+                        .import_screen_image(&params.path, &ffmpeg_path)
+                    {
+                        Ok(screen) => {
+                            if let Ok(screens) = state.database.list_stream_screens() {
+                                state.emit_event("screens.changed", screens);
+                            }
+                            ServerResponse::ok(command.id, screen)
                         }
-                        ServerResponse::ok(command.id, screen)
+                        Err(error) => ServerResponse::error(
+                            command.id,
+                            "screen-import-failed",
+                            error.to_string(),
+                        ),
                     }
-                    Err(error) => {
-                        ServerResponse::error(command.id, "screen-import-failed", error.to_string())
-                    }
-                },
+                }
                 Err(error) => {
                     ServerResponse::error(command.id, "invalid-params", error.to_string())
                 }

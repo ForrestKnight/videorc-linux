@@ -52,6 +52,7 @@ const api: VideorcApi = {
   getBackendConnection: () => ipcRenderer.invoke('backend:get-connection'),
   getBackendLogs: () => ipcRenderer.invoke('backend:get-logs'),
   getRuntimeInfo: () => Promise.resolve(runtimeInfo()),
+  pickScreenImage: () => ipcRenderer.invoke('screens:pick-image'),
   openSystemPermissions,
   revealPermissionTarget,
   onBackendConnection: (callback) => {
