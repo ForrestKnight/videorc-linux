@@ -247,6 +247,47 @@ impl ActiveScene {
         &self.events
     }
 
+    /// The current source list in painter order (later entries render on top). Read by
+    /// the live render consumer (LS2) to composite the next frame.
+    pub fn sources(&self) -> &[SceneSource] {
+        &self.state.sources
+    }
+
+    /// Executes a decoded hot source operation against the live source list. Called by
+    /// the render consumer after [`ActiveScene::apply`] commits a hot mutation, so the
+    /// next composited frame reflects the change. An unknown source id is a no-op.
+    pub(crate) fn execute_op(&mut self, op: &LiveOp) {
+        match op {
+            LiveOp::SetTransform {
+                source_id,
+                x,
+                y,
+                width,
+                height,
+            } => {
+                if let Some(source) = self.state.sources.iter_mut().find(|s| &s.id == source_id) {
+                    source.transform.x = *x;
+                    source.transform.y = *y;
+                    source.transform.width = *width;
+                    source.transform.height = *height;
+                }
+            }
+            LiveOp::SetVisible { source_id, visible } => {
+                if let Some(source) = self.state.sources.iter_mut().find(|s| &s.id == source_id) {
+                    source.visible = *visible;
+                }
+            }
+            LiveOp::Reorder { source_ids } => {
+                self.state.sources.sort_by_key(|source| {
+                    source_ids
+                        .iter()
+                        .position(|id| id == &source.id)
+                        .unwrap_or(usize::MAX)
+                });
+            }
+        }
+    }
+
     /// Evaluates a mutation against the revision/classification contract and records
     /// the attempt:
     /// - a stale `expectedRevision` is rejected with a conflict (no revision change),
@@ -444,6 +485,87 @@ impl ActiveScene {
     fn next_event_id(&mut self) -> String {
         self.event_seq += 1;
         format!("live-edit-{}", self.event_seq)
+    }
+}
+
+/// A decoded hot source operation the render consumer applies after the contract
+/// commits, so the next composited frame reflects it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LiveOp {
+    SetTransform {
+        source_id: String,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+    },
+    SetVisible {
+        source_id: String,
+        visible: bool,
+    },
+    Reorder {
+        source_ids: Vec<String>,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TransformOpPayload {
+    source_id: String,
+    transform: TransformRect,
+}
+
+#[derive(Deserialize)]
+struct TransformRect {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VisibilityOpPayload {
+    source_id: String,
+    visible: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OrderOpPayload {
+    source_ids: Vec<String>,
+}
+
+/// Decodes the renderable source operation carried by a mutation payload, or `None`
+/// for hot mutations that do not change the source list (layout/bitrate patches).
+pub(crate) fn decode_op(mutation: &SceneMutation) -> Option<LiveOp> {
+    match mutation.kind {
+        MutationKind::SourceTransformPatch => {
+            let payload: TransformOpPayload =
+                serde_json::from_value(mutation.payload.clone()).ok()?;
+            Some(LiveOp::SetTransform {
+                source_id: payload.source_id,
+                x: payload.transform.x,
+                y: payload.transform.y,
+                width: payload.transform.width,
+                height: payload.transform.height,
+            })
+        }
+        MutationKind::SourceVisibilitySet => {
+            let payload: VisibilityOpPayload =
+                serde_json::from_value(mutation.payload.clone()).ok()?;
+            Some(LiveOp::SetVisible {
+                source_id: payload.source_id,
+                visible: payload.visible,
+            })
+        }
+        MutationKind::SourceOrderSet => {
+            let payload: OrderOpPayload = serde_json::from_value(mutation.payload.clone()).ok()?;
+            Some(LiveOp::Reorder {
+                source_ids: payload.source_ids,
+            })
+        }
+        _ => None,
     }
 }
 
