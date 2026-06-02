@@ -114,6 +114,61 @@ pub enum PlatformAccountStatus {
     Disconnected,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum StreamPrivacy {
+    Public,
+    Unlisted,
+    Private,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamMetadataDraft {
+    pub title: String,
+    pub description: String,
+    pub default_privacy: StreamPrivacy,
+    pub target_overrides: Vec<StreamTargetMetadataDraft>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamTargetMetadataDraft {
+    pub platform: StreamPlatform,
+    pub customize: bool,
+    pub title: String,
+    pub description: String,
+    pub privacy: StreamPrivacy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub youtube_made_for_kids: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub twitch_category_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub twitch_category_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub twitch_language: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x_visibility: Option<StreamPrivacy>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamMetadataValidation {
+    pub valid: bool,
+    pub issues: Vec<StreamMetadataValidationIssue>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamMetadataValidationIssue {
+    pub field: String,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform: Option<StreamPlatform>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PlatformAccount {
@@ -212,6 +267,59 @@ pub(crate) fn stream_platform_from_id(platform: &str) -> Option<StreamPlatform> 
         "x" => Some(StreamPlatform::X),
         "custom" => Some(StreamPlatform::Custom),
         _ => None,
+    }
+}
+
+pub fn default_stream_metadata_draft(updated_at: String) -> StreamMetadataDraft {
+    StreamMetadataDraft {
+        title: String::new(),
+        description: String::new(),
+        default_privacy: StreamPrivacy::Private,
+        target_overrides: [
+            StreamPlatform::Youtube,
+            StreamPlatform::Twitch,
+            StreamPlatform::X,
+        ]
+        .into_iter()
+        .map(|platform| StreamTargetMetadataDraft {
+            platform,
+            customize: false,
+            title: String::new(),
+            description: String::new(),
+            privacy: StreamPrivacy::Private,
+            youtube_made_for_kids: (platform == StreamPlatform::Youtube).then_some(false),
+            twitch_category_id: None,
+            twitch_category_name: None,
+            twitch_language: (platform == StreamPlatform::Twitch).then(|| "en".to_string()),
+            x_visibility: (platform == StreamPlatform::X).then_some(StreamPrivacy::Public),
+            updated_at: updated_at.clone(),
+        })
+        .collect(),
+        updated_at,
+    }
+}
+
+pub fn validate_stream_metadata_draft(draft: &StreamMetadataDraft) -> StreamMetadataValidation {
+    let mut issues = Vec::new();
+    if draft.title.trim().is_empty() {
+        issues.push(StreamMetadataValidationIssue {
+            field: "title".to_string(),
+            message: "Global title is required before going live.".to_string(),
+            platform: None,
+        });
+    }
+    for target in &draft.target_overrides {
+        if target.customize && target.title.trim().is_empty() {
+            issues.push(StreamMetadataValidationIssue {
+                field: "title".to_string(),
+                message: "Customized destination title cannot be empty.".to_string(),
+                platform: Some(target.platform),
+            });
+        }
+    }
+    StreamMetadataValidation {
+        valid: issues.is_empty(),
+        issues,
     }
 }
 
@@ -419,5 +527,84 @@ mod tests {
         assert!(json.contains("\"platform\":\"custom\""));
         let restored: StreamingSettings = serde_json::from_str(&json).unwrap();
         assert_eq!(restored, settings);
+    }
+
+    #[test]
+    fn default_stream_metadata_uses_private_native_destination_drafts() {
+        let draft = default_stream_metadata_draft("2026-06-03T00:00:00Z".to_string());
+
+        assert_eq!(draft.default_privacy, StreamPrivacy::Private);
+        assert_eq!(
+            draft
+                .target_overrides
+                .iter()
+                .map(|target| target.platform)
+                .collect::<Vec<_>>(),
+            vec![
+                StreamPlatform::Youtube,
+                StreamPlatform::Twitch,
+                StreamPlatform::X
+            ]
+        );
+        assert_eq!(
+            draft
+                .target_overrides
+                .iter()
+                .find(|target| target.platform == StreamPlatform::Youtube)
+                .unwrap()
+                .youtube_made_for_kids,
+            Some(false)
+        );
+        assert_eq!(
+            draft
+                .target_overrides
+                .iter()
+                .find(|target| target.platform == StreamPlatform::Twitch)
+                .unwrap()
+                .twitch_language
+                .as_deref(),
+            Some("en")
+        );
+        assert_eq!(
+            draft
+                .target_overrides
+                .iter()
+                .find(|target| target.platform == StreamPlatform::X)
+                .unwrap()
+                .x_visibility,
+            Some(StreamPrivacy::Public)
+        );
+    }
+
+    #[test]
+    fn stream_metadata_validation_requires_global_and_customized_titles() {
+        let mut draft = default_stream_metadata_draft("2026-06-03T00:00:00Z".to_string());
+        let validation = validate_stream_metadata_draft(&draft);
+        assert!(!validation.valid);
+        assert_eq!(validation.issues.len(), 1);
+        assert_eq!(validation.issues[0].field, "title");
+        assert_eq!(validation.issues[0].platform, None);
+
+        draft.title = "Launch stream".to_string();
+        let twitch = draft
+            .target_overrides
+            .iter_mut()
+            .find(|target| target.platform == StreamPlatform::Twitch)
+            .unwrap();
+        twitch.customize = true;
+        twitch.title = " ".to_string();
+
+        let validation = validate_stream_metadata_draft(&draft);
+        assert!(!validation.valid);
+        assert_eq!(validation.issues.len(), 1);
+        assert_eq!(validation.issues[0].platform, Some(StreamPlatform::Twitch));
+
+        draft
+            .target_overrides
+            .iter_mut()
+            .find(|target| target.platform == StreamPlatform::Twitch)
+            .unwrap()
+            .title = "Twitch-specific launch".to_string();
+        assert!(validate_stream_metadata_draft(&draft).valid);
     }
 }

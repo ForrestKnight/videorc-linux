@@ -335,6 +335,7 @@ export interface RtmpSettings {
 export type StreamPlatform = 'youtube' | 'twitch' | 'x' | 'custom'
 export type StreamUrlMode = 'server-and-key' | 'full-url'
 export type StreamAuthMode = 'manual-rtmp' | 'oauth'
+export type StreamPrivacy = 'public' | 'unlisted' | 'private'
 export type PlatformAccountStatus = 'connected' | 'needs-reconnect' | 'disconnected'
 export type StreamTargetState =
   | 'not-configured'
@@ -403,6 +404,39 @@ export interface PlatformAccount {
 
 export interface PlatformAccountPlatformParams {
   platform: StreamPlatform
+}
+
+export interface StreamMetadataDraft {
+  title: string
+  description: string
+  defaultPrivacy: StreamPrivacy
+  targetOverrides: StreamTargetMetadataDraft[]
+  updatedAt: string
+}
+
+export interface StreamTargetMetadataDraft {
+  platform: StreamPlatform
+  customize: boolean
+  title: string
+  description: string
+  privacy: StreamPrivacy
+  youtubeMadeForKids?: boolean
+  twitchCategoryId?: string
+  twitchCategoryName?: string
+  twitchLanguage?: string
+  xVisibility?: StreamPrivacy
+  updatedAt: string
+}
+
+export interface StreamMetadataValidation {
+  valid: boolean
+  issues: StreamMetadataValidationIssue[]
+}
+
+export interface StreamMetadataValidationIssue {
+  field: string
+  message: string
+  platform?: StreamPlatform
 }
 
 export interface OAuthStartParams {

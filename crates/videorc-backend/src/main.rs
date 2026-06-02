@@ -59,6 +59,7 @@ use crate::ffmpeg::{default_ffmpeg_path, resolve_ffmpeg_path_ref};
 use crate::oauth::{OAuthCompleteParams, OAuthStartParams};
 use crate::state::AppState;
 use crate::storage::Database;
+use crate::streaming::{StreamMetadataDraft, validate_stream_metadata_draft};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -625,6 +626,38 @@ async fn handle_text_message(state: &AppState, text: &str) -> ServerResponse {
                         error.to_string(),
                     ),
                 },
+                Err(error) => {
+                    ServerResponse::error(command.id, "invalid-params", error.to_string())
+                }
+            }
+        }
+        "streamTargets.metadata.get" => match state.database.stream_metadata_draft() {
+            Ok(draft) => ServerResponse::ok(command.id, draft),
+            Err(error) => {
+                ServerResponse::error(command.id, "stream-metadata-get-failed", error.to_string())
+            }
+        },
+        "streamTargets.metadata.update" => {
+            match serde_json::from_value::<StreamMetadataDraft>(command.params) {
+                Ok(draft) => match state.database.save_stream_metadata_draft(draft) {
+                    Ok(saved) => {
+                        state.emit_event("streamTargets.metadata.changed", &saved);
+                        ServerResponse::ok(command.id, saved)
+                    }
+                    Err(error) => ServerResponse::error(
+                        command.id,
+                        "stream-metadata-update-failed",
+                        error.to_string(),
+                    ),
+                },
+                Err(error) => {
+                    ServerResponse::error(command.id, "invalid-params", error.to_string())
+                }
+            }
+        }
+        "streamTargets.metadata.validate" => {
+            match serde_json::from_value::<StreamMetadataDraft>(command.params) {
+                Ok(draft) => ServerResponse::ok(command.id, validate_stream_metadata_draft(&draft)),
                 Err(error) => {
                     ServerResponse::error(command.id, "invalid-params", error.to_string())
                 }

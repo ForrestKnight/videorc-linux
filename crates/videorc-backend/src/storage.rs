@@ -15,8 +15,9 @@ use crate::protocol::{
     StreamScreenStatus,
 };
 use crate::streaming::{
-    PlatformAccount, PlatformAccountStatus, StreamPlatform, UpsertPlatformAccount,
-    stream_platform_from_id, stream_platform_id,
+    PlatformAccount, PlatformAccountStatus, StreamMetadataDraft, StreamPlatform,
+    UpsertPlatformAccount, default_stream_metadata_draft, stream_platform_from_id,
+    stream_platform_id,
 };
 
 #[derive(Clone)]
@@ -471,6 +472,35 @@ impl Database {
             params![platform_id],
         )?;
         Ok(Some(account))
+    }
+
+    pub fn stream_metadata_draft(&self) -> Result<StreamMetadataDraft> {
+        let conn = self.lock()?;
+        let value_json = conn
+            .query_row(
+                "SELECT value_json FROM app_settings WHERE key = 'streamMetadataDraft'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        match value_json {
+            Some(value) => Ok(serde_json::from_str::<StreamMetadataDraft>(&value)
+                .unwrap_or_else(|_| default_stream_metadata_draft(Utc::now().to_rfc3339()))),
+            None => Ok(default_stream_metadata_draft(Utc::now().to_rfc3339())),
+        }
+    }
+
+    pub fn save_stream_metadata_draft(
+        &self,
+        mut draft: StreamMetadataDraft,
+    ) -> Result<StreamMetadataDraft> {
+        let now = Utc::now().to_rfc3339();
+        draft.updated_at = now.clone();
+        for target in &mut draft.target_overrides {
+            target.updated_at = now.clone();
+        }
+        self.save_setting("streamMetadataDraft", &draft)?;
+        Ok(draft)
     }
 
     fn import_screen_image_with_optimizer<F>(
@@ -1144,7 +1174,10 @@ mod tests {
         OutputSettings, PermissionPane, RtmpPreset, RtmpSettings, SideBySideCameraSide,
         SideBySideSplit, VideoPreset, VideoSettings,
     };
-    use crate::streaming::{PlatformAccountStatus, StreamPlatform, UpsertPlatformAccount};
+    use crate::streaming::{
+        PlatformAccountStatus, StreamPlatform, StreamPrivacy, UpsertPlatformAccount,
+        default_stream_metadata_draft,
+    };
 
     fn test_database() -> Database {
         let database = Database {
@@ -1489,6 +1522,74 @@ mod tests {
         std::fs::remove_file(&missing.image_path).unwrap();
         let error = database.activate_stream_screen(&missing.id).unwrap_err();
         assert!(error.to_string().contains("missing"));
+    }
+
+    #[test]
+    fn stream_metadata_draft_defaults_and_persists() {
+        let database = test_database();
+
+        let default_draft = database.stream_metadata_draft().unwrap();
+        assert_eq!(default_draft.default_privacy, StreamPrivacy::Private);
+        assert_eq!(
+            default_draft
+                .target_overrides
+                .iter()
+                .map(|target| target.platform)
+                .collect::<Vec<_>>(),
+            vec![
+                StreamPlatform::Youtube,
+                StreamPlatform::Twitch,
+                StreamPlatform::X
+            ]
+        );
+        assert_eq!(
+            default_draft
+                .target_overrides
+                .iter()
+                .find(|target| target.platform == StreamPlatform::Twitch)
+                .unwrap()
+                .twitch_language
+                .as_deref(),
+            Some("en")
+        );
+
+        let mut draft = default_stream_metadata_draft("old".to_string());
+        draft.title = "Launch stream".to_string();
+        draft.description = "Global description".to_string();
+        draft.default_privacy = StreamPrivacy::Unlisted;
+        let twitch = draft
+            .target_overrides
+            .iter_mut()
+            .find(|target| target.platform == StreamPlatform::Twitch)
+            .unwrap();
+        twitch.customize = true;
+        twitch.title = "Twitch launch".to_string();
+        twitch.description = "Twitch description".to_string();
+        twitch.privacy = StreamPrivacy::Public;
+        twitch.twitch_category_id = Some("509658".to_string());
+        twitch.twitch_category_name = Some("Just Chatting".to_string());
+        twitch.twitch_language = Some("es".to_string());
+
+        let saved = database.save_stream_metadata_draft(draft).unwrap();
+        assert_ne!(saved.updated_at, "old");
+        assert!(
+            saved
+                .target_overrides
+                .iter()
+                .all(|target| target.updated_at == saved.updated_at)
+        );
+        assert_eq!(
+            saved
+                .target_overrides
+                .iter()
+                .find(|target| target.platform == StreamPlatform::Twitch)
+                .unwrap()
+                .twitch_category_name
+                .as_deref(),
+            Some("Just Chatting")
+        );
+
+        assert_eq!(database.stream_metadata_draft().unwrap(), saved);
     }
 
     #[test]
