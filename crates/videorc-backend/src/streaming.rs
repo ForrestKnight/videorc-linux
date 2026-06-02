@@ -106,6 +106,57 @@ pub struct StreamingSettings {
     pub enabled_target_ids: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum PlatformAccountStatus {
+    Connected,
+    NeedsReconnect,
+    Disconnected,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlatformAccount {
+    pub id: String,
+    pub platform: StreamPlatform,
+    pub account_id: String,
+    pub account_label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_handle: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar_url: Option<String>,
+    pub scopes: Vec<String>,
+    pub access_token_present: bool,
+    pub refresh_token_present: bool,
+    pub stream_key_present: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+    pub connected_at: String,
+    pub updated_at: String,
+    pub status: PlatformAccountStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpsertPlatformAccount {
+    pub platform: StreamPlatform,
+    pub account_id: String,
+    pub account_label: String,
+    pub account_handle: Option<String>,
+    pub avatar_url: Option<String>,
+    pub scopes: Vec<String>,
+    pub token_secret_ref: Option<String>,
+    pub refresh_token_secret_ref: Option<String>,
+    pub stream_key_secret_ref: Option<String>,
+    pub expires_at: Option<String>,
+    pub status: PlatformAccountStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlatformAccountPlatformParams {
+    pub platform: StreamPlatform,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct StreamSessionTargetHistory {
@@ -151,6 +202,16 @@ pub(crate) fn stream_platform_id(platform: StreamPlatform) -> &'static str {
         StreamPlatform::Twitch => "twitch",
         StreamPlatform::X => "x",
         StreamPlatform::Custom => "custom",
+    }
+}
+
+pub(crate) fn stream_platform_from_id(platform: &str) -> Option<StreamPlatform> {
+    match platform {
+        "youtube" => Some(StreamPlatform::Youtube),
+        "twitch" => Some(StreamPlatform::Twitch),
+        "x" => Some(StreamPlatform::X),
+        "custom" => Some(StreamPlatform::Custom),
+        _ => None,
     }
 }
 

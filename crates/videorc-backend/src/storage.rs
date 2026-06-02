@@ -14,6 +14,10 @@ use crate::protocol::{
     OutputSettings, SessionLogEntry, SessionSummary, SourceSelection, StreamScreen,
     StreamScreenStatus,
 };
+use crate::streaming::{
+    PlatformAccount, PlatformAccountStatus, StreamPlatform, UpsertPlatformAccount,
+    stream_platform_from_id, stream_platform_id,
+};
 
 #[derive(Clone)]
 pub struct Database {
@@ -340,6 +344,135 @@ impl Database {
         })
     }
 
+    pub fn list_platform_accounts(&self) -> Result<Vec<PlatformAccount>> {
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, platform, account_id, account_label, account_handle, avatar_url,
+                    scopes_json, token_secret_ref, refresh_token_secret_ref, stream_key_secret_ref,
+                    expires_at, connected_at, updated_at, status
+             FROM platform_accounts
+             ORDER BY platform ASC",
+        )?;
+        let rows = stmt.query_map([], |row| self.platform_account_from_row(row))?;
+
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    #[allow(dead_code)]
+    pub fn upsert_platform_account(
+        &self,
+        account: UpsertPlatformAccount,
+    ) -> Result<PlatformAccount> {
+        self.validate_platform_account_input(&account)?;
+        let conn = self.lock()?;
+        let now = Utc::now().to_rfc3339();
+        let account_platform = account.platform;
+        let platform = stream_platform_id(account_platform);
+        let existing_id = conn
+            .query_row(
+                "SELECT id FROM platform_accounts WHERE platform = ?1",
+                params![platform],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        let id = existing_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+        let connected_at = conn
+            .query_row(
+                "SELECT connected_at FROM platform_accounts WHERE platform = ?1",
+                params![platform],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .unwrap_or_else(|| now.clone());
+
+        conn.execute(
+            "INSERT INTO platform_accounts (
+                id, platform, account_id, account_label, account_handle, avatar_url, scopes_json,
+                token_secret_ref, refresh_token_secret_ref, stream_key_secret_ref, expires_at,
+                connected_at, updated_at, status
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+             ON CONFLICT(platform) DO UPDATE SET
+                account_id = excluded.account_id,
+                account_label = excluded.account_label,
+                account_handle = excluded.account_handle,
+                avatar_url = excluded.avatar_url,
+                scopes_json = excluded.scopes_json,
+                token_secret_ref = excluded.token_secret_ref,
+                refresh_token_secret_ref = excluded.refresh_token_secret_ref,
+                stream_key_secret_ref = excluded.stream_key_secret_ref,
+                expires_at = excluded.expires_at,
+                updated_at = excluded.updated_at,
+                status = excluded.status",
+            params![
+                id,
+                platform,
+                account.account_id.trim(),
+                account.account_label.trim(),
+                account.account_handle,
+                account.avatar_url,
+                serde_json::to_string(&normalized_scopes(account.scopes))?,
+                account.token_secret_ref,
+                account.refresh_token_secret_ref,
+                account.stream_key_secret_ref,
+                account.expires_at,
+                connected_at,
+                now,
+                serde_json::to_string(&account.status)?,
+            ],
+        )?;
+
+        self.platform_account_by_platform_locked(&conn, account_platform)
+    }
+
+    pub fn disconnect_platform_account(
+        &self,
+        platform: StreamPlatform,
+    ) -> Result<Option<PlatformAccount>> {
+        self.disconnect_platform_account_with_secret_deleter(
+            platform,
+            crate::secrets::delete_secret,
+        )
+    }
+
+    fn disconnect_platform_account_with_secret_deleter<F>(
+        &self,
+        platform: StreamPlatform,
+        mut delete_secret: F,
+    ) -> Result<Option<PlatformAccount>>
+    where
+        F: FnMut(&str) -> Result<()>,
+    {
+        let conn = self.lock()?;
+        let platform_id = stream_platform_id(platform);
+        let refs = conn
+            .query_row(
+                "SELECT token_secret_ref, refresh_token_secret_ref, stream_key_secret_ref
+                 FROM platform_accounts
+                 WHERE platform = ?1",
+                params![platform_id],
+                |row| {
+                    Ok([
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ])
+                },
+            )
+            .optional()?;
+        let Some(refs) = refs else {
+            return Ok(None);
+        };
+        for secret_ref in refs.into_iter().flatten() {
+            delete_secret(&secret_ref)?;
+        }
+        let account = self.platform_account_by_platform_locked(&conn, platform)?;
+        conn.execute(
+            "DELETE FROM platform_accounts WHERE platform = ?1",
+            params![platform_id],
+        )?;
+        Ok(Some(account))
+    }
+
     fn import_screen_image_with_optimizer<F>(
         &self,
         image_path: &str,
@@ -588,6 +721,63 @@ impl Database {
         Ok(())
     }
 
+    #[allow(dead_code)]
+    fn validate_platform_account_input(&self, account: &UpsertPlatformAccount) -> Result<()> {
+        if matches!(account.platform, StreamPlatform::Custom) {
+            anyhow::bail!("Custom RTMP does not support OAuth accounts.");
+        }
+        if account.account_id.trim().is_empty() {
+            anyhow::bail!("Platform account id cannot be empty.");
+        }
+        if account.account_label.trim().is_empty() {
+            anyhow::bail!("Platform account label cannot be empty.");
+        }
+        Ok(())
+    }
+
+    fn platform_account_by_platform_locked(
+        &self,
+        conn: &Connection,
+        platform: StreamPlatform,
+    ) -> Result<PlatformAccount> {
+        conn.query_row(
+            "SELECT id, platform, account_id, account_label, account_handle, avatar_url,
+                    scopes_json, token_secret_ref, refresh_token_secret_ref, stream_key_secret_ref,
+                    expires_at, connected_at, updated_at, status
+             FROM platform_accounts
+             WHERE platform = ?1",
+            params![stream_platform_id(platform)],
+            |row| self.platform_account_from_row(row),
+        )
+        .map_err(Into::into)
+    }
+
+    fn platform_account_from_row(
+        &self,
+        row: &rusqlite::Row<'_>,
+    ) -> rusqlite::Result<PlatformAccount> {
+        let platform_id: String = row.get(1)?;
+        let scopes_json: String = row.get(6)?;
+        let status_json: String = row.get(13)?;
+        Ok(PlatformAccount {
+            id: row.get(0)?,
+            platform: stream_platform_from_id(&platform_id).unwrap_or(StreamPlatform::Custom),
+            account_id: row.get(2)?,
+            account_label: row.get(3)?,
+            account_handle: row.get(4)?,
+            avatar_url: row.get(5)?,
+            scopes: serde_json::from_str(&scopes_json).unwrap_or_default(),
+            access_token_present: row.get::<_, Option<String>>(7)?.is_some(),
+            refresh_token_present: row.get::<_, Option<String>>(8)?.is_some(),
+            stream_key_present: row.get::<_, Option<String>>(9)?.is_some(),
+            expires_at: row.get(10)?,
+            connected_at: row.get(11)?,
+            updated_at: row.get(12)?,
+            status: serde_json::from_str(&status_json)
+                .unwrap_or(PlatformAccountStatus::NeedsReconnect),
+        })
+    }
+
     fn screen_assets_dir(&self) -> PathBuf {
         if let Some(parent) = self
             .path
@@ -672,6 +862,23 @@ impl Database {
                 status TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS platform_accounts (
+                id TEXT PRIMARY KEY,
+                platform TEXT NOT NULL UNIQUE,
+                account_id TEXT NOT NULL,
+                account_label TEXT NOT NULL,
+                account_handle TEXT,
+                avatar_url TEXT,
+                scopes_json TEXT NOT NULL,
+                token_secret_ref TEXT,
+                refresh_token_secret_ref TEXT,
+                stream_key_secret_ref TEXT,
+                expires_at TEXT,
+                connected_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                status TEXT NOT NULL
             );
             ",
         )?;
@@ -796,6 +1003,18 @@ fn ensure_column(conn: &Connection, table: &str, column: &str, definition: &str)
 
     conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {definition}"), [])?;
     Ok(())
+}
+
+#[allow(dead_code)]
+fn normalized_scopes(scopes: Vec<String>) -> Vec<String> {
+    let mut scopes = scopes
+        .into_iter()
+        .map(|scope| scope.trim().to_string())
+        .filter(|scope| !scope.is_empty())
+        .collect::<Vec<_>>();
+    scopes.sort();
+    scopes.dedup();
+    scopes
 }
 
 pub fn default_database_path() -> PathBuf {
@@ -925,6 +1144,7 @@ mod tests {
         OutputSettings, PermissionPane, RtmpPreset, RtmpSettings, SideBySideCameraSide,
         SideBySideSplit, VideoPreset, VideoSettings,
     };
+    use crate::streaming::{PlatformAccountStatus, StreamPlatform, UpsertPlatformAccount};
 
     fn test_database() -> Database {
         let database = Database {
@@ -1269,5 +1489,149 @@ mod tests {
         std::fs::remove_file(&missing.image_path).unwrap();
         let error = database.activate_stream_screen(&missing.id).unwrap_err();
         assert!(error.to_string().contains("missing"));
+    }
+
+    #[test]
+    fn platform_accounts_persist_without_exposing_secret_refs() {
+        let database = test_database();
+
+        let account = database
+            .upsert_platform_account(UpsertPlatformAccount {
+                platform: StreamPlatform::Youtube,
+                account_id: "channel-123".to_string(),
+                account_label: "Main Channel".to_string(),
+                account_handle: Some("@main".to_string()),
+                avatar_url: Some("https://example.test/avatar.png".to_string()),
+                scopes: vec![
+                    "youtube.force-ssl".to_string(),
+                    " youtube.readonly ".to_string(),
+                    "youtube.force-ssl".to_string(),
+                    "".to_string(),
+                ],
+                token_secret_ref: Some("platform:youtube:channel-123:access".to_string()),
+                refresh_token_secret_ref: Some("platform:youtube:channel-123:refresh".to_string()),
+                stream_key_secret_ref: Some("platform:youtube:channel-123:stream-key".to_string()),
+                expires_at: Some("2026-06-03T12:00:00Z".to_string()),
+                status: PlatformAccountStatus::Connected,
+            })
+            .unwrap();
+
+        assert_eq!(account.platform, StreamPlatform::Youtube);
+        assert_eq!(account.account_label, "Main Channel");
+        assert_eq!(
+            account.scopes,
+            vec![
+                "youtube.force-ssl".to_string(),
+                "youtube.readonly".to_string()
+            ]
+        );
+        assert!(account.access_token_present);
+        assert!(account.refresh_token_present);
+        assert!(account.stream_key_present);
+
+        let json = serde_json::to_string(&account).unwrap();
+        assert!(!json.contains("secretRef"));
+        assert!(!json.contains("platform:youtube"));
+
+        let accounts = database.list_platform_accounts().unwrap();
+        assert_eq!(accounts, vec![account]);
+    }
+
+    #[test]
+    fn platform_accounts_are_one_per_platform_and_disconnect_deletes_secrets() {
+        let database = test_database();
+        database
+            .upsert_platform_account(UpsertPlatformAccount {
+                platform: StreamPlatform::Twitch,
+                account_id: "first".to_string(),
+                account_label: "First Twitch".to_string(),
+                account_handle: None,
+                avatar_url: None,
+                scopes: vec!["channel:manage:broadcast".to_string()],
+                token_secret_ref: Some("platform:twitch:first:access".to_string()),
+                refresh_token_secret_ref: None,
+                stream_key_secret_ref: Some("platform:twitch:first:stream-key".to_string()),
+                expires_at: None,
+                status: PlatformAccountStatus::Connected,
+            })
+            .unwrap();
+        let updated = database
+            .upsert_platform_account(UpsertPlatformAccount {
+                platform: StreamPlatform::Twitch,
+                account_id: "second".to_string(),
+                account_label: "Second Twitch".to_string(),
+                account_handle: Some("second".to_string()),
+                avatar_url: None,
+                scopes: vec!["channel:read:stream_key".to_string()],
+                token_secret_ref: Some("platform:twitch:second:access".to_string()),
+                refresh_token_secret_ref: Some("platform:twitch:second:refresh".to_string()),
+                stream_key_secret_ref: None,
+                expires_at: None,
+                status: PlatformAccountStatus::NeedsReconnect,
+            })
+            .unwrap();
+
+        let accounts = database.list_platform_accounts().unwrap();
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].id, updated.id);
+        assert_eq!(accounts[0].account_id, "second");
+        assert!(accounts[0].refresh_token_present);
+        assert!(!accounts[0].stream_key_present);
+
+        let mut deleted = Vec::new();
+        let disconnected = database
+            .disconnect_platform_account_with_secret_deleter(StreamPlatform::Twitch, |secret_ref| {
+                deleted.push(secret_ref.to_string());
+                Ok(())
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!(disconnected.account_id, "second");
+        assert_eq!(
+            deleted,
+            vec![
+                "platform:twitch:second:access".to_string(),
+                "platform:twitch:second:refresh".to_string()
+            ]
+        );
+        assert!(database.list_platform_accounts().unwrap().is_empty());
+    }
+
+    #[test]
+    fn platform_accounts_reject_custom_and_blank_labels() {
+        let database = test_database();
+        let error = database
+            .upsert_platform_account(UpsertPlatformAccount {
+                platform: StreamPlatform::Custom,
+                account_id: "custom".to_string(),
+                account_label: "Custom".to_string(),
+                account_handle: None,
+                avatar_url: None,
+                scopes: vec![],
+                token_secret_ref: None,
+                refresh_token_secret_ref: None,
+                stream_key_secret_ref: None,
+                expires_at: None,
+                status: PlatformAccountStatus::Connected,
+            })
+            .unwrap_err();
+        assert!(error.to_string().contains("Custom RTMP"));
+
+        let error = database
+            .upsert_platform_account(UpsertPlatformAccount {
+                platform: StreamPlatform::X,
+                account_id: "x-account".to_string(),
+                account_label: " ".to_string(),
+                account_handle: None,
+                avatar_url: None,
+                scopes: vec![],
+                token_secret_ref: None,
+                refresh_token_secret_ref: None,
+                stream_key_secret_ref: None,
+                expires_at: None,
+                status: PlatformAccountStatus::Connected,
+            })
+            .unwrap_err();
+        assert!(error.to_string().contains("label"));
     }
 }

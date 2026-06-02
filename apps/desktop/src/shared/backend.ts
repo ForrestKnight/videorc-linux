@@ -335,6 +335,7 @@ export interface RtmpSettings {
 export type StreamPlatform = 'youtube' | 'twitch' | 'x' | 'custom'
 export type StreamUrlMode = 'server-and-key' | 'full-url'
 export type StreamAuthMode = 'manual-rtmp' | 'oauth'
+export type PlatformAccountStatus = 'connected' | 'needs-reconnect' | 'disconnected'
 export type StreamTargetState =
   | 'not-configured'
   | 'ready'
@@ -381,6 +382,27 @@ export interface StreamingSettings {
   defaultOutputPreset: VideoPreset
   defaultBitrateKbps: number
   enabledTargetIds: string[]
+}
+
+export interface PlatformAccount {
+  id: string
+  platform: StreamPlatform
+  accountId: string
+  accountLabel: string
+  accountHandle?: string
+  avatarUrl?: string
+  scopes: string[]
+  accessTokenPresent: boolean
+  refreshTokenPresent: boolean
+  streamKeyPresent: boolean
+  expiresAt?: string
+  connectedAt: string
+  updatedAt: string
+  status: PlatformAccountStatus
+}
+
+export interface PlatformAccountPlatformParams {
+  platform: StreamPlatform
 }
 
 export interface StreamSessionTargetHistory {

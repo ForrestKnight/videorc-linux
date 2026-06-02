@@ -12,6 +12,7 @@ mod protocol;
 mod recording;
 mod scene;
 mod screen_capture;
+mod secrets;
 mod state;
 mod storage;
 mod streaming;
@@ -64,6 +65,7 @@ async fn main() -> Result<()> {
         )
         .with_writer(std::io::stderr)
         .init();
+    secrets::init_native_secret_store();
 
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
@@ -532,6 +534,35 @@ async fn handle_text_message(state: &AppState, text: &str) -> ServerResponse {
                 ServerResponse::error(command.id, "sessions-list-failed", error.to_string())
             }
         },
+        "platformAccounts.list" => match state.database.list_platform_accounts() {
+            Ok(accounts) => ServerResponse::ok(command.id, accounts),
+            Err(error) => ServerResponse::error(
+                command.id,
+                "platform-accounts-list-failed",
+                error.to_string(),
+            ),
+        },
+        "platformAccounts.disconnect" => {
+            match serde_json::from_value::<streaming::PlatformAccountPlatformParams>(command.params)
+            {
+                Ok(params) => match state.database.disconnect_platform_account(params.platform) {
+                    Ok(account) => {
+                        if let Ok(accounts) = state.database.list_platform_accounts() {
+                            state.emit_event("platformAccounts.changed", accounts);
+                        }
+                        ServerResponse::ok(command.id, account)
+                    }
+                    Err(error) => ServerResponse::error(
+                        command.id,
+                        "platform-account-disconnect-failed",
+                        error.to_string(),
+                    ),
+                },
+                Err(error) => {
+                    ServerResponse::error(command.id, "invalid-params", error.to_string())
+                }
+            }
+        }
         "screens.list" => match state.database.list_stream_screens() {
             Ok(screens) => ServerResponse::ok(command.id, screens),
             Err(error) => {
