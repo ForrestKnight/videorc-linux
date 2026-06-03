@@ -16,6 +16,11 @@ try {
     const credentials = await request(ws, timeoutMs, 'platformAccounts.oauth.providerCredentials')
     assertProviderCredentials(credentials)
 
+    const refreshedAccounts = await request(ws, timeoutMs, 'platformAccounts.refresh')
+    if (!Array.isArray(refreshedAccounts)) {
+      throw new Error(`Platform account refresh should return validation results: ${JSON.stringify(refreshedAccounts)}`)
+    }
+
     await request(ws, timeoutMs, 'streamTargets.metadata.update', {
       title: 'Smoke Go Live',
       description: 'Local preflight smoke for OAuth/native guards.',
@@ -42,7 +47,7 @@ try {
     }
 
     console.log(
-      'OAuth guard smoke OK - credential readiness, preflight blockers, secret-ref preflight, and X native guard verified.'
+      'OAuth guard smoke OK - credential readiness, refresh alias, preflight blockers, secret-ref preflight, and X native guard verified.'
     )
   } finally {
     ws.close()
