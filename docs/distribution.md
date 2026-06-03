@@ -126,6 +126,15 @@ VIDEORC_X_CLIENT_SECRET=...
 
 The backend exposes credential source status to the renderer as `environment`, `bundled`, or `missing`; it never exposes actual client ID or secret values. Before release, open the packaged app's Streaming tab and confirm YouTube, Twitch, and X OAuth rows report either `Bundled default` or the intended runtime override.
 
+Before a release candidate, run the redacted provider readiness check:
+
+```sh
+pnpm smoke:provider-readiness
+VIDEORC_SMOKE_REQUIRE_PROVIDER_READY=1 pnpm smoke:provider-readiness
+```
+
+The strict run requires OAuth client IDs, Twitch's runtime client secret, eligible YouTube/Twitch test accounts, and validated X native live partner/API access. See [OAuth Live Smoke Runbook](oauth-live-smoke.md) for the full external acceptance workflow.
+
 ## FFmpeg Strategy
 
 Decision:
@@ -160,6 +169,7 @@ The release process must make source for the exact FFmpeg archive available besi
 - `cargo test`
 - `cargo clippy -- -D warnings`
 - `pnpm smoke:dev`
+- `pnpm smoke:provider-readiness`
 - `pnpm package:desktop`
 - `pnpm smoke:packaged`
 - `pnpm smoke:packaged:bundled`
@@ -167,6 +177,7 @@ The release process must make source for the exact FFmpeg archive available besi
 - Launch the packaged app from `apps/desktop/release/mac*/Videorc.app`
 - Confirm the packaged backend emits `READY`
 - Confirm Streaming tab OAuth credential source badges show bundled defaults or intended overrides
+- Complete the OAuth live smoke runbook for YouTube, Twitch, and X, or record X native access as release-blocking if partner/API access is not available
 - Confirm FFmpeg unavailable states are visible and non-crashing
 - Record a short MKV using the bundled FFmpeg path
 - Stop recording and confirm the session appears in Library
