@@ -10,7 +10,7 @@ use crate::recording::{LivePreviewSlot, RecordingSlot, initial_live_preview_stat
 use crate::scene::default_scene;
 use crate::storage::Database;
 
-const PREVIEW_FRAME_CHANNEL_CAPACITY: usize = 4;
+const PREVIEW_FRAME_CHANNEL_CAPACITY: usize = 256;
 
 #[derive(Clone)]
 pub struct AppState {

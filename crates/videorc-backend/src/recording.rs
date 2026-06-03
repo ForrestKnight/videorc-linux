@@ -7,6 +7,7 @@ use std::process::{ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::thread::{self, JoinHandle};
+use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
@@ -25,7 +26,9 @@ use crate::audio::{
 };
 use crate::camera_capture::{native_camera_name_for_id, parse_native_camera_id};
 use crate::devices::{find_avfoundation_camera_index, find_avfoundation_screen_index};
-use crate::diagnostics::{apply_audio_stats, apply_stream_health, starting_diagnostics};
+use crate::diagnostics::{
+    apply_audio_stats, apply_preview_stats, apply_stream_health, starting_diagnostics,
+};
 use crate::ffmpeg::resolve_ffmpeg_path;
 use crate::pipeline::{RecordingPipeline, container_for_outputs, container_key};
 use crate::protocol::{
@@ -47,11 +50,16 @@ use crate::streaming::{
 };
 
 const PREVIEW_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(5);
-const LIVE_PREVIEW_WIDTH: u32 = 1280;
-const LIVE_PREVIEW_HEIGHT: u32 = 720;
-const LIVE_PREVIEW_FPS: u32 = 30;
-const CAMERA_REFERENCE_WIDTH: u32 = LIVE_PREVIEW_WIDTH;
-const CAMERA_REFERENCE_HEIGHT: u32 = LIVE_PREVIEW_HEIGHT;
+const RECORDING_PREVIEW_WIDTH: u32 = 640;
+const RECORDING_PREVIEW_HEIGHT: u32 = 360;
+const RECORDING_PREVIEW_FPS: u32 = 5;
+const RECORDING_PREVIEW_JPEG_QUALITY: u32 = 12;
+const IDLE_PREVIEW_WIDTH: u32 = 640;
+const IDLE_PREVIEW_HEIGHT: u32 = 360;
+const IDLE_PREVIEW_FPS: u32 = 10;
+const IDLE_PREVIEW_JPEG_QUALITY: u32 = 10;
+const CAMERA_REFERENCE_WIDTH: u32 = 1280;
+const CAMERA_REFERENCE_HEIGHT: u32 = 720;
 const STOP_FINALIZE_TIMEOUT: Duration = Duration::from_secs(12);
 const STOP_TERM_DELAY: Duration = Duration::from_secs(3);
 const STOP_KILL_DELAY: Duration = Duration::from_secs(3);
@@ -388,8 +396,13 @@ pub async fn start_session(
     }
     emit_audio_track_health_events(&state, &session_id, &params, &audio_tracks)?;
     let active_screen = state.database.active_stream_screen()?;
-    let screen_overlay_fifo = screen_overlay_fifo_path(&session_id);
-    create_screen_overlay_fifo(&screen_overlay_fifo)?;
+    let screen_overlay_fifo = if active_screen.is_some() || params.output.stream_enabled {
+        let fifo_path = screen_overlay_fifo_path(&session_id);
+        create_screen_overlay_fifo(&fifo_path)?;
+        Some(fifo_path)
+    } else {
+        None
+    };
 
     let mut pipeline = RecordingPipeline::new(
         params.output.record_enabled,
@@ -402,18 +415,20 @@ pub async fn start_session(
         *diagnostics = initial_diagnostics.clone();
     }
     state.emit_event("diagnostics.stats", initial_diagnostics);
-    let screen_overlay = ScreenOverlayInput {
-        fifo_path: screen_overlay_fifo.clone(),
-        width: params.output.video.width,
-        height: params.output.video.height,
-        fps: SCREEN_OVERLAY_FPS,
-    };
+    let screen_overlay = screen_overlay_fifo
+        .as_ref()
+        .map(|fifo_path| ScreenOverlayInput {
+            fifo_path: fifo_path.clone(),
+            width: params.output.video.width,
+            height: params.output.video.height,
+            fps: SCREEN_OVERLAY_FPS,
+        });
     let args = ffmpeg_args(
         &capture,
         &params,
         output_path.as_deref(),
         &stream_targets,
-        Some(&screen_overlay),
+        screen_overlay.as_ref(),
     )?;
 
     state.emit_event(
@@ -457,12 +472,15 @@ pub async fn start_session(
         pipeline,
         native_audio: native_audio_source
             .map(|prepared| attach_fifo_writer(prepared.source, prepared.fifo_path)),
-        screen_overlay: Some(ScreenOverlaySession::start(
-            screen_overlay_fifo,
-            params.output.video.width,
-            params.output.video.height,
-            active_screen.map(|screen| screen.image_path),
-        )?),
+        screen_overlay: match screen_overlay_fifo {
+            Some(screen_overlay_fifo) => Some(ScreenOverlaySession::start(
+                screen_overlay_fifo,
+                params.output.video.width,
+                params.output.video.height,
+                active_screen.map(|screen| screen.image_path),
+            )?),
+            None => None,
+        },
         stop_requested: false,
     };
     let running_state = if params.output.stream_enabled && !params.output.record_enabled {
@@ -1102,10 +1120,10 @@ fn live_preview_session_params(
 }
 
 fn live_preview_video_settings(mut video: VideoSettings) -> VideoSettings {
-    video.width = LIVE_PREVIEW_WIDTH;
-    video.height = LIVE_PREVIEW_HEIGHT;
-    video.fps = video.fps.clamp(24, LIVE_PREVIEW_FPS);
-    video.bitrate_kbps = video.bitrate_kbps.min(4000);
+    video.width = IDLE_PREVIEW_WIDTH;
+    video.height = IDLE_PREVIEW_HEIGHT;
+    video.fps = video.fps.clamp(24, 30);
+    video.bitrate_kbps = video.bitrate_kbps.min(1500);
     video
 }
 
@@ -1196,6 +1214,8 @@ async fn monitor_idle_live_preview(state: AppState, mut child: tokio::process::C
 async fn publish_preview_stdout(state: AppState, idle_pid: Option<u32>, mut stdout: ChildStdout) {
     let mut buffer = [0_u8; PREVIEW_READ_BUFFER_BYTES];
     let mut pending = Vec::new();
+    let mut last_frame_at: Option<Instant> = None;
+    let mut dropped_preview_frames = 0_u64;
     loop {
         match stdout.read(&mut buffer).await {
             Ok(0) => break,
@@ -1208,11 +1228,23 @@ async fn publish_preview_stdout(state: AppState, idle_pid: Option<u32>, mut stdo
                         if let Some(pid) = idle_pid {
                             mark_idle_live_preview_frame_received(&state, pid).await;
                         }
+                        let now = Instant::now();
+                        let preview_latency_ms = last_frame_at.map(|last_frame_at| {
+                            now.saturating_duration_since(last_frame_at).as_millis() as u64
+                        });
+                        last_frame_at = Some(now);
+                        update_preview_diagnostics(
+                            &state,
+                            preview_latency_ms,
+                            dropped_preview_frames,
+                        )
+                        .await;
                     }
                     let _ = state.preview_frames.send(part);
                 }
 
                 if pending.len() > MAX_PENDING_PREVIEW_BYTES {
+                    dropped_preview_frames = dropped_preview_frames.saturating_add(1);
                     if let Some(boundary) = find_bytes(&pending, MJPEG_BOUNDARY) {
                         pending.drain(..boundary);
                     } else {
@@ -1226,6 +1258,24 @@ async fn publish_preview_stdout(state: AppState, idle_pid: Option<u32>, mut stdo
             }
         }
     }
+}
+
+async fn update_preview_diagnostics(
+    state: &AppState,
+    preview_latency_ms: Option<u64>,
+    preview_dropped_frames: u64,
+) {
+    let diagnostic_stats = {
+        let mut diagnostics = state.diagnostics.lock().await;
+        let next = apply_preview_stats(
+            diagnostics.clone(),
+            preview_latency_ms,
+            preview_dropped_frames,
+        );
+        *diagnostics = next.clone();
+        next
+    };
+    state.emit_event("diagnostics.stats", diagnostic_stats);
 }
 
 fn drain_next_mjpeg_part(pending: &mut Vec<u8>) -> Option<Vec<u8>> {
@@ -2160,7 +2210,7 @@ fn ffmpeg_args(
     }
 
     args.extend(["-map".to_string(), "[preview]".to_string()]);
-    append_live_preview_output_args(&mut args);
+    append_live_preview_output_args(&mut args, RECORDING_PREVIEW_JPEG_QUALITY);
 
     Ok(args)
 }
@@ -2210,7 +2260,7 @@ fn live_preview_ffmpeg_args(
         "-map".to_string(),
         "[preview]".to_string(),
     ]);
-    append_live_preview_output_args(&mut args);
+    append_live_preview_output_args(&mut args, IDLE_PREVIEW_JPEG_QUALITY);
     Ok(args)
 }
 
@@ -2265,6 +2315,7 @@ fn append_input_args(
         }
         VideoInput::TestPattern => {
             args.extend([
+                "-re".to_string(),
                 "-f".to_string(),
                 "lavfi".to_string(),
                 "-i".to_string(),
@@ -2285,6 +2336,7 @@ fn append_input_args(
                     });
                 } else {
                     args.extend([
+                        "-re".to_string(),
                         "-f".to_string(),
                         "lavfi".to_string(),
                         "-i".to_string(),
@@ -2582,8 +2634,13 @@ fn capture_audio_filter(input_layout: &InputLayout, audio: &AudioSettings) -> St
             .microphone_sync_offset_ms
             .clamp(MICROPHONE_SYNC_OFFSET_MIN_MS, MICROPHONE_SYNC_OFFSET_MAX_MS);
         if offset_ms != 0 {
-            let offset_seconds = f64::from(offset_ms) / 1000.0;
-            filters.push(format!("asetpts=PTS{offset_seconds:+.3}/TB"));
+            if offset_ms > 0 {
+                filters.push(format!("adelay={offset_ms}:all=1"));
+            } else {
+                let trim_seconds = f64::from(offset_ms.saturating_abs()) / 1000.0;
+                filters.push(format!("atrim=start={trim_seconds:.3}"));
+                filters.push("asetpts=PTS-STARTPTS".to_string());
+            }
         }
     }
 
@@ -2602,13 +2659,13 @@ fn audio_output_channels(input_layout: &InputLayout) -> u16 {
     }
 }
 
-fn append_live_preview_output_args(args: &mut Vec<String>) {
+fn append_live_preview_output_args(args: &mut Vec<String>, jpeg_quality: u32) {
     args.extend([
         "-an".to_string(),
         "-c:v".to_string(),
         "mjpeg".to_string(),
         "-q:v".to_string(),
-        "6".to_string(),
+        jpeg_quality.to_string(),
         "-flush_packets".to_string(),
         "1".to_string(),
         "-f".to_string(),
@@ -2667,7 +2724,7 @@ fn recording_video_filter(
     if include_live_preview {
         format!(
             "{video};[{video_label}]split=2[v_main][v_preview];[v_preview]{}[preview]",
-            live_preview_scale_filter()
+            recording_preview_scale_filter()
         )
     } else {
         format!("{video};[{video_label}]null[v_main]")
@@ -2678,13 +2735,19 @@ fn live_preview_filter(camera_input_index: Option<usize>, params: &StartSessionP
     format!(
         "{};[v]{}[preview]",
         video_filter(camera_input_index, params, false),
-        live_preview_scale_filter()
+        idle_preview_scale_filter()
     )
 }
 
-fn live_preview_scale_filter() -> String {
+fn recording_preview_scale_filter() -> String {
     format!(
-        "scale=w={LIVE_PREVIEW_WIDTH}:h={LIVE_PREVIEW_HEIGHT}:force_original_aspect_ratio=decrease,pad={LIVE_PREVIEW_WIDTH}:{LIVE_PREVIEW_HEIGHT}:(ow-iw)/2:(oh-ih)/2,fps={LIVE_PREVIEW_FPS}"
+        "scale=w={RECORDING_PREVIEW_WIDTH}:h={RECORDING_PREVIEW_HEIGHT}:force_original_aspect_ratio=decrease,pad={RECORDING_PREVIEW_WIDTH}:{RECORDING_PREVIEW_HEIGHT}:(ow-iw)/2:(oh-ih)/2,fps={RECORDING_PREVIEW_FPS}"
+    )
+}
+
+fn idle_preview_scale_filter() -> String {
+    format!(
+        "scale=w={IDLE_PREVIEW_WIDTH}:h={IDLE_PREVIEW_HEIGHT}:force_original_aspect_ratio=decrease,pad={IDLE_PREVIEW_WIDTH}:{IDLE_PREVIEW_HEIGHT}:(ow-iw)/2:(oh-ih)/2,fps={IDLE_PREVIEW_FPS}"
     )
 }
 
@@ -4247,7 +4310,7 @@ mod tests {
         assert!(args.iter().any(|arg| arg == "title=Microphone"));
         assert_eq!(
             arg_value(&args, "-af"),
-            Some("asetpts=PTS-0.250/TB,pan=stereo|c0=c0|c1=c0,aresample=async=1:first_pts=0")
+            Some("pan=stereo|c0=c0|c1=c0,aresample=async=1:first_pts=0")
         );
         assert_eq!(arg_value(&args, "-ar"), Some("48000"));
         assert_eq!(arg_value(&args, "-ac"), Some("2"));
@@ -4350,7 +4413,7 @@ mod tests {
         assert!(args.iter().any(|arg| arg == "title=Microphone"));
         assert_eq!(
             arg_value(&args, "-af"),
-            Some("asetpts=PTS-0.250/TB,pan=stereo|c0=c0|c1=c0,aresample=async=1:first_pts=0")
+            Some("pan=stereo|c0=c0|c1=c0,aresample=async=1:first_pts=0")
         );
         assert_eq!(arg_value(&args, "-ar"), Some("48000"));
         assert_eq!(arg_value(&args, "-ac"), Some("2"));
@@ -4395,12 +4458,12 @@ mod tests {
         );
         assert_eq!(
             input_arg_value(&args, "/tmp/videorc-audio-test.f32le", "-thread_queue_size"),
-            Some("64")
+            Some("256")
         );
         assert!(args.iter().any(|arg| arg == "1:a?"));
         assert_eq!(
             arg_value(&args, "-af"),
-            Some("asetpts=PTS-0.250/TB,aresample=async=1:first_pts=0")
+            Some("aresample=async=1:first_pts=0")
         );
         assert_eq!(arg_value(&args, "-ac"), Some("2"));
         assert_eq!(arg_value(&args, "-c:a"), Some("pcm_s16le"));
@@ -4411,6 +4474,20 @@ mod tests {
         let mut params = base_params(true, false);
         params.audio.microphone_sync_offset_ms = 120;
         let delayed = ffmpeg_args(
+            &CaptureInputs {
+                video: VideoInput::MacScreen { index: 3 },
+                camera_index: None,
+                microphone: Some(MicrophoneInput::AvFoundation { index: 1 }),
+            },
+            &params,
+            Some(Path::new("/tmp/videorc-test.mkv")),
+            &[],
+            None,
+        )
+        .unwrap();
+
+        params.audio.microphone_sync_offset_ms = -120;
+        let trimmed = ffmpeg_args(
             &CaptureInputs {
                 video: VideoInput::MacScreen { index: 3 },
                 camera_index: None,
@@ -4439,7 +4516,13 @@ mod tests {
 
         assert_eq!(
             arg_value(&delayed, "-af"),
-            Some("asetpts=PTS+0.120/TB,pan=stereo|c0=c0|c1=c0,aresample=async=1:first_pts=0")
+            Some("adelay=120:all=1,pan=stereo|c0=c0|c1=c0,aresample=async=1:first_pts=0")
+        );
+        assert_eq!(
+            arg_value(&trimmed, "-af"),
+            Some(
+                "atrim=start=0.120,asetpts=PTS-STARTPTS,pan=stereo|c0=c0|c1=c0,aresample=async=1:first_pts=0"
+            )
         );
         assert_eq!(
             arg_value(&disabled, "-af"),
@@ -4510,9 +4593,10 @@ mod tests {
         .unwrap();
 
         assert!(args.iter().any(|arg| arg.contains("[v]split=2")));
-        assert!(args.iter().any(|arg| arg.contains("pad=1280:720")));
+        assert!(args.iter().any(|arg| arg.contains("pad=640:360")));
         assert!(args.iter().any(|arg| arg == "-an"));
         assert!(args.iter().any(|arg| arg == "mjpeg"));
+        assert_eq!(arg_value(&args, "-q:v"), Some("12"));
         assert!(args.iter().any(|arg| arg == "mpjpeg"));
         assert_eq!(arg_value(&args, "-flush_packets"), Some("1"));
         assert!(args.iter().any(|arg| arg == "videorc"));
@@ -4601,10 +4685,12 @@ mod tests {
         );
         assert!(!input_has_arg(&args, "0:none", "-capture_cursor"));
         assert!(!args.iter().any(|arg| arg.ends_with(":a?")));
-        assert!(args.iter().any(|arg| arg.contains("pad=1280:720")));
+        assert!(args.iter().any(|arg| arg.contains("pad=640:360")));
         assert!(args.iter().any(|arg| arg.contains("fps=30")));
+        assert!(args.iter().any(|arg| arg.contains("fps=10")));
         assert!(args.iter().any(|arg| arg.contains("setpts=PTS-STARTPTS")));
         assert!(args.iter().any(|arg| arg == "[preview]"));
+        assert_eq!(arg_value(&args, "-q:v"), Some("10"));
         assert!(args.iter().any(|arg| arg == "pipe:1"));
     }
 
@@ -4622,10 +4708,10 @@ mod tests {
 
         let session = live_preview_session_params(preview_params, "ffmpeg".to_string());
 
-        assert_eq!(session.output.video.width, LIVE_PREVIEW_WIDTH);
-        assert_eq!(session.output.video.height, LIVE_PREVIEW_HEIGHT);
-        assert_eq!(session.output.video.fps, LIVE_PREVIEW_FPS);
-        assert_eq!(session.output.video.bitrate_kbps, 4000);
+        assert_eq!(session.output.video.width, IDLE_PREVIEW_WIDTH);
+        assert_eq!(session.output.video.height, IDLE_PREVIEW_HEIGHT);
+        assert_eq!(session.output.video.fps, 30);
+        assert_eq!(session.output.video.bitrate_kbps, 1500);
     }
 
     #[test]
@@ -4645,8 +4731,8 @@ mod tests {
 
         assert!(recording_filter.contains("scale=720:406"));
         assert!(recording_filter.contains("overlay=x=W-w-64:y=H-h-64"));
-        assert!(preview_filter.contains("scale=360:203"));
-        assert!(preview_filter.contains("overlay=x=W-w-32:y=H-h-32"));
+        assert!(preview_filter.contains("scale=180:102"));
+        assert!(preview_filter.contains("overlay=x=W-w-16:y=H-h-16"));
     }
 
     #[test]
@@ -4712,7 +4798,7 @@ mod tests {
         assert!(with_mic.iter().any(|arg| arg == "title=Microphone"));
         assert_eq!(
             arg_value(&with_mic, "-af"),
-            Some("asetpts=PTS-0.250/TB,pan=stereo|c0=c0|c1=c0,aresample=async=1:first_pts=0")
+            Some("pan=stereo|c0=c0|c1=c0,aresample=async=1:first_pts=0")
         );
         assert_eq!(arg_value(&with_mic, "-ac"), Some("2"));
         assert_eq!(arg_value(&with_mic, "-c:a"), Some("pcm_s16le"));

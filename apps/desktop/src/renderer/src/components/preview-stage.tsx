@@ -153,7 +153,7 @@ export function PreviewStage({
     }
 
     updateFrame()
-    const timer = window.setInterval(updateFrame, 80)
+    const timer = window.setInterval(updateFrame, 250)
     return () => window.clearInterval(timer)
   }, [isLive, latestFrameUrl, previewUrl])
 

@@ -68,6 +68,7 @@ try {
     )
   )
   const loaded = loadCaptureConfig()
+  assert.equal(loaded.audio.microphoneSyncOffsetMs, 0)
   assert.deepEqual(loaded.sources, {
     screenId: 'screen-old',
     screenName: 'Built-in Display',
@@ -92,6 +93,31 @@ try {
     'Camera "FaceTime HD Camera" was restored by name because its system ID changed.',
     'Microphone "Podcast Mic" was restored by name because its system ID changed.'
   ])
+
+  localStorage.setItem(
+    STORAGE_KEYS.captureConfig,
+    JSON.stringify({
+      ...defaultCaptureConfig,
+      audio: {
+        ...defaultCaptureConfig.audio,
+        microphoneSyncOffsetMs: -250
+      }
+    })
+  )
+  assert.equal(loadCaptureConfig().audio.microphoneSyncOffsetMs, 0)
+
+  localStorage.setItem(
+    STORAGE_KEYS.captureConfig,
+    JSON.stringify({
+      ...defaultCaptureConfig,
+      audio: {
+        ...defaultCaptureConfig.audio,
+        microphoneSyncOffsetMs: -250,
+        microphoneSyncOffsetUserSet: true
+      }
+    })
+  )
+  assert.equal(loadCaptureConfig().audio.microphoneSyncOffsetMs, -250)
 
   assert.deepEqual(
     reconcileSourceSelection(

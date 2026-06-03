@@ -590,7 +590,7 @@ impl Default for AudioSettings {
 }
 
 fn default_microphone_sync_offset_ms() -> i32 {
-    -250
+    0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -696,6 +696,7 @@ pub struct DiagnosticStats {
     pub dropped_frames: u64,
     pub encoder_speed: Option<f64>,
     pub preview_latency_ms: Option<u64>,
+    pub preview_dropped_frames: u64,
     pub mic_captured_frames: Option<u64>,
     pub mic_dropped_frames: u64,
     pub device_disconnected: bool,

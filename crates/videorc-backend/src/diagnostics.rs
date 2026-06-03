@@ -12,6 +12,7 @@ pub fn idle_diagnostics() -> DiagnosticStats {
         dropped_frames: 0,
         encoder_speed: None,
         preview_latency_ms: None,
+        preview_dropped_frames: 0,
         mic_captured_frames: None,
         mic_dropped_frames: 0,
         device_disconnected: false,
@@ -59,6 +60,20 @@ pub fn apply_stream_health(
     stats
 }
 
+pub fn apply_preview_stats(
+    mut stats: DiagnosticStats,
+    preview_latency_ms: Option<u64>,
+    preview_dropped_frames: u64,
+) -> DiagnosticStats {
+    stats.preview_latency_ms = preview_latency_ms;
+    stats.preview_dropped_frames = preview_dropped_frames;
+    if preview_dropped_frames > 0 {
+        stats.bottleneck = DiagnosticBottleneck::Preview;
+    }
+    stats.updated_at = Utc::now().to_rfc3339();
+    stats
+}
+
 pub fn apply_audio_stats(
     mut stats: DiagnosticStats,
     captured_frames: u64,
@@ -88,10 +103,10 @@ pub fn classify_bottleneck(
     if mic_dropped_frames > 0 {
         return DiagnosticBottleneck::Audio;
     }
-    if encoder_speed.is_some_and(|speed| speed < 0.95) {
+    if encoder_speed.is_some_and(|speed| speed < 0.98) {
         return DiagnosticBottleneck::Encoder;
     }
-    if capture_fps.is_some_and(|fps| fps < f64::from(target_fps) * 0.85) {
+    if capture_fps.is_some_and(|fps| fps < f64::from(target_fps) * 0.9) {
         return DiagnosticBottleneck::Capture;
     }
     if render_fps.is_some_and(|fps| fps < f64::from(target_fps) * 0.9) {

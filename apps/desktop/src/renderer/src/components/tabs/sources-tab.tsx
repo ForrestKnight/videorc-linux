@@ -200,7 +200,11 @@ export function SourcesTab(): ReactElement {
               onValueChange={([microphoneSyncOffsetMs]) =>
                 setCaptureConfig((current) => ({
                   ...current,
-                  audio: { ...current.audio, microphoneSyncOffsetMs: microphoneSyncOffsetMs ?? -250 }
+                  audio: {
+                    ...current.audio,
+                    microphoneSyncOffsetMs: microphoneSyncOffsetMs ?? 0,
+                    microphoneSyncOffsetUserSet: true
+                  }
                 }))
               }
             />

@@ -14,10 +14,10 @@ use crate::protocol::{AudioMeterResult, AudioMeterStatus, Device, DeviceKind, De
 
 pub const NATIVE_AUDIO_SAMPLE_RATE: u32 = 48_000;
 pub const NATIVE_AUDIO_CHANNELS: u16 = 2;
-const AUDIO_RING_CAPACITY_FRAMES: usize = 64;
+const AUDIO_RING_CAPACITY_FRAMES: usize = 256;
 const METER_SAMPLE_DURATION: Duration = Duration::from_millis(700);
 const FIFO_OPEN_RETRY: Duration = Duration::from_millis(20);
-pub const NATIVE_AUDIO_FFMPEG_QUEUE_SIZE: u32 = 64;
+pub const NATIVE_AUDIO_FFMPEG_QUEUE_SIZE: u32 = 256;
 
 #[derive(Debug, Clone)]
 pub struct AudioFrame {
@@ -402,17 +402,34 @@ pub fn process_interleaved_f32(
 
     for frame_index in 0..frame_count {
         let base = frame_index * source_channels;
-        let left = input[base] * gain;
-        let right = if source_channels > 1 {
-            input.get(base + 1).copied().unwrap_or(input[base])
+        let mono = if source_channels > 1 {
+            centered_voice_sample(
+                input[base],
+                input.get(base + 1).copied().unwrap_or(input[base]),
+            )
         } else {
             input[base]
-        } * gain;
-        output.push(left.clamp(-1.0, 1.0));
-        output.push(right.clamp(-1.0, 1.0));
+        };
+        let sample = (mono * gain).clamp(-1.0, 1.0);
+        output.push(sample);
+        output.push(sample);
     }
 
     output
+}
+
+fn centered_voice_sample(left: f32, right: f32) -> f32 {
+    const SILENT_CHANNEL_THRESHOLD: f32 = 1.0e-5;
+
+    match (
+        left.abs() > SILENT_CHANNEL_THRESHOLD,
+        right.abs() > SILENT_CHANNEL_THRESHOLD,
+    ) {
+        (true, true) => (left + right) * 0.5,
+        (true, false) => left,
+        (false, true) => right,
+        (false, false) => 0.0,
+    }
 }
 
 #[cfg(test)]
@@ -647,7 +664,7 @@ mod tests {
 
     #[test]
     fn gain_and_mute_are_deterministic() {
-        let input = [0.25, -0.25, 0.5, -0.5];
+        let input = [0.25, 0.25, 0.5, 0.5];
         let gained = process_interleaved_f32(
             &input,
             2,
@@ -657,7 +674,7 @@ mod tests {
             },
         );
         assert!(gained[0] > input[0]);
-        assert!(gained[1] < input[1]);
+        assert!(gained[1] > input[1]);
 
         let muted = process_interleaved_f32(
             &input,
@@ -674,6 +691,43 @@ mod tests {
     fn mono_input_is_duplicated_to_stereo() {
         let output = process_interleaved_f32(&[0.1, 0.2], 1, AudioProcessingSettings::default());
         assert_eq!(output, vec![0.1, 0.1, 0.2, 0.2]);
+    }
+
+    #[test]
+    fn left_only_stereo_input_is_centered() {
+        let output = process_interleaved_f32(
+            &[0.5, 0.0, -0.25, 0.0],
+            2,
+            AudioProcessingSettings::default(),
+        );
+        assert_eq!(output, vec![0.5, 0.5, -0.25, -0.25]);
+    }
+
+    #[test]
+    fn right_only_stereo_input_is_centered() {
+        let output = process_interleaved_f32(
+            &[0.0, 0.5, 0.0, -0.25],
+            2,
+            AudioProcessingSettings::default(),
+        );
+        assert_eq!(output, vec![0.5, 0.5, -0.25, -0.25]);
+    }
+
+    #[test]
+    fn true_stereo_input_is_averaged_then_centered() {
+        let output = process_interleaved_f32(
+            &[0.5, 0.25, -0.25, -0.75],
+            2,
+            AudioProcessingSettings::default(),
+        );
+        assert_eq!(output, vec![0.375, 0.375, -0.5, -0.5]);
+    }
+
+    #[test]
+    fn native_voice_centering_uses_first_two_channels() {
+        let output =
+            process_interleaved_f32(&[0.6, 0.2, 1.0], 3, AudioProcessingSettings::default());
+        assert_eq!(output, vec![0.4, 0.4]);
     }
 
     #[test]

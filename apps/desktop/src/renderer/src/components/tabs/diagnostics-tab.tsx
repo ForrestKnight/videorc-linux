@@ -44,6 +44,7 @@ export function DiagnosticsTab(): ReactElement {
     () => bottleneckCopy(diagnosticStats.bottleneck),
     [diagnosticStats.bottleneck]
   )
+  const qualityWarning = useMemo(() => recordingQualityWarning(diagnosticStats.bottleneck), [diagnosticStats.bottleneck])
 
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
@@ -60,6 +61,7 @@ export function DiagnosticsTab(): ReactElement {
             <DiagnosticMetric label="Dropped frames" value={formatDroppedFrames(diagnosticStats.droppedFrames || streamHealth?.droppedFrames)} />
             <DiagnosticMetric label="Encoder speed" value={formatMetric(diagnosticStats.encoderSpeed ?? streamHealth?.speed, 'x')} />
             <DiagnosticMetric label="Preview latency" value={formatMs(diagnosticStats.previewLatencyMs)} />
+            <DiagnosticMetric label="Preview drops" value={diagnosticStats.previewDroppedFrames.toString()} />
             <DiagnosticMetric label="Mic drops" value={diagnosticStats.micDroppedFrames.toString()} />
             <DiagnosticMetric label="Device state" value={diagnosticStats.deviceDisconnected ? 'Disconnected' : 'Connected'} />
           </div>
@@ -70,6 +72,9 @@ export function DiagnosticsTab(): ReactElement {
               <Badge variant="outline">Target {diagnosticStats.targetFps} FPS</Badge>
             ) : null}
           </div>
+          {qualityWarning ? (
+            <p className="text-sm text-warning">{qualityWarning}</p>
+          ) : null}
         </PanelSection>
 
         <PanelSection icon={Pulse} title="Pipeline">
@@ -282,6 +287,22 @@ function bottleneckCopy(bottleneck: DiagnosticBottleneck): { label: string; tone
       return { label: 'Collecting', tone: 'neutral' }
     default:
       return { label: 'None', tone: 'good' }
+  }
+}
+
+function recordingQualityWarning(bottleneck: DiagnosticBottleneck): string | null {
+  switch (bottleneck) {
+    case 'encoder':
+      return 'Recording is below real time. Lower bitrate or resolution if the final video is laggy.'
+    case 'capture':
+    case 'render':
+      return 'Capture is not keeping up with the target FPS. Lower resolution or close heavy apps if the final video is laggy.'
+    case 'audio':
+      return 'Microphone capture dropped frames. Check the selected mic or reduce system load.'
+    case 'preview':
+      return 'Preview dropped frames. Recording quality is kept unchanged.'
+    default:
+      return null
   }
 }
 

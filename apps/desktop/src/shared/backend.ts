@@ -732,6 +732,7 @@ export interface AudioSettings {
   microphoneGainDb: number
   microphoneMuted: boolean
   microphoneSyncOffsetMs: number
+  microphoneSyncOffsetUserSet?: boolean
 }
 
 export interface RemuxSessionParams {
@@ -804,6 +805,7 @@ export interface DiagnosticStats {
   droppedFrames: number
   encoderSpeed?: number
   previewLatencyMs?: number
+  previewDroppedFrames: number
   micCapturedFrames?: number
   micDroppedFrames: number
   deviceDisconnected: boolean

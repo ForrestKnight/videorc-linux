@@ -232,6 +232,7 @@ const StudioContext = createContext<StudioContextValue | null>(null)
 const idleDiagnosticStats = (): DiagnosticStats => ({
   skippedFrames: 0,
   droppedFrames: 0,
+  previewDroppedFrames: 0,
   micDroppedFrames: 0,
   deviceDisconnected: false,
   bottleneck: 'none',
