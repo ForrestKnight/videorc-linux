@@ -23,13 +23,39 @@ try {
   })
   await writeFile(tempModule, transpiled.outputText)
 
-  const { startButtonLabel, startButtonPendingLabel } = require(tempModule)
+  const { bridgeStreamingToLegacy, defaultCaptureConfig, startButtonLabel, startButtonPendingLabel } =
+    require(tempModule)
   assert.equal(startButtonLabel(true, false), 'Start Recording')
   assert.equal(startButtonLabel(false, true), 'Start Livestream')
   assert.equal(startButtonLabel(true, true), 'Start Livestream + Record')
   assert.equal(startButtonLabel(false, false), 'Start Session')
   assert.equal(startButtonPendingLabel(false), 'Starting Recording...')
   assert.equal(startButtonPendingLabel(true), 'Starting Livestream...')
+
+  const youtubeOauthEnabled = bridgeStreamingToLegacy({
+    ...defaultCaptureConfig,
+    recordEnabled: false,
+    streaming: {
+      ...defaultCaptureConfig.streaming,
+      enabled: true,
+      mode: 'single',
+      enabledTargetIds: ['youtube'],
+      targets: defaultCaptureConfig.streaming.targets.map((target) =>
+        target.platform === 'youtube'
+          ? {
+              ...target,
+              enabled: true,
+              authMode: 'oauth',
+              serverUrl: '',
+              streamKey: '',
+              streamKeyPresent: false
+            }
+          : target
+      )
+    }
+  })
+  assert.equal(youtubeOauthEnabled.streamEnabled, true)
+  assert.equal(startButtonLabel(youtubeOauthEnabled.recordEnabled, youtubeOauthEnabled.streamEnabled), 'Start Livestream')
 
   console.log('Start label smoke OK - record, livestream, dual-output, and pending labels verified.')
 } finally {
