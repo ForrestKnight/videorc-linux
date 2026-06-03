@@ -170,6 +170,7 @@ The release process must make source for the exact FFmpeg archive available besi
 - `cargo clippy -- -D warnings`
 - `pnpm smoke:dev`
 - `pnpm smoke:provider-readiness`
+- `pnpm smoke:oauth-guards`
 - `pnpm package:desktop`
 - `pnpm smoke:packaged`
 - `pnpm smoke:packaged:bundled`

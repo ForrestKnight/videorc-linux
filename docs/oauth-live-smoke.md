@@ -14,6 +14,7 @@ pnpm build
 cargo test -p videorc-backend
 cargo clippy -p videorc-backend -- -D warnings
 pnpm smoke:oauth
+pnpm smoke:oauth-guards
 pnpm smoke:sources
 pnpm smoke:start-labels
 pnpm smoke:screens
