@@ -1401,7 +1401,11 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
           streamKeySecretRef: prepared.streamKeySecretRef,
           streamKeyPresent: true,
           platformBroadcastId: prepared.broadcastId,
-          platformStreamId: prepared.streamId
+          platformStreamId: prepared.streamId,
+          status: {
+            state: 'ready',
+            message: 'YouTube broadcast prepared.'
+          }
         })
       } else if (target.platform === 'twitch') {
         const prepared = await client.request<PreparedTwitchBroadcast>('streamTargets.twitch.prepare', {
@@ -1414,7 +1418,11 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
           streamKeySecretRef: prepared.streamKeySecretRef,
           streamKeyPresent: true,
           platformBroadcastId: undefined,
-          platformStreamId: undefined
+          platformStreamId: undefined,
+          status: {
+            state: 'ready',
+            message: 'Twitch channel prepared.'
+          }
         })
       } else if (target.platform === 'x') {
         await client.request('streamTargets.x.prepare', { accountId: target.accountId })
@@ -1537,13 +1545,48 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     )
     for (const target of youtubeTargets) {
       try {
-        await client.request<YouTubeBroadcastTransitionResult>('streamTargets.youtube.transition', {
+        setCaptureConfig((current) =>
+          bridgeStreamingToLegacy({
+            ...current,
+            streaming: patchPreparedTarget(current.streaming, target.id, {
+              status: {
+                state: 'connecting',
+                message: 'Completing YouTube broadcast.'
+              }
+            })
+          })
+        )
+        const result = await client.request<YouTubeBroadcastTransitionResult>('streamTargets.youtube.transition', {
           accountId: target.accountId,
           broadcastId: target.platformBroadcastId,
           status: 'complete'
         })
+        setCaptureConfig((current) =>
+          bridgeStreamingToLegacy({
+            ...current,
+            streaming: patchPreparedTarget(current.streaming, target.id, {
+              status: {
+                state: 'stopped',
+                message: result.lifecycleStatus
+                  ? `YouTube broadcast ended (${result.lifecycleStatus}).`
+                  : 'YouTube broadcast ended.'
+              }
+            })
+          })
+        )
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
+        setCaptureConfig((current) =>
+          bridgeStreamingToLegacy({
+            ...current,
+            streaming: patchPreparedTarget(current.streaming, target.id, {
+              status: {
+                state: 'warning',
+                message: `YouTube cleanup needs review: ${message}`
+              }
+            })
+          })
+        )
         toast.warning(`Could not complete ${target.label} on YouTube.`, {
           description: message
         })

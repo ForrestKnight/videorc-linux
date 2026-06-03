@@ -260,7 +260,9 @@ function DestinationCard({
   const oauthMode = nativeDestination && target.authMode === 'oauth'
   // While a session is live the runtime status (on air / stopped / skipped) takes
   // over the badge; otherwise it reflects the saved-credential readiness.
-  const badge = runtime ? runtimeBadge(runtime) : configuredBadge(target.enabled, ready)
+  const savedStatusBadge = target.status ? streamTargetStatusBadge(target.status.state) : null
+  const badge = runtime ? runtimeBadge(runtime) : (savedStatusBadge ?? configuredBadge(target.enabled, ready))
+  const statusMessage = runtime?.message ?? target.status?.message
 
   return (
     <PanelSection
@@ -279,8 +281,8 @@ function DestinationCard({
         <Badge className="w-fit" variant={badge.tone}>
           {badge.label}
         </Badge>
-        {runtime?.message ? (
-          <span className="text-xs text-muted-foreground">{runtime.message}</span>
+        {statusMessage ? (
+          <span className="text-xs text-muted-foreground">{statusMessage}</span>
         ) : null}
       </div>
 
@@ -367,6 +369,28 @@ function DestinationCard({
       ) : null}
     </PanelSection>
   )
+}
+
+function streamTargetStatusBadge(state: NonNullable<StreamTargetSettings['status']>['state']): {
+  tone: BadgeTone
+  label: string
+} {
+  switch (state) {
+    case 'ready':
+      return { tone: 'success', label: 'Prepared' }
+    case 'connecting':
+      return { tone: 'warning', label: 'Updating' }
+    case 'live':
+      return { tone: 'success', label: 'On air' }
+    case 'warning':
+      return { tone: 'warning', label: 'Review' }
+    case 'failed':
+      return { tone: 'destructive', label: 'Failed' }
+    case 'stopped':
+      return { tone: 'outline', label: 'Ended' }
+    default:
+      return { tone: 'outline', label: 'Idle' }
+  }
 }
 
 function OAuthAccountPanel({
