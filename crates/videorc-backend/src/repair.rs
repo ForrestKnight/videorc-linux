@@ -194,6 +194,8 @@ pub struct QualityThresholds {
     pub frame_count_tolerance: f64,
     /// RMS level (dB) at or below which an audio channel counts as silent.
     pub silence_db: f64,
+    /// Minimum freeze duration (seconds) that counts as a user-visible long freeze.
+    pub min_freeze_seconds: f64,
 }
 
 impl Default for QualityThresholds {
@@ -203,6 +205,7 @@ impl Default for QualityThresholds {
             vfr_tolerance: 0.01,
             frame_count_tolerance: 0.02,
             silence_db: -70.0,
+            min_freeze_seconds: 2.0,
         }
     }
 }
@@ -247,6 +250,11 @@ pub enum QualityIssue {
     /// (the classic one-sided USB-mic capture).
     OneSidedAudio {
         silent_channel: usize,
+    },
+    /// One or more user-visible long freezes (repeated/frozen frames).
+    FrozenSegments {
+        count: usize,
+        longest_seconds: f64,
     },
 }
 
@@ -430,6 +438,70 @@ pub fn analyze_audio_balance(
     Ok(parse_astats_levels(&String::from_utf8_lossy(
         &output.stderr,
     )))
+}
+
+// --- Freeze / repeated-frame detection (slice 4) ---
+
+/// A frozen segment of video (a stretch of repeated/identical frames).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FreezeSegment {
+    pub start: f64,
+    pub duration: f64,
+}
+
+/// Parses freeze segments from FFmpeg `freezedetect` output. Each freeze emits a
+/// `freeze_start: T` line followed by a `freeze_duration: D` line (the `freeze_end`
+/// line is ignored).
+pub fn parse_freezedetect(output: &str) -> Vec<FreezeSegment> {
+    let mut segments = Vec::new();
+    let mut pending_start: Option<f64> = None;
+    for line in output.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.split("freeze_start:").nth(1) {
+            pending_start = rest.trim().parse::<f64>().ok();
+        } else if let Some(rest) = line.split("freeze_duration:").nth(1)
+            && let (Some(start), Ok(duration)) = (pending_start.take(), rest.trim().parse::<f64>())
+        {
+            segments.push(FreezeSegment { start, duration });
+        }
+    }
+    segments
+}
+
+/// Freezes at or beyond `min_freeze_seconds` — the user-visible long freezes.
+pub fn long_freezes(segments: &[FreezeSegment], min_freeze_seconds: f64) -> Vec<FreezeSegment> {
+    segments
+        .iter()
+        .filter(|segment| segment.duration >= min_freeze_seconds)
+        .copied()
+        .collect()
+}
+
+/// Runs FFmpeg `freezedetect` over a file's video stream and returns the freeze
+/// segments it reports (printed to stderr at info level).
+pub fn detect_freezes(
+    ffmpeg_path: &str,
+    file_path: &str,
+    noise_db: f64,
+    min_freeze_seconds: f64,
+) -> Result<Vec<FreezeSegment>, String> {
+    let filter = format!("freezedetect=n={noise_db}dB:d={min_freeze_seconds}");
+    let output = Command::new(ffmpeg_path)
+        .args([
+            "-hide_banner",
+            "-i",
+            file_path,
+            "-map",
+            "0:v:0",
+            "-vf",
+            &filter,
+            "-f",
+            "null",
+            "-",
+        ])
+        .output()
+        .map_err(|error| format!("could not run freezedetect: {error}"))?;
+    Ok(parse_freezedetect(&String::from_utf8_lossy(&output.stderr)))
 }
 
 #[cfg(test)]
@@ -654,5 +726,40 @@ mod tests {
             rms_db: -20.0,
         }];
         assert_eq!(detect_one_sided_audio(&levels, -70.0), None);
+    }
+
+    const FREEZEDETECT_OUTPUT: &str = "[freezedetect] lavfi.freezedetect.freeze_start: 5\n\
+        [freezedetect] lavfi.freezedetect.freeze_duration: 3.5\n\
+        [freezedetect] lavfi.freezedetect.freeze_end: 8.5\n\
+        [freezedetect] lavfi.freezedetect.freeze_start: 20\n\
+        [freezedetect] lavfi.freezedetect.freeze_duration: 1.0\n\
+        [freezedetect] lavfi.freezedetect.freeze_end: 21.0\n";
+
+    #[test]
+    fn parses_freeze_segments() {
+        let segments = parse_freezedetect(FREEZEDETECT_OUTPUT);
+        assert_eq!(segments.len(), 2);
+        assert_eq!(
+            segments[0],
+            FreezeSegment {
+                start: 5.0,
+                duration: 3.5
+            }
+        );
+        assert_eq!(
+            segments[1],
+            FreezeSegment {
+                start: 20.0,
+                duration: 1.0
+            }
+        );
+    }
+
+    #[test]
+    fn long_freezes_filters_by_duration() {
+        let segments = parse_freezedetect(FREEZEDETECT_OUTPUT);
+        let long = long_freezes(&segments, 2.0);
+        assert_eq!(long.len(), 1, "only the 3.5s freeze is long");
+        assert_eq!(long[0].duration, 3.5);
     }
 }
