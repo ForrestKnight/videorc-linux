@@ -63,7 +63,8 @@ import type {
   StreamTargetsSnapshot,
   SystemPermissionPane,
   VideoPreset,
-  VideoSettings
+  VideoSettings,
+  YouTubeBroadcastTransitionResult
 } from '@/lib/backend'
 import {
   findDevice,
@@ -1522,6 +1523,34 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     streamMetadataDraft
   ])
 
+  const completePreparedPlatformBroadcasts = useCallback(async () => {
+    if (!client) {
+      return
+    }
+
+    const youtubeTargets = captureConfig.streaming.targets.filter(
+      (target) =>
+        target.enabled &&
+        target.authMode === 'oauth' &&
+        target.platform === 'youtube' &&
+        Boolean(target.platformBroadcastId)
+    )
+    for (const target of youtubeTargets) {
+      try {
+        await client.request<YouTubeBroadcastTransitionResult>('streamTargets.youtube.transition', {
+          accountId: target.accountId,
+          broadcastId: target.platformBroadcastId,
+          status: 'complete'
+        })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        toast.warning(`Could not complete ${target.label} on YouTube.`, {
+          description: message
+        })
+      }
+    }
+  }, [captureConfig.streaming.targets, client])
+
   const stopSession = useCallback(async () => {
     if (!client || stopRequestPending) {
       return
@@ -1532,12 +1561,13 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       setStopRequestPending(true)
       const status = await client.request<RecordingStatus>('session.stop')
       setRecording(status)
+      await completePreparedPlatformBroadcasts()
     } catch (error) {
       reportError(error)
     } finally {
       setStopRequestPending(false)
     }
-  }, [client, reportError, stopRequestPending])
+  }, [client, completePreparedPlatformBroadcasts, reportError, stopRequestPending])
 
   const remuxSession = useCallback(
     async (sessionId: string) => {
