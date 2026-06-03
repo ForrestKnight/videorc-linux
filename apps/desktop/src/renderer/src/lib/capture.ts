@@ -442,6 +442,26 @@ export function bridgeStreamingToLegacy(config: CaptureConfig): CaptureConfig {
   return { ...config, streamEnabled: false }
 }
 
+export function persistableCaptureConfig(config: CaptureConfig): CaptureConfig {
+  const targets = config.streaming.targets.map((target) => {
+    if (target.authMode !== 'oauth') {
+      return target
+    }
+    return {
+      ...target,
+      streamKey: '',
+      streamKeyPresent: Boolean(target.streamKeySecretRef)
+    }
+  })
+  const streaming = { ...config.streaming, targets }
+  const primary = streaming.targets.find((target) => target.platform === config.rtmpPreset)
+  return {
+    ...config,
+    streaming,
+    streamKey: primary?.authMode === 'oauth' ? '' : config.streamKey
+  }
+}
+
 function findRememberedSource(
   sourceId: string | undefined,
   sourceName: string | undefined,

@@ -19,6 +19,7 @@ import {
   defaultSettings,
   loadCaptureConfig,
   loadJson,
+  persistableCaptureConfig,
   reconcileSourceSelection,
   rtmpDefaults,
   STORAGE_KEYS,
@@ -607,7 +608,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   }, [settings])
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.captureConfig, JSON.stringify(captureConfig))
+    localStorage.setItem(STORAGE_KEYS.captureConfig, JSON.stringify(persistableCaptureConfig(captureConfig)))
   }, [captureConfig])
 
   useEffect(() => {

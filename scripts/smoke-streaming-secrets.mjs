@@ -23,7 +23,7 @@ try {
   })
   await writeFile(tempModule, transpiled.outputText)
 
-  const { normalizeStreamingSettings } = require(tempModule)
+  const { defaultCaptureConfig, normalizeStreamingSettings, persistableCaptureConfig } = require(tempModule)
   const normalized = normalizeStreamingSettings({
     enabled: true,
     mode: 'single',
@@ -64,7 +64,43 @@ try {
   assert.equal(twitch.streamKeyPresent, false)
   assert.equal(twitch.streamKeySecretRef, undefined)
 
-  console.log('Streaming secret smoke OK - OAuth secret refs survive reload without raw keys.')
+  const persisted = persistableCaptureConfig({
+    ...defaultCaptureConfig,
+    rtmpPreset: 'youtube',
+    streamKey: 'raw-oauth-key',
+    streaming: {
+      ...defaultCaptureConfig.streaming,
+      targets: defaultCaptureConfig.streaming.targets.map((target) =>
+        target.platform === 'youtube'
+          ? {
+              ...target,
+              enabled: true,
+              authMode: 'oauth',
+              streamKey: 'raw-oauth-key',
+              streamKeySecretRef: 'secret://youtube-stream-key',
+              streamKeyPresent: true
+            }
+          : target.platform === 'twitch'
+            ? {
+                ...target,
+                enabled: true,
+                authMode: 'manual-rtmp',
+                streamKey: 'manual-key',
+                streamKeyPresent: true
+              }
+            : target
+      )
+    }
+  })
+  const persistedYoutube = persisted.streaming.targets.find((target) => target.platform === 'youtube')
+  const persistedTwitch = persisted.streaming.targets.find((target) => target.platform === 'twitch')
+  assert.equal(persisted.streamKey, '')
+  assert.equal(persistedYoutube.streamKey, '')
+  assert.equal(persistedYoutube.streamKeySecretRef, 'secret://youtube-stream-key')
+  assert.equal(persistedYoutube.streamKeyPresent, true)
+  assert.equal(persistedTwitch.streamKey, 'manual-key')
+
+  console.log('Streaming secret smoke OK - OAuth secret refs survive reload and persistence without raw keys.')
 } finally {
   await rm(tempDir, { recursive: true, force: true })
 }
