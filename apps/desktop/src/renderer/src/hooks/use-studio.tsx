@@ -66,6 +66,7 @@ import type {
   TwitchCategory,
   VideoPreset,
   VideoSettings,
+  XNativeLiveCapability,
   YouTubeBroadcastTransitionResult,
   YouTubeChannel,
   YouTubeStreamStatusResult
@@ -100,6 +101,8 @@ export type StudioContextValue = {
   youtubeChannelsLoading: boolean
   twitchCategories: TwitchCategory[]
   twitchCategorySearchPending: boolean
+  xNativeCapability: XNativeLiveCapability | null
+  xNativeCapabilityLoading: boolean
   streamMetadataDraft: StreamMetadataDraft | null
   streamMetadataValidation: StreamMetadataValidation | null
   goLivePreflight: GoLivePreflight | null
@@ -154,6 +157,7 @@ export type StudioContextValue = {
   refreshYouTubeChannels: (accountId?: string) => Promise<void>
   selectYouTubeChannel: (channelId: string, accountId?: string) => Promise<void>
   searchTwitchCategories: (query: string) => Promise<void>
+  refreshXNativeCapability: (accountId?: string) => Promise<void>
   refreshStreamMetadata: () => Promise<void>
   saveStreamMetadataDraft: () => Promise<void>
   cancelGoLiveConfirmation: () => void
@@ -282,6 +286,8 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   const [youtubeChannelsLoading, setYoutubeChannelsLoading] = useState(false)
   const [twitchCategories, setTwitchCategories] = useState<TwitchCategory[]>([])
   const [twitchCategorySearchPending, setTwitchCategorySearchPending] = useState(false)
+  const [xNativeCapability, setXNativeCapability] = useState<XNativeLiveCapability | null>(null)
+  const [xNativeCapabilityLoading, setXNativeCapabilityLoading] = useState(false)
   const [streamMetadataDraft, setStreamMetadataDraft] = useState<StreamMetadataDraft | null>(null)
   const [streamMetadataValidation, setStreamMetadataValidation] = useState<StreamMetadataValidation | null>(null)
   const [goLivePreflight, setGoLivePreflight] = useState<GoLivePreflight | null>(null)
@@ -571,6 +577,37 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       setTwitchCategories([])
     }
   }, [platformAccounts])
+
+  const refreshXNativeCapability = useCallback(
+    async (accountId?: string) => {
+      if (!client) {
+        setXNativeCapability(null)
+        return
+      }
+
+      try {
+        setLastError(null)
+        setXNativeCapabilityLoading(true)
+        const capability = await client.request<XNativeLiveCapability>('streamTargets.x.capability', { accountId })
+        setXNativeCapability(capability)
+      } catch (error) {
+        setXNativeCapability(null)
+        reportError(error)
+      } finally {
+        setXNativeCapabilityLoading(false)
+      }
+    },
+    [client, reportError]
+  )
+
+  useEffect(() => {
+    const account = platformAccounts.find((item) => item.platform === 'x')
+    if (!account) {
+      setXNativeCapability(null)
+      return
+    }
+    void refreshXNativeCapability(account.accountId)
+  }, [platformAccounts, refreshXNativeCapability])
 
   const refreshStreamMetadataForClient = useCallback(async (activeClient: BackendClient | null) => {
     if (!activeClient) {
@@ -2194,6 +2231,8 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     youtubeChannelsLoading,
     twitchCategories,
     twitchCategorySearchPending,
+    xNativeCapability,
+    xNativeCapabilityLoading,
     streamMetadataDraft,
     streamMetadataValidation,
     goLivePreflight,
@@ -2239,6 +2278,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     refreshYouTubeChannels,
     selectYouTubeChannel,
     searchTwitchCategories,
+    refreshXNativeCapability,
     refreshStreamMetadata,
     saveStreamMetadataDraft,
     cancelGoLiveConfirmation,

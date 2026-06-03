@@ -44,6 +44,7 @@ import type {
   StreamTargetSettings,
   StreamUrlMode,
   TwitchCategory,
+  XNativeLiveCapability,
   YouTubeChannel
 } from '@/lib/backend'
 import { isStreamTargetReady } from '@/lib/capture'
@@ -82,6 +83,9 @@ export function StreamingTab(): ReactElement {
     twitchCategories,
     twitchCategorySearchPending,
     searchTwitchCategories,
+    xNativeCapability,
+    xNativeCapabilityLoading,
+    refreshXNativeCapability,
     stopSession
   } = useStudio()
   const streaming = captureConfig.streaming
@@ -156,12 +160,15 @@ export function StreamingTab(): ReactElement {
             runtime={runtimeById.get(target.id)}
             target={target}
             validation={validationByPlatform.get(target.platform)}
+            xNativeCapability={xNativeCapability}
+            xNativeCapabilityLoading={xNativeCapabilityLoading}
             youtubeChannels={youtubeChannels}
             youtubeChannelsLoading={youtubeChannelsLoading}
             onConnect={connectPlatformAccount}
             onDisconnect={disconnectPlatformAccount}
             onPatch={patchStreamingTarget}
             onRefreshYouTubeChannels={refreshYouTubeChannels}
+            onRefreshXNativeCapability={refreshXNativeCapability}
             onSelectYouTubeChannel={selectYouTubeChannel}
           />
         ))}
@@ -271,12 +278,15 @@ function DestinationCard({
   disabled,
   runtime,
   validation,
+  xNativeCapability,
+  xNativeCapabilityLoading,
   youtubeChannels,
   youtubeChannelsLoading,
   onConnect,
   onDisconnect,
   onPatch,
   onRefreshYouTubeChannels,
+  onRefreshXNativeCapability,
   onSelectYouTubeChannel
 }: {
   target: StreamTargetSettings
@@ -285,12 +295,15 @@ function DestinationCard({
   disabled: boolean
   runtime?: StreamTargetRuntime
   validation?: PlatformAccountValidation
+  xNativeCapability: XNativeLiveCapability | null
+  xNativeCapabilityLoading: boolean
   youtubeChannels: YouTubeChannel[]
   youtubeChannelsLoading: boolean
   onConnect: (platform: StreamPlatform) => void
   onDisconnect: (platform: StreamPlatform) => void
   onPatch: (targetId: string, patch: Partial<StreamTargetSettings>) => void
   onRefreshYouTubeChannels: (accountId?: string) => Promise<void>
+  onRefreshXNativeCapability: (accountId?: string) => Promise<void>
   onSelectYouTubeChannel: (channelId: string, accountId?: string) => Promise<void>
 }): ReactElement {
   const ready = isStreamTargetReady(target)
@@ -366,11 +379,14 @@ function DestinationCard({
           disabled={disabled}
           platform={target.platform}
           validation={validation}
+          xNativeCapability={xNativeCapability}
+          xNativeCapabilityLoading={xNativeCapabilityLoading}
           youtubeChannels={youtubeChannels}
           youtubeChannelsLoading={youtubeChannelsLoading}
           onConnect={onConnect}
           onDisconnect={onDisconnect}
           onRefreshYouTubeChannels={onRefreshYouTubeChannels}
+          onRefreshXNativeCapability={onRefreshXNativeCapability}
           onSelectYouTubeChannel={onSelectYouTubeChannel}
         />
       ) : (
@@ -443,11 +459,14 @@ function OAuthAccountPanel({
   disabled,
   platform,
   validation,
+  xNativeCapability,
+  xNativeCapabilityLoading,
   youtubeChannels,
   youtubeChannelsLoading,
   onConnect,
   onDisconnect,
   onRefreshYouTubeChannels,
+  onRefreshXNativeCapability,
   onSelectYouTubeChannel
 }: {
   account?: PlatformAccount
@@ -455,11 +474,14 @@ function OAuthAccountPanel({
   disabled: boolean
   platform: StreamPlatform
   validation?: PlatformAccountValidation
+  xNativeCapability: XNativeLiveCapability | null
+  xNativeCapabilityLoading: boolean
   youtubeChannels: YouTubeChannel[]
   youtubeChannelsLoading: boolean
   onConnect: (platform: StreamPlatform) => void
   onDisconnect: (platform: StreamPlatform) => void
   onRefreshYouTubeChannels: (accountId?: string) => Promise<void>
+  onRefreshXNativeCapability: (accountId?: string) => Promise<void>
   onSelectYouTubeChannel: (channelId: string, accountId?: string) => Promise<void>
 }): ReactElement {
   if (!account) {
@@ -567,6 +589,49 @@ function OAuthAccountPanel({
               : 'Refresh after connecting to load channels available to this Google account.'}
           </FieldDescription>
         </Field>
+      ) : null}
+      {platform === 'x' ? (
+        <div className="flex flex-col gap-2 rounded-md bg-background/60 px-2 py-1.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Badge className="w-fit" variant={xNativeCapability?.nativeAvailable ? 'success' : 'warning'}>
+              {xNativeCapability?.nativeAvailable ? 'Native ready' : 'Partner API required'}
+            </Badge>
+            <Button
+              disabled={disabled || xNativeCapabilityLoading}
+              size="sm"
+              variant="outline"
+              onClick={() => void onRefreshXNativeCapability(account.accountId)}
+            >
+              <ArrowsClockwise data-icon="inline-start" weight="bold" />
+              {xNativeCapabilityLoading ? 'Checking' : 'Refresh'}
+            </Button>
+          </div>
+          <span className="text-xs text-muted-foreground">
+            {xNativeCapabilityLoading
+              ? 'Checking X native live capability.'
+              : (xNativeCapability?.message ?? 'X native live capability has not been checked.')}
+          </span>
+          {xNativeCapability ? (
+            <div className="flex flex-wrap gap-2 text-xs">
+              <a
+                className="text-primary underline-offset-4 hover:underline"
+                href={xNativeCapability.docsUrl}
+                rel="noreferrer"
+                target="_blank"
+              >
+                X Producer docs
+              </a>
+              <a
+                className="text-primary underline-offset-4 hover:underline"
+                href={xNativeCapability.apiOverviewUrl}
+                rel="noreferrer"
+                target="_blank"
+              >
+                X API overview
+              </a>
+            </div>
+          ) : null}
+        </div>
       ) : null}
       <Button disabled={disabled} size="sm" variant="outline" onClick={() => onDisconnect(platform)}>
         <SignOut data-icon="inline-start" weight="bold" />
