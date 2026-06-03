@@ -13,6 +13,7 @@ mod preflight;
 mod protocol;
 mod recording;
 mod repair;
+mod repair_service;
 mod scene;
 mod screen_capture;
 mod secrets;
@@ -1653,6 +1654,41 @@ async fn handle_text_message(state: &AppState, text: &str) -> ServerResponse {
                     Err(error) => {
                         ServerResponse::error(command.id, "remux-failed", error.to_string())
                     }
+                },
+                Err(error) => {
+                    ServerResponse::error(command.id, "invalid-params", error.to_string())
+                }
+            }
+        }
+        "repair.assess_file" => {
+            match serde_json::from_value::<protocol::RepairFileParams>(command.params) {
+                Ok(params) => match repair_service::assess_file(params).await {
+                    Ok(result) => ServerResponse::ok(command.id, result),
+                    Err(error) => ServerResponse::error(command.id, "repair-assess-failed", error),
+                },
+                Err(error) => {
+                    ServerResponse::error(command.id, "invalid-params", error.to_string())
+                }
+            }
+        }
+        "repair.repair_file" => {
+            match serde_json::from_value::<protocol::RepairFileParams>(command.params) {
+                Ok(params) => match repair_service::repair_file(state.clone(), params).await {
+                    Ok(status) => ServerResponse::ok(command.id, status),
+                    Err(error) => ServerResponse::error(command.id, "repair-failed", error),
+                },
+                Err(error) => {
+                    ServerResponse::error(command.id, "invalid-params", error.to_string())
+                }
+            }
+        }
+        "repair.restore_file" => {
+            match serde_json::from_value::<protocol::RepairRestoreParams>(command.params) {
+                Ok(params) => match repair_service::restore_file(params).await {
+                    Ok(restored) => {
+                        ServerResponse::ok(command.id, serde_json::json!({ "restored": restored }))
+                    }
+                    Err(error) => ServerResponse::error(command.id, "repair-restore-failed", error),
                 },
                 Err(error) => {
                     ServerResponse::error(command.id, "invalid-params", error.to_string())

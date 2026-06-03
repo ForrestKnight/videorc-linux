@@ -600,6 +600,24 @@ pub struct RemuxSessionParams {
     pub ffmpeg_path: Option<String>,
 }
 
+/// Params for the per-recording repair commands (assess / repair). The expectations let
+/// a screen-only capture avoid being flagged for "missing audio".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepairFileParams {
+    pub path: String,
+    pub ffmpeg_path: Option<String>,
+    pub expect_audio: Option<bool>,
+    pub intended_fps: Option<f64>,
+}
+
+/// Params for restoring a recording from its hidden backup.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepairRestoreParams {
+    pub path: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewSnapshotParams {
