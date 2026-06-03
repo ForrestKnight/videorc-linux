@@ -31,8 +31,14 @@ try {
     clear: () => storage.clear()
   }
 
-  const { defaultCaptureConfig, loadCaptureConfig, persistableCaptureConfig, reconcileSourceSelection, STORAGE_KEYS } =
-    require(tempModule)
+  const {
+    defaultCaptureConfig,
+    loadCaptureConfig,
+    persistableCaptureConfig,
+    reconcileSourceSelection,
+    sourceSelectionChangeMessages,
+    STORAGE_KEYS
+  } = require(tempModule)
   assert.equal(typeof reconcileSourceSelection, 'function')
 
   const devices = [
@@ -70,7 +76,8 @@ try {
     microphoneId: 'mic-old',
     microphoneName: 'Podcast Mic'
   })
-  assert.deepEqual(reconcileSourceSelection(loaded.sources, devices), {
+  const reloadedSources = reconcileSourceSelection(loaded.sources, devices)
+  assert.deepEqual(reloadedSources, {
     screenId: 'screen-new',
     screenName: 'Built-in Display',
     windowId: undefined,
@@ -80,6 +87,11 @@ try {
     microphoneId: 'mic-new',
     microphoneName: 'Podcast Mic'
   })
+  assert.deepEqual(sourceSelectionChangeMessages(loaded.sources, reloadedSources), [
+    'Capture source "Built-in Display" was restored by name because its system ID changed.',
+    'Camera "FaceTime HD Camera" was restored by name because its system ID changed.',
+    'Microphone "Podcast Mic" was restored by name because its system ID changed.'
+  ])
 
   assert.deepEqual(
     reconcileSourceSelection(
@@ -131,18 +143,16 @@ try {
     }
   )
 
+  const missingSources = {
+    screenId: 'missing-screen',
+    screenName: 'Missing Display',
+    cameraId: 'missing-camera',
+    cameraName: 'Missing Camera',
+    microphoneId: 'missing-mic',
+    microphoneName: 'Missing Mic'
+  }
   assert.deepEqual(
-    reconcileSourceSelection(
-      {
-        screenId: 'missing-screen',
-        screenName: 'Missing Display',
-        cameraId: 'missing-camera',
-        cameraName: 'Missing Camera',
-        microphoneId: 'missing-mic',
-        microphoneName: 'Missing Mic'
-      },
-      devices
-    ),
+    reconcileSourceSelection(missingSources, devices),
     {
       screenId: 'screen-new',
       screenName: 'Built-in Display',
@@ -154,6 +164,11 @@ try {
       microphoneName: 'Podcast Mic'
     }
   )
+  assert.deepEqual(sourceSelectionChangeMessages(missingSources, reconcileSourceSelection(missingSources, devices)), [
+    'Capture source "Missing Display" is unavailable, so Videorc selected "Built-in Display".',
+    'Camera "Missing Camera" is unavailable, so Videorc selected "FaceTime HD Camera".',
+    'Microphone "Missing Mic" is unavailable, so Videorc selected "Podcast Mic".'
+  ])
 
   assert.deepEqual(
     reconcileSourceSelection(

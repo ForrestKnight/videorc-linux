@@ -562,6 +562,53 @@ export function reconcileSourceSelection(sources: SourceSelection, devices: Devi
   return nextSources
 }
 
+export function sourceSelectionChangeMessages(previous: SourceSelection, next: SourceSelection): string[] {
+  const messages = [
+    sourceChangeMessage(
+      'Capture source',
+      previous.windowId ?? previous.screenId,
+      previous.windowName ?? previous.screenName,
+      next.windowId ?? next.screenId,
+      next.windowName ?? next.screenName
+    ),
+    sourceChangeMessage('Camera', previous.cameraId, previous.cameraName, next.cameraId, next.cameraName),
+    sourceChangeMessage(
+      'Microphone',
+      previous.microphoneId,
+      previous.microphoneName,
+      next.microphoneId,
+      next.microphoneName
+    )
+  ]
+  return messages.filter((message): message is string => Boolean(message))
+}
+
+function sourceChangeMessage(
+  label: string,
+  previousId: string | undefined,
+  previousName: string | undefined,
+  nextId: string | undefined,
+  nextName: string | undefined
+): string | undefined {
+  if (!previousId && !previousName) {
+    return undefined
+  }
+  if (previousId === nextId && previousName === nextName) {
+    return undefined
+  }
+
+  const previousLabel = previousName ?? previousId ?? 'saved source'
+  if (!nextId && !nextName) {
+    return `${label} "${previousLabel}" is unavailable, so it was cleared.`
+  }
+
+  const nextLabel = nextName ?? nextId ?? 'another available source'
+  if (previousName && previousName === nextName && previousId !== nextId) {
+    return `${label} "${nextLabel}" was restored by name because its system ID changed.`
+  }
+  return `${label} "${previousLabel}" is unavailable, so Videorc selected "${nextLabel}".`
+}
+
 export function startButtonLabel(recordEnabled: boolean, streamEnabled: boolean): string {
   if (recordEnabled && streamEnabled) {
     return 'Start Livestream + Record'

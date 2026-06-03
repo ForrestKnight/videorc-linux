@@ -24,6 +24,7 @@ import {
   persistableCaptureConfig,
   reconcileSourceSelection,
   rtmpDefaults,
+  sourceSelectionChangeMessages,
   STORAGE_KEYS,
   videoPresets,
   type CaptureConfig,
@@ -297,6 +298,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   const [runtimeInfo, setRuntimeInfo] = useState<RuntimeInfo | null>(null)
   const previewRequestPending = useRef(false)
   const previewRefreshQueued = useRef(false)
+  const sourceReconciliationMessages = useRef<string[]>([])
   const toastedFailedTargets = useRef<Set<string>>(new Set())
   const platformLifecycleRun = useRef(0)
   const [previewRefreshNonce, setPreviewRefreshNonce] = useState(0)
@@ -670,9 +672,17 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
         return current
       }
 
+      sourceReconciliationMessages.current.push(...sourceSelectionChangeMessages(current.sources, nextSources))
       return { ...current, sources: nextSources }
     })
   }, [deviceList])
+
+  useEffect(() => {
+    const messages = sourceReconciliationMessages.current.splice(0)
+    for (const message of new Set(messages)) {
+      toast.warning(message)
+    }
+  }, [captureConfig.sources])
 
   useEffect(() => {
     if (!connection) {
