@@ -1047,6 +1047,200 @@ pub fn repair_batch(
         .collect()
 }
 
+// --- Batch repair report (slice 12) ---
+
+/// One line in a batch repair report: a file's pre-repair verdict and issues paired
+/// with what the repair actually did. This is the record stored with the session so
+/// Diagnostics and Recording history can explain exactly why a file was accepted,
+/// repaired, or left at "not 100%".
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RepairReportEntry {
+    pub path: String,
+    pub verdict: QualityVerdict,
+    pub issues: Vec<QualityIssue>,
+    pub outcome: RepairOutcome,
+}
+
+/// Roll-up counts across a batch repair run.
+#[derive(Debug, Clone, Copy, Default, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RepairSummary {
+    pub total: usize,
+    pub already_clean: usize,
+    pub repaired: usize,
+    /// Subset of `repaired` whose video used motion interpolation (drives the
+    /// transparent "interpolated frames" badge).
+    pub interpolated: usize,
+    pub not_improved: usize,
+    pub failed: usize,
+}
+
+/// The full markdown/JSON-serialisable report for one batch repair run.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchRepairReport {
+    pub summary: RepairSummary,
+    pub entries: Vec<RepairReportEntry>,
+}
+
+/// The visible path an outcome refers to, regardless of which variant it is.
+fn outcome_path(outcome: &RepairOutcome) -> &str {
+    match outcome {
+        RepairOutcome::AlreadyClean { path }
+        | RepairOutcome::Repaired { path, .. }
+        | RepairOutcome::NotImproved { path, .. }
+        | RepairOutcome::Failed { path, .. } => path,
+    }
+}
+
+/// Pairs each scanned assessment with its repair outcome (same order as
+/// [`repair_batch`] produces) and rolls up the summary counts. Outcomes without a
+/// matching assessment still appear (with an empty issue list) so nothing is dropped.
+pub fn build_repair_report(
+    assessments: &[RecordingAssessment],
+    outcomes: &[RepairOutcome],
+) -> BatchRepairReport {
+    let mut summary = RepairSummary {
+        total: outcomes.len(),
+        ..RepairSummary::default()
+    };
+    let mut entries = Vec::with_capacity(outcomes.len());
+
+    for (index, outcome) in outcomes.iter().enumerate() {
+        match outcome {
+            RepairOutcome::AlreadyClean { .. } => summary.already_clean += 1,
+            RepairOutcome::Repaired { interpolated, .. } => {
+                summary.repaired += 1;
+                if *interpolated {
+                    summary.interpolated += 1;
+                }
+            }
+            RepairOutcome::NotImproved { .. } => summary.not_improved += 1,
+            RepairOutcome::Failed { .. } => summary.failed += 1,
+        }
+
+        let assessment = assessments.get(index);
+        entries.push(RepairReportEntry {
+            path: outcome_path(outcome).to_string(),
+            verdict: assessment
+                .map(|a| a.report.verdict)
+                .unwrap_or(QualityVerdict::NeedsReview),
+            issues: assessment
+                .map(|a| a.report.issues.clone())
+                .unwrap_or_default(),
+            outcome: outcome.clone(),
+        });
+    }
+
+    BatchRepairReport { summary, entries }
+}
+
+fn verdict_label(verdict: QualityVerdict) -> &'static str {
+    match verdict {
+        QualityVerdict::Clean => "clean",
+        QualityVerdict::Repairable => "repairable",
+        QualityVerdict::NeedsReview => "needs review",
+    }
+}
+
+/// A plain-English one-liner for a single quality issue (for the markdown report).
+fn describe_issue(issue: &QualityIssue) -> String {
+    match issue {
+        QualityIssue::MissingVideo => "missing video stream".to_string(),
+        QualityIssue::MissingAudio => "missing audio stream".to_string(),
+        QualityIssue::VariableFrameRate {
+            avg_fps,
+            nominal_fps,
+        } => format!("variable frame rate (avg {avg_fps:.2} fps vs nominal {nominal_fps:.2} fps)"),
+        QualityIssue::DroppedFrames { observed, expected } => {
+            format!("dropped frames ({observed} of ~{expected} expected)")
+        }
+        QualityIssue::AvSkew { ms } => format!("A/V skew of {ms:.0} ms"),
+        QualityIssue::OneSidedAudio { silent_channel } => {
+            format!("one-sided audio (channel {silent_channel} silent)")
+        }
+        QualityIssue::FrozenSegments {
+            count,
+            longest_seconds,
+        } => format!("{count} long freeze segment(s), longest {longest_seconds:.1}s"),
+    }
+}
+
+/// A plain-English one-liner for a repair outcome (for the markdown report).
+fn describe_outcome(outcome: &RepairOutcome) -> String {
+    match outcome {
+        RepairOutcome::AlreadyClean { .. } => "already clean — no changes".to_string(),
+        RepairOutcome::Repaired {
+            interpolated: true, ..
+        } => "repaired (interpolated frames)".to_string(),
+        RepairOutcome::Repaired { .. } => "repaired".to_string(),
+        RepairOutcome::NotImproved { reason, .. } => {
+            format!("kept original, not 100%: {reason}")
+        }
+        RepairOutcome::Failed { reason, .. } => format!("failed: {reason}"),
+    }
+}
+
+/// Renders a human-readable markdown repair report (plain summary first, then a
+/// per-file section with verdict, issues, and outcome).
+pub fn render_markdown_report(report: &BatchRepairReport) -> String {
+    let summary = &report.summary;
+    let mut out = String::new();
+    out.push_str("# Videorc Repair Report\n\n");
+    out.push_str("## Summary\n\n");
+    out.push_str(&format!("- Files scanned: {}\n", summary.total));
+    out.push_str(&format!("- Already clean: {}\n", summary.already_clean));
+    out.push_str(&format!(
+        "- Repaired: {} ({} with interpolated frames)\n",
+        summary.repaired, summary.interpolated
+    ));
+    out.push_str(&format!("- Not 100%: {}\n", summary.not_improved));
+    out.push_str(&format!("- Failed: {}\n", summary.failed));
+    out.push_str("\n## Files\n");
+    if report.entries.is_empty() {
+        out.push_str("\n_No recordings found._\n");
+    }
+    for entry in &report.entries {
+        out.push_str(&format!("\n### {}\n", entry.path));
+        out.push_str(&format!("- Verdict: {}\n", verdict_label(entry.verdict)));
+        if entry.issues.is_empty() {
+            out.push_str("- Issues: none\n");
+        } else {
+            out.push_str("- Issues:\n");
+            for issue in &entry.issues {
+                out.push_str(&format!("  - {}\n", describe_issue(issue)));
+            }
+        }
+        out.push_str(&format!(
+            "- Outcome: {}\n",
+            describe_outcome(&entry.outcome)
+        ));
+    }
+    out
+}
+
+/// Renders the report as pretty JSON (for Diagnostics / session storage).
+pub fn render_json_report(report: &BatchRepairReport) -> Result<String, String> {
+    serde_json::to_string_pretty(report)
+        .map_err(|error| format!("could not serialize repair report: {error}"))
+}
+
+/// Writes the markdown and JSON reports into `dir`, returning `(markdown, json)` paths.
+pub fn write_repair_reports(
+    dir: &Path,
+    report: &BatchRepairReport,
+) -> Result<(PathBuf, PathBuf), String> {
+    fs::create_dir_all(dir).map_err(|error| format!("could not create report dir: {error}"))?;
+    let md_path = dir.join("videorc-repair-report.md");
+    let json_path = dir.join("videorc-repair-report.json");
+    fs::write(&md_path, render_markdown_report(report))
+        .map_err(|error| format!("could not write markdown report: {error}"))?;
+    fs::write(&json_path, render_json_report(report)?)
+        .map_err(|error| format!("could not write json report: {error}"))?;
+    Ok((md_path, json_path))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1704,6 +1898,194 @@ mod tests {
         assert!(backup_path_for(&original).unwrap().exists(), "backup kept");
         assert!(restore_from_backup(&original).unwrap(), "restore works");
 
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // --- Slice 12: batch repair report ---
+
+    fn assessment(
+        path: &str,
+        verdict: QualityVerdict,
+        issues: Vec<QualityIssue>,
+    ) -> RecordingAssessment {
+        RecordingAssessment {
+            path: path.to_string(),
+            report: QualityReport { verdict, issues },
+            plan: None,
+        }
+    }
+
+    #[test]
+    fn build_report_rolls_up_summary_counts() {
+        let assessments = vec![
+            assessment("/m/a.mp4", QualityVerdict::Clean, vec![]),
+            assessment(
+                "/m/b.mp4",
+                QualityVerdict::Repairable,
+                vec![QualityIssue::OneSidedAudio { silent_channel: 1 }],
+            ),
+            assessment(
+                "/m/c.mp4",
+                QualityVerdict::Repairable,
+                vec![QualityIssue::DroppedFrames {
+                    observed: 10,
+                    expected: 100,
+                }],
+            ),
+            assessment(
+                "/m/d.mp4",
+                QualityVerdict::NeedsReview,
+                vec![QualityIssue::MissingAudio],
+            ),
+        ];
+        let outcomes = vec![
+            RepairOutcome::AlreadyClean {
+                path: "/m/a.mp4".to_string(),
+            },
+            RepairOutcome::Repaired {
+                path: "/m/b.mp4".to_string(),
+                interpolated: false,
+            },
+            RepairOutcome::Repaired {
+                path: "/m/c.mp4".to_string(),
+                interpolated: true,
+            },
+            RepairOutcome::NotImproved {
+                path: "/m/d.mp4".to_string(),
+                reason: "missing audio".to_string(),
+            },
+        ];
+
+        let report = build_repair_report(&assessments, &outcomes);
+        assert_eq!(
+            report.summary,
+            RepairSummary {
+                total: 4,
+                already_clean: 1,
+                repaired: 2,
+                interpolated: 1,
+                not_improved: 1,
+                failed: 0,
+            }
+        );
+        assert_eq!(report.entries.len(), 4);
+        // Each entry pairs the pre-repair verdict + issues with the outcome.
+        assert_eq!(report.entries[1].verdict, QualityVerdict::Repairable);
+        assert_eq!(
+            report.entries[1].issues,
+            vec![QualityIssue::OneSidedAudio { silent_channel: 1 }]
+        );
+    }
+
+    #[test]
+    fn markdown_report_describes_each_file() {
+        let report = build_repair_report(
+            &[assessment(
+                "/m/one-sided.mp4",
+                QualityVerdict::Repairable,
+                vec![QualityIssue::OneSidedAudio { silent_channel: 1 }],
+            )],
+            &[RepairOutcome::Repaired {
+                path: "/m/one-sided.mp4".to_string(),
+                interpolated: false,
+            }],
+        );
+        let md = render_markdown_report(&report);
+        assert!(md.contains("# Videorc Repair Report"));
+        assert!(md.contains("- Files scanned: 1"));
+        assert!(md.contains("- Repaired: 1"));
+        assert!(md.contains("### /m/one-sided.mp4"));
+        assert!(md.contains("one-sided audio (channel 1 silent)"));
+        assert!(md.contains("Outcome: repaired"));
+    }
+
+    #[test]
+    fn markdown_report_flags_interpolation_and_not_100() {
+        let report = build_repair_report(
+            &[
+                assessment(
+                    "/m/stutter.mp4",
+                    QualityVerdict::Repairable,
+                    vec![QualityIssue::DroppedFrames {
+                        observed: 50,
+                        expected: 300,
+                    }],
+                ),
+                assessment(
+                    "/m/broken.mp4",
+                    QualityVerdict::NeedsReview,
+                    vec![QualityIssue::MissingVideo],
+                ),
+            ],
+            &[
+                RepairOutcome::Repaired {
+                    path: "/m/stutter.mp4".to_string(),
+                    interpolated: true,
+                },
+                RepairOutcome::NotImproved {
+                    path: "/m/broken.mp4".to_string(),
+                    reason: "still not 100%".to_string(),
+                },
+            ],
+        );
+        let md = render_markdown_report(&report);
+        assert!(md.contains("repaired (interpolated frames)"));
+        assert!(md.contains("(1 with interpolated frames)"));
+        assert!(md.contains("kept original, not 100%: still not 100%"));
+    }
+
+    #[test]
+    fn markdown_report_handles_empty_batch() {
+        let report = build_repair_report(&[], &[]);
+        assert_eq!(report.summary.total, 0);
+        let md = render_markdown_report(&report);
+        assert!(md.contains("- Files scanned: 0"));
+        assert!(md.contains("_No recordings found._"));
+    }
+
+    #[test]
+    fn json_report_is_camel_case_and_parses_back() {
+        let report = build_repair_report(
+            &[assessment(
+                "/m/a.mp4",
+                QualityVerdict::Repairable,
+                vec![QualityIssue::AvSkew { ms: 320.0 }],
+            )],
+            &[RepairOutcome::Repaired {
+                path: "/m/a.mp4".to_string(),
+                interpolated: false,
+            }],
+        );
+        let json = render_json_report(&report).unwrap();
+        assert!(json.contains("\"alreadyClean\""));
+        assert!(json.contains("\"notImproved\""));
+        // RepairOutcome is internally tagged on "status" (kebab-case).
+        assert!(json.contains("\"status\": \"repaired\""));
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["summary"]["repaired"], 1);
+        assert_eq!(parsed["entries"][0]["path"], "/m/a.mp4");
+    }
+
+    #[test]
+    fn write_repair_reports_writes_markdown_and_json() {
+        let dir = scratch_dir("report-write");
+        let report = build_repair_report(
+            &[assessment("/m/a.mp4", QualityVerdict::Clean, vec![])],
+            &[RepairOutcome::AlreadyClean {
+                path: "/m/a.mp4".to_string(),
+            }],
+        );
+        let (md_path, json_path) = write_repair_reports(&dir, &report).unwrap();
+        assert!(md_path.exists());
+        assert!(json_path.exists());
+        assert!(
+            fs::read_to_string(&md_path)
+                .unwrap()
+                .contains("# Videorc Repair Report")
+        );
+        let parsed: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&json_path).unwrap()).unwrap();
+        assert_eq!(parsed["summary"]["alreadyClean"], 1);
         let _ = fs::remove_dir_all(&dir);
     }
 }
