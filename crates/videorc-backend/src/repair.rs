@@ -1323,6 +1323,139 @@ pub fn gate_recording(
     }
 }
 
+// --- Persistent repair jobs (slice 9) ---
+
+/// Lifecycle of a persisted repair job. `Cancelled` and `Failed` are terminal and never
+/// imply the file is good — only `Completed` carries the actual repair outcome, and even
+/// then the outcome itself says whether the file reached 100%.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RepairJobStatus {
+    Pending,
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+impl RepairJobStatus {
+    /// The string persisted in the `status` column (stable, queryable).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RepairJobStatus::Pending => "pending",
+            RepairJobStatus::Running => "running",
+            RepairJobStatus::Completed => "completed",
+            RepairJobStatus::Failed => "failed",
+            RepairJobStatus::Cancelled => "cancelled",
+        }
+    }
+
+    /// Parses a persisted status string, defaulting unknown values to `Pending` so a job
+    /// is retried rather than silently lost.
+    pub fn from_db(value: &str) -> RepairJobStatus {
+        match value {
+            "running" => RepairJobStatus::Running,
+            "completed" => RepairJobStatus::Completed,
+            "failed" => RepairJobStatus::Failed,
+            "cancelled" => RepairJobStatus::Cancelled,
+            _ => RepairJobStatus::Pending,
+        }
+    }
+
+    /// Whether a job in this state should be picked up and resumed on next launch. A job
+    /// caught mid-run (`Running`) when the app quit is resumable — it is re-analyzed and
+    /// re-run from scratch, which is safe because repair is backup-then-validate.
+    pub fn is_resumable(self) -> bool {
+        matches!(self, RepairJobStatus::Pending | RepairJobStatus::Running)
+    }
+}
+
+/// A persisted repair job: enough to resume the work after an app restart. The repair
+/// plan is intentionally NOT stored — on resume the file is re-analyzed so the plan
+/// always reflects the file's current state. The `outcome` is kept as opaque JSON for
+/// history/reporting without coupling the schema to the outcome enum's shape.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RepairJob {
+    pub id: String,
+    pub file_path: String,
+    pub status: RepairJobStatus,
+    pub intended_fps: Option<f64>,
+    pub expect_audio: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl RepairJob {
+    /// A fresh pending job for a file, stamping both timestamps with `now`.
+    pub fn pending(
+        id: String,
+        file_path: String,
+        expectations: &QualityExpectations,
+        now: String,
+    ) -> RepairJob {
+        RepairJob {
+            id,
+            file_path,
+            status: RepairJobStatus::Pending,
+            intended_fps: expectations.intended_fps,
+            expect_audio: expectations.expect_audio,
+            outcome: None,
+            reason: None,
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
+
+    /// The analyzer expectations this job was created with.
+    pub fn expectations(&self) -> QualityExpectations {
+        QualityExpectations {
+            intended_fps: self.intended_fps,
+            expect_audio: self.expect_audio,
+        }
+    }
+
+    pub fn mark_running(&mut self, now: String) {
+        self.status = RepairJobStatus::Running;
+        self.updated_at = now;
+    }
+
+    /// Records a finished repair outcome and moves the job to `Completed`. The outcome
+    /// itself still reports whether the file reached 100%.
+    pub fn complete(&mut self, outcome: &RepairOutcome, now: String) {
+        self.status = RepairJobStatus::Completed;
+        self.outcome = serde_json::to_value(outcome).ok();
+        self.updated_at = now;
+    }
+
+    /// Records a finished post-recording gate verdict and moves the job to `Completed`.
+    /// The job ran to completion even when the verdict is "not 100%" or "failed" — that
+    /// is a property of the file, captured in the stored outcome, not of the job.
+    pub fn complete_with_gate(&mut self, status: &GateStatus, now: String) {
+        self.status = RepairJobStatus::Completed;
+        self.outcome = serde_json::to_value(status).ok();
+        self.updated_at = now;
+    }
+
+    pub fn fail(&mut self, reason: String, now: String) {
+        self.status = RepairJobStatus::Failed;
+        self.reason = Some(reason);
+        self.updated_at = now;
+    }
+
+    /// Cancels the job. Cancellation NEVER marks the file as good — it only records the
+    /// cancelled state and clears any provisional outcome so nothing reads as success.
+    pub fn cancel(&mut self, now: String) {
+        self.status = RepairJobStatus::Cancelled;
+        self.outcome = None;
+        self.updated_at = now;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2302,5 +2435,111 @@ mod tests {
         );
         assert!(backup_path_for(&path).unwrap().exists(), "backup kept");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    // --- Slice 9: persistent repair jobs ---
+
+    fn sample_expectations() -> QualityExpectations {
+        QualityExpectations {
+            intended_fps: Some(30.0),
+            expect_audio: true,
+        }
+    }
+
+    #[test]
+    fn job_status_db_strings_round_trip() {
+        for status in [
+            RepairJobStatus::Pending,
+            RepairJobStatus::Running,
+            RepairJobStatus::Completed,
+            RepairJobStatus::Failed,
+            RepairJobStatus::Cancelled,
+        ] {
+            assert_eq!(RepairJobStatus::from_db(status.as_str()), status);
+        }
+        // Unknown values default to Pending so a job is retried, never lost.
+        assert_eq!(RepairJobStatus::from_db("bogus"), RepairJobStatus::Pending);
+    }
+
+    #[test]
+    fn only_pending_and_running_jobs_are_resumable() {
+        assert!(RepairJobStatus::Pending.is_resumable());
+        assert!(RepairJobStatus::Running.is_resumable());
+        assert!(!RepairJobStatus::Completed.is_resumable());
+        assert!(!RepairJobStatus::Failed.is_resumable());
+        assert!(!RepairJobStatus::Cancelled.is_resumable());
+    }
+
+    #[test]
+    fn job_lifecycle_running_then_complete_records_outcome() {
+        let mut job = RepairJob::pending(
+            "job-1".to_string(),
+            "/m/a.mp4".to_string(),
+            &sample_expectations(),
+            "t0".to_string(),
+        );
+        assert_eq!(job.status, RepairJobStatus::Pending);
+        assert_eq!(job.expectations().intended_fps, Some(30.0));
+        assert!(job.expectations().expect_audio);
+
+        job.mark_running("t1".to_string());
+        assert_eq!(job.status, RepairJobStatus::Running);
+
+        job.complete(
+            &RepairOutcome::Repaired {
+                path: "/m/a.mp4".to_string(),
+                interpolated: false,
+            },
+            "t2".to_string(),
+        );
+        assert_eq!(job.status, RepairJobStatus::Completed);
+        assert_eq!(job.updated_at, "t2");
+        let outcome = job.outcome.expect("outcome stored");
+        assert_eq!(outcome["status"], "repaired");
+    }
+
+    #[test]
+    fn cancelling_a_job_never_reads_as_good() {
+        let mut job = RepairJob::pending(
+            "job-2".to_string(),
+            "/m/b.mp4".to_string(),
+            &sample_expectations(),
+            "t0".to_string(),
+        );
+        // Even after a provisional outcome was recorded, cancelling clears it so nothing
+        // downstream can mistake the file for repaired.
+        job.complete(
+            &RepairOutcome::Repaired {
+                path: "/m/b.mp4".to_string(),
+                interpolated: false,
+            },
+            "t1".to_string(),
+        );
+        job.cancel("t2".to_string());
+        assert_eq!(job.status, RepairJobStatus::Cancelled);
+        assert!(
+            job.outcome.is_none(),
+            "cancel clears any provisional outcome"
+        );
+        assert!(!job.status.is_resumable());
+    }
+
+    #[test]
+    fn job_serializes_camel_case_with_kebab_status() {
+        let mut job = RepairJob::pending(
+            "job-3".to_string(),
+            "/m/c.mp4".to_string(),
+            &sample_expectations(),
+            "t0".to_string(),
+        );
+        job.fail("ffmpeg exploded".to_string(), "t1".to_string());
+        let json = serde_json::to_string(&job).unwrap();
+        assert!(json.contains("\"filePath\":\"/m/c.mp4\""));
+        assert!(json.contains("\"expectAudio\":true"));
+        assert!(json.contains("\"status\":\"failed\""));
+        assert!(json.contains("\"reason\":\"ffmpeg exploded\""));
+
+        let parsed: RepairJob = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, job);
     }
 }

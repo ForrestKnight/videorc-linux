@@ -39,7 +39,9 @@ use crate::protocol::{
     RtmpSettings, SideBySideCameraSide, SideBySideSplit, StartSessionParams, StreamHealth,
     VideoPreset, VideoSettings,
 };
-use crate::repair::{GateStatus, QualityExpectations, QualityThresholds, gate_recording};
+use crate::repair::{
+    GateStatus, QualityExpectations, QualityThresholds, RepairJob, gate_recording,
+};
 use crate::screen_capture::{parse_screencapturekit_display_id, parse_screencapturekit_window_id};
 use crate::secrets;
 use crate::state::AppState;
@@ -1828,11 +1830,13 @@ async fn monitor_session(
     restart_idle_live_preview_if_desired(state).await;
 }
 
-/// Runs the post-recording quality gate (slice 8) off the hot path: probes the
-/// finalized file and, if it is not already clean, attempts a backup-safe repair, then
-/// reports the verdict as a health event. Because the recording is already marked
-/// complete, this never blocks finalization, and the visible file is only ever replaced
-/// by a validated better version (with the original kept in a hidden backup).
+/// Runs the post-recording quality gate (slices 8 & 9) off the hot path: persists a
+/// repair job, probes the finalized file and — if it is not already clean — attempts a
+/// backup-safe repair, then reports the verdict as a health event and records the
+/// outcome on the job. Because the recording is already marked complete, this never
+/// blocks finalization, and the visible file is only ever replaced by a validated better
+/// version (with the original kept in a hidden backup). The persisted job is what lets an
+/// interrupted check resume on the next launch.
 fn spawn_post_recording_gate(
     state: AppState,
     session_id: String,
@@ -1842,87 +1846,169 @@ fn spawn_post_recording_gate(
 ) {
     tokio::spawn(async move {
         let path_str = final_path.display().to_string();
+        let expectations = QualityExpectations {
+            intended_fps: gate.intended_fps,
+            expect_audio: gate.expect_audio,
+        };
+        let mut job = RepairJob::pending(
+            Uuid::new_v4().to_string(),
+            path_str.clone(),
+            &expectations,
+            Utc::now().to_rfc3339(),
+        );
+        job.mark_running(Utc::now().to_rfc3339());
+        let _ = state.database.upsert_repair_job(&job);
+
         state.emit_log(
             "info",
             format!("Running post-recording quality check on {path_str}."),
         );
 
-        let probe_ffmpeg = ffmpeg_path.clone();
-        let probe_path = path_str.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            let ffprobe_path = ffprobe_path_for(&probe_ffmpeg);
-            gate_recording(
-                &probe_ffmpeg,
-                &ffprobe_path,
-                &probe_path,
-                &QualityThresholds::default(),
-                &QualityExpectations {
-                    intended_fps: gate.intended_fps,
-                    expect_audio: gate.expect_audio,
-                },
-            )
-        })
-        .await;
-
-        let status = match result {
-            Ok(status) => status,
+        match run_quality_gate(ffmpeg_path, path_str, expectations).await {
+            Ok(status) => {
+                emit_gate_health(&state, Some(&session_id), &status);
+                job.complete_with_gate(&status, Utc::now().to_rfc3339());
+            }
             Err(error) => {
                 state.emit_log(
                     "warn",
                     format!("Post-recording quality check could not run: {error}"),
                 );
-                return;
-            }
-        };
-
-        match status {
-            GateStatus::Ready { .. } => {
-                let _ = emit_health_event(
-                    &state,
-                    Some(&session_id),
-                    HealthLevel::Info,
-                    "recording-quality-passed",
-                    "Recording passed the automated quality check.",
-                );
-            }
-            GateStatus::Repaired { interpolated, .. } => {
-                let message = if interpolated {
-                    "Recording was automatically repaired (interpolated frames)."
-                } else {
-                    "Recording was automatically repaired to pass the quality check."
-                };
-                let _ = emit_health_event(
-                    &state,
-                    Some(&session_id),
-                    HealthLevel::Info,
-                    "recording-quality-repaired",
-                    message,
-                );
-            }
-            GateStatus::NotHundredPercent { reasons, .. } => {
-                let message = format!(
-                    "Recording could not be brought to 100%: {}",
-                    reasons.join("; ")
-                );
-                let _ = emit_health_event(
-                    &state,
-                    Some(&session_id),
-                    HealthLevel::Warn,
-                    "recording-quality-not-100",
-                    &message,
-                );
-            }
-            GateStatus::Failed { reason, .. } => {
-                let _ = emit_health_event(
-                    &state,
-                    Some(&session_id),
-                    HealthLevel::Warn,
-                    "recording-quality-check-failed",
-                    &format!("Post-recording quality check failed: {reason}"),
+                job.fail(
+                    format!("quality check task failed: {error}"),
+                    Utc::now().to_rfc3339(),
                 );
             }
         }
+        let _ = state.database.upsert_repair_job(&job);
     });
+}
+
+/// Runs the (blocking) quality gate for a file on a blocking thread so it never stalls
+/// the async runtime.
+async fn run_quality_gate(
+    ffmpeg_path: String,
+    file_path: String,
+    expectations: QualityExpectations,
+) -> std::result::Result<GateStatus, tokio::task::JoinError> {
+    tokio::task::spawn_blocking(move || {
+        let ffprobe_path = ffprobe_path_for(&ffmpeg_path);
+        gate_recording(
+            &ffmpeg_path,
+            &ffprobe_path,
+            &file_path,
+            &QualityThresholds::default(),
+            &expectations,
+        )
+    })
+    .await
+}
+
+/// Emits the health event that matches a gate verdict (passed / repaired / not 100% /
+/// check failed). `session_id` is `None` for resume runs, which have no live session.
+fn emit_gate_health(state: &AppState, session_id: Option<&str>, status: &GateStatus) {
+    match status {
+        GateStatus::Ready { .. } => {
+            let _ = emit_health_event(
+                state,
+                session_id,
+                HealthLevel::Info,
+                "recording-quality-passed",
+                "Recording passed the automated quality check.",
+            );
+        }
+        GateStatus::Repaired { interpolated, .. } => {
+            let message = if *interpolated {
+                "Recording was automatically repaired (interpolated frames)."
+            } else {
+                "Recording was automatically repaired to pass the quality check."
+            };
+            let _ = emit_health_event(
+                state,
+                session_id,
+                HealthLevel::Info,
+                "recording-quality-repaired",
+                message,
+            );
+        }
+        GateStatus::NotHundredPercent { reasons, .. } => {
+            let message = format!(
+                "Recording could not be brought to 100%: {}",
+                reasons.join("; ")
+            );
+            let _ = emit_health_event(
+                state,
+                session_id,
+                HealthLevel::Warn,
+                "recording-quality-not-100",
+                &message,
+            );
+        }
+        GateStatus::Failed { reason, .. } => {
+            let _ = emit_health_event(
+                state,
+                session_id,
+                HealthLevel::Warn,
+                "recording-quality-check-failed",
+                &format!("Post-recording quality check failed: {reason}"),
+            );
+        }
+    }
+}
+
+/// On launch, re-runs any repair jobs left unfinished (pending or running) when the app
+/// last quit. Each job is re-analyzed from scratch — the stored plan is intentionally not
+/// trusted — and its result is persisted, so an interrupted repair always converges to a
+/// final, recorded state. Backup-then-validate keeps a half-run repair from corrupting
+/// the visible file, and re-running a job whose file is already clean is a cheap no-op.
+pub async fn resume_pending_repair_jobs(state: AppState) {
+    let jobs = match state.database.incomplete_repair_jobs() {
+        Ok(jobs) => jobs,
+        Err(error) => {
+            state.emit_log(
+                "warn",
+                format!("Could not load repair jobs to resume: {error}"),
+            );
+            return;
+        }
+    };
+    if jobs.is_empty() {
+        return;
+    }
+
+    state.emit_log(
+        "info",
+        format!("Resuming {} interrupted repair job(s).", jobs.len()),
+    );
+    let ffmpeg_path = resolve_ffmpeg_path(None);
+
+    for mut job in jobs {
+        job.mark_running(Utc::now().to_rfc3339());
+        let _ = state.database.upsert_repair_job(&job);
+
+        let gate = run_quality_gate(
+            ffmpeg_path.clone(),
+            job.file_path.clone(),
+            job.expectations(),
+        );
+        match gate.await {
+            Ok(status) => {
+                emit_gate_health(&state, None, &status);
+                job.complete_with_gate(&status, Utc::now().to_rfc3339());
+            }
+            Err(error) => {
+                state.emit_log(
+                    "warn",
+                    format!("Could not resume repair for {}: {error}", job.file_path),
+                );
+                job.fail(
+                    format!("resume task failed: {error}"),
+                    Utc::now().to_rfc3339(),
+                );
+            }
+        }
+        let _ = state.database.upsert_repair_job(&job);
+    }
 }
 
 async fn export_completed_recording_to_mp4(

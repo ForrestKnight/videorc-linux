@@ -14,6 +14,7 @@ use crate::protocol::{
     OutputSettings, SessionLogEntry, SessionSummary, SourceSelection, StreamScreen,
     StreamScreenStatus,
 };
+use crate::repair::{RepairJob, RepairJobStatus};
 use crate::streaming::{
     PlatformAccount, PlatformAccountStatus, StreamMetadataDraft, StreamPlatform,
     UpsertPlatformAccount, default_stream_metadata_draft, stream_platform_from_id,
@@ -945,6 +946,18 @@ impl Database {
                 updated_at TEXT NOT NULL,
                 status TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS repair_jobs (
+                id TEXT PRIMARY KEY,
+                file_path TEXT NOT NULL,
+                status TEXT NOT NULL,
+                intended_fps REAL,
+                expect_audio INTEGER NOT NULL,
+                outcome_json TEXT,
+                reason TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
             ",
         )?;
         ensure_column(&conn, "sessions", "container", "container TEXT")?;
@@ -956,6 +969,39 @@ impl Database {
             "permission_pane TEXT",
         )?;
         Ok(())
+    }
+
+    /// Inserts or replaces a persisted repair job so it survives an app restart.
+    pub fn upsert_repair_job(&self, job: &RepairJob) -> Result<()> {
+        let conn = self.lock()?;
+        let outcome_json = match &job.outcome {
+            Some(value) => Some(serde_json::to_string(value)?),
+            None => None,
+        };
+        conn.execute(
+            "INSERT OR REPLACE INTO repair_jobs
+                (id, file_path, status, intended_fps, expect_audio, outcome_json, reason, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                job.id,
+                job.file_path,
+                job.status.as_str(),
+                job.intended_fps,
+                job.expect_audio as i64,
+                outcome_json,
+                job.reason,
+                job.created_at,
+                job.updated_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Repair jobs that were not finished (pending or running) — the set to resume on the
+    /// next launch. Listing all jobs and deleting them are added with the history UI.
+    pub fn incomplete_repair_jobs(&self) -> Result<Vec<RepairJob>> {
+        let conn = self.lock()?;
+        query_repair_jobs(&conn, "WHERE status IN ('pending', 'running')")
     }
 
     fn ai_artifacts_for_session_locked(
@@ -1054,6 +1100,33 @@ impl Database {
             .lock()
             .map_err(|_| anyhow::anyhow!("SQLite connection lock was poisoned"))
     }
+}
+
+fn query_repair_jobs(conn: &Connection, filter: &str) -> Result<Vec<RepairJob>> {
+    let sql = format!(
+        "SELECT id, file_path, status, intended_fps, expect_audio, outcome_json, reason, created_at, updated_at
+         FROM repair_jobs {filter} ORDER BY created_at DESC"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map([], |row| {
+        let status: String = row.get(2)?;
+        let expect_audio: i64 = row.get(4)?;
+        let outcome_json: Option<String> = row.get(5)?;
+        Ok(RepairJob {
+            id: row.get(0)?,
+            file_path: row.get(1)?,
+            status: RepairJobStatus::from_db(&status),
+            intended_fps: row.get(3)?,
+            expect_audio: expect_audio != 0,
+            outcome: outcome_json
+                .as_deref()
+                .and_then(|value| serde_json::from_str(value).ok()),
+            reason: row.get(6)?,
+            created_at: row.get(7)?,
+            updated_at: row.get(8)?,
+        })
+    })?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 }
 
 fn ensure_column(conn: &Connection, table: &str, column: &str, definition: &str) -> Result<()> {
@@ -1769,5 +1842,73 @@ mod tests {
             })
             .unwrap_err();
         assert!(error.to_string().contains("label"));
+    }
+
+    #[test]
+    fn incomplete_repair_jobs_round_trip_and_exclude_finished() {
+        use crate::repair::{QualityExpectations, RepairOutcome};
+
+        let database = test_database();
+        let expectations = QualityExpectations {
+            intended_fps: Some(30.0),
+            expect_audio: true,
+        };
+
+        let pending = RepairJob::pending(
+            "job-pending".to_string(),
+            "/m/a.mp4".to_string(),
+            &expectations,
+            "t0".to_string(),
+        );
+        let mut running = RepairJob::pending(
+            "job-running".to_string(),
+            "/m/b.mp4".to_string(),
+            &expectations,
+            "t0".to_string(),
+        );
+        running.mark_running("t1".to_string());
+        let mut done = RepairJob::pending(
+            "job-done".to_string(),
+            "/m/c.mp4".to_string(),
+            &expectations,
+            "t0".to_string(),
+        );
+        done.complete(
+            &RepairOutcome::Repaired {
+                path: "/m/c.mp4".to_string(),
+                interpolated: true,
+            },
+            "t1".to_string(),
+        );
+
+        database.upsert_repair_job(&pending).unwrap();
+        database.upsert_repair_job(&running).unwrap();
+        database.upsert_repair_job(&done).unwrap();
+
+        // Only pending + running come back for resume; the completed job is excluded.
+        let mut incomplete = database.incomplete_repair_jobs().unwrap();
+        incomplete.sort_by(|a, b| a.id.cmp(&b.id));
+        let ids: Vec<_> = incomplete.iter().map(|job| job.id.clone()).collect();
+        assert_eq!(
+            ids,
+            vec!["job-pending".to_string(), "job-running".to_string()]
+        );
+
+        // Fields round-trip through the DB.
+        let running_back = incomplete
+            .iter()
+            .find(|job| job.id == "job-running")
+            .unwrap();
+        assert_eq!(running_back.status, RepairJobStatus::Running);
+        assert_eq!(running_back.intended_fps, Some(30.0));
+        assert!(running_back.expect_audio);
+
+        // Upsert updates in place: cancelling the pending job removes it from the set.
+        let mut cancelled = pending;
+        cancelled.cancel("t2".to_string());
+        database.upsert_repair_job(&cancelled).unwrap();
+        let incomplete = database.incomplete_repair_jobs().unwrap();
+        assert_eq!(incomplete.len(), 1);
+        assert_eq!(incomplete[0].id, "job-running");
     }
 }

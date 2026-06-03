@@ -45,8 +45,8 @@ use protocol::{
 };
 use recording::{
     create_preview_snapshot, idle_status, live_preview_status, preview_file_path, remux_session,
-    shutdown_capture_processes, start_live_preview, start_session, stop_live_preview,
-    stop_recording, subscribe_live_preview_frames,
+    resume_pending_repair_jobs, shutdown_capture_processes, start_live_preview, start_session,
+    stop_live_preview, stop_recording, subscribe_live_preview_frames,
 };
 use scene::{
     nudge_source, reorder_sources, reset_source_transform, scene_from_capture_config,
@@ -120,6 +120,8 @@ async fn main() -> Result<()> {
     std::io::stdout().flush()?;
 
     state.emit_log("info", "Videorc backend ready.");
+    // Resume any repair jobs that were interrupted by a previous quit (slice 9).
+    tokio::spawn(resume_pending_repair_jobs(state.clone()));
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal(state.clone()))
         .await?;
