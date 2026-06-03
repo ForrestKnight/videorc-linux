@@ -1,4 +1,5 @@
 import {
+  ArrowsClockwise,
   Broadcast,
   CheckCircle,
   FloppyDisk,
@@ -40,7 +41,8 @@ import type {
   StreamPrivacy,
   StreamTargetRuntime,
   StreamTargetSettings,
-  StreamUrlMode
+  StreamUrlMode,
+  YouTubeChannel
 } from '@/lib/backend'
 import { isStreamTargetReady } from '@/lib/capture'
 
@@ -63,8 +65,12 @@ export function StreamingTab(): ReactElement {
     patchStreamingTarget,
     platformAccountValidations,
     platformAccounts,
+    youtubeChannels,
+    youtubeChannelsLoading,
+    refreshYouTubeChannels,
     oauthProviderCredentials,
     saveStreamMetadataDraft,
+    selectYouTubeChannel,
     health,
     isSessionActive,
     streamMetadataDraft,
@@ -145,9 +151,13 @@ export function StreamingTab(): ReactElement {
             runtime={runtimeById.get(target.id)}
             target={target}
             validation={validationByPlatform.get(target.platform)}
+            youtubeChannels={youtubeChannels}
+            youtubeChannelsLoading={youtubeChannelsLoading}
             onConnect={connectPlatformAccount}
             onDisconnect={disconnectPlatformAccount}
             onPatch={patchStreamingTarget}
+            onRefreshYouTubeChannels={refreshYouTubeChannels}
+            onSelectYouTubeChannel={selectYouTubeChannel}
           />
         ))}
       </div>
@@ -253,9 +263,13 @@ function DestinationCard({
   disabled,
   runtime,
   validation,
+  youtubeChannels,
+  youtubeChannelsLoading,
   onConnect,
   onDisconnect,
-  onPatch
+  onPatch,
+  onRefreshYouTubeChannels,
+  onSelectYouTubeChannel
 }: {
   target: StreamTargetSettings
   account?: PlatformAccount
@@ -263,9 +277,13 @@ function DestinationCard({
   disabled: boolean
   runtime?: StreamTargetRuntime
   validation?: PlatformAccountValidation
+  youtubeChannels: YouTubeChannel[]
+  youtubeChannelsLoading: boolean
   onConnect: (platform: StreamPlatform) => void
   onDisconnect: (platform: StreamPlatform) => void
   onPatch: (targetId: string, patch: Partial<StreamTargetSettings>) => void
+  onRefreshYouTubeChannels: (accountId?: string) => Promise<void>
+  onSelectYouTubeChannel: (channelId: string, accountId?: string) => Promise<void>
 }): ReactElement {
   const ready = isStreamTargetReady(target)
   const fullUrl = target.urlMode === 'full-url'
@@ -340,8 +358,12 @@ function DestinationCard({
           disabled={disabled}
           platform={target.platform}
           validation={validation}
+          youtubeChannels={youtubeChannels}
+          youtubeChannelsLoading={youtubeChannelsLoading}
           onConnect={onConnect}
           onDisconnect={onDisconnect}
+          onRefreshYouTubeChannels={onRefreshYouTubeChannels}
+          onSelectYouTubeChannel={onSelectYouTubeChannel}
         />
       ) : (
         <>
@@ -413,16 +435,24 @@ function OAuthAccountPanel({
   disabled,
   platform,
   validation,
+  youtubeChannels,
+  youtubeChannelsLoading,
   onConnect,
-  onDisconnect
+  onDisconnect,
+  onRefreshYouTubeChannels,
+  onSelectYouTubeChannel
 }: {
   account?: PlatformAccount
   credentials?: OAuthProviderCredentialStatus
   disabled: boolean
   platform: StreamPlatform
   validation?: PlatformAccountValidation
+  youtubeChannels: YouTubeChannel[]
+  youtubeChannelsLoading: boolean
   onConnect: (platform: StreamPlatform) => void
   onDisconnect: (platform: StreamPlatform) => void
+  onRefreshYouTubeChannels: (accountId?: string) => Promise<void>
+  onSelectYouTubeChannel: (channelId: string, accountId?: string) => Promise<void>
 }): ReactElement {
   if (!account) {
     const connectDisabled = disabled || credentials?.ready === false
@@ -446,6 +476,19 @@ function OAuthAccountPanel({
       </div>
     )
   }
+
+  const youtubeChannelOptions =
+    platform === 'youtube' && !youtubeChannels.some((channel) => channel.channelId === account.accountId)
+      ? [
+          {
+            channelId: account.accountId,
+            title: account.accountLabel,
+            handle: account.accountHandle,
+            avatarUrl: account.avatarUrl
+          },
+          ...youtubeChannels
+        ]
+      : youtubeChannels
 
   return (
     <div className="flex flex-col gap-2 rounded-lg border bg-muted/30 p-3">
@@ -479,6 +522,44 @@ function OAuthAccountPanel({
           <span className="text-xs text-muted-foreground">No granted scopes reported.</span>
         )}
       </div>
+      {platform === 'youtube' ? (
+        <Field>
+          <FieldLabel>YouTube channel</FieldLabel>
+          <div className="flex gap-2">
+            <Select
+              disabled={disabled || youtubeChannelsLoading || youtubeChannelOptions.length === 0}
+              value={account.accountId}
+              onValueChange={(channelId) => void onSelectYouTubeChannel(channelId, account.accountId)}
+            >
+              <SelectTrigger className="min-w-0 flex-1">
+                <SelectValue placeholder={youtubeChannelsLoading ? 'Loading channels' : 'Select channel'} />
+              </SelectTrigger>
+              <SelectContent>
+                {youtubeChannelOptions.map((channel) => (
+                  <SelectItem key={channel.channelId} value={channel.channelId}>
+                    {channel.title}
+                    {channel.handle ? ` (${channel.handle})` : ''}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              disabled={disabled || youtubeChannelsLoading}
+              size="sm"
+              variant="outline"
+              onClick={() => void onRefreshYouTubeChannels(account.accountId)}
+            >
+              <ArrowsClockwise data-icon="inline-start" weight="bold" />
+              {youtubeChannelsLoading ? 'Loading' : 'Refresh'}
+            </Button>
+          </div>
+          <FieldDescription>
+            {youtubeChannels.length
+              ? 'Switching channels clears prepared YouTube ingest state for the previous channel.'
+              : 'Refresh after connecting to load channels available to this Google account.'}
+          </FieldDescription>
+        </Field>
+      ) : null}
       <Button disabled={disabled} size="sm" variant="outline" onClick={() => onDisconnect(platform)}>
         <SignOut data-icon="inline-start" weight="bold" />
         Disconnect

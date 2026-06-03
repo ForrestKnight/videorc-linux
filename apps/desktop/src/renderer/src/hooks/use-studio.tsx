@@ -66,6 +66,7 @@ import type {
   VideoPreset,
   VideoSettings,
   YouTubeBroadcastTransitionResult,
+  YouTubeChannel,
   YouTubeStreamStatusResult
 } from '@/lib/backend'
 import {
@@ -94,6 +95,8 @@ export type StudioContextValue = {
   platformAccounts: PlatformAccount[]
   platformAccountValidations: PlatformAccountValidation[]
   oauthProviderCredentials: OAuthProviderCredentialStatus[]
+  youtubeChannels: YouTubeChannel[]
+  youtubeChannelsLoading: boolean
   streamMetadataDraft: StreamMetadataDraft | null
   streamMetadataValidation: StreamMetadataValidation | null
   goLivePreflight: GoLivePreflight | null
@@ -145,6 +148,8 @@ export type StudioContextValue = {
   validatePlatformAccounts: () => Promise<PlatformAccountValidation[]>
   connectPlatformAccount: (platform: PlatformAccount['platform']) => Promise<void>
   disconnectPlatformAccount: (platform: PlatformAccount['platform']) => Promise<void>
+  refreshYouTubeChannels: (accountId?: string) => Promise<void>
+  selectYouTubeChannel: (channelId: string, accountId?: string) => Promise<void>
   refreshStreamMetadata: () => Promise<void>
   saveStreamMetadataDraft: () => Promise<void>
   cancelGoLiveConfirmation: () => void
@@ -269,6 +274,8 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   const [platformAccounts, setPlatformAccounts] = useState<PlatformAccount[]>([])
   const [platformAccountValidations, setPlatformAccountValidations] = useState<PlatformAccountValidation[]>([])
   const [oauthProviderCredentials, setOauthProviderCredentials] = useState<OAuthProviderCredentialStatus[]>([])
+  const [youtubeChannels, setYoutubeChannels] = useState<YouTubeChannel[]>([])
+  const [youtubeChannelsLoading, setYoutubeChannelsLoading] = useState(false)
   const [streamMetadataDraft, setStreamMetadataDraft] = useState<StreamMetadataDraft | null>(null)
   const [streamMetadataValidation, setStreamMetadataValidation] = useState<StreamMetadataValidation | null>(null)
   const [goLivePreflight, setGoLivePreflight] = useState<GoLivePreflight | null>(null)
@@ -442,6 +449,88 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       return []
     }
   }, [client, reportError, validatePlatformAccountsForClient])
+
+  const refreshYouTubeChannels = useCallback(
+    async (accountId?: string) => {
+      if (!client) {
+        setYoutubeChannels([])
+        return
+      }
+
+      try {
+        setLastError(null)
+        setYoutubeChannelsLoading(true)
+        const result = await client.request<{ channels: YouTubeChannel[] }>('platformAccounts.youtube.channels', {
+          accountId
+        })
+        setYoutubeChannels(result.channels)
+      } catch (error) {
+        setYoutubeChannels([])
+        reportError(error)
+      } finally {
+        setYoutubeChannelsLoading(false)
+      }
+    },
+    [client, reportError]
+  )
+
+  const selectYouTubeChannel = useCallback(
+    async (channelId: string, accountId?: string) => {
+      if (!client || wsStatus !== 'connected') {
+        toast.error('Backend socket is not connected.')
+        return
+      }
+
+      try {
+        setLastError(null)
+        const selected = await client.request<PlatformAccount>('platformAccounts.youtube.selectChannel', {
+          accountId,
+          channelId
+        })
+        await Promise.all([refreshPlatformAccountsForClient(client), validatePlatformAccountsForClient(client)])
+        setCaptureConfig((current) => {
+          const targets = current.streaming.targets.map((target) => {
+            if (target.platform !== 'youtube') {
+              return target
+            }
+            const sameAccount = target.accountId === selected.accountId
+            return {
+              ...target,
+              accountId: selected.accountId,
+              accountLabel: selected.accountLabel,
+              streamKeySecretRef: sameAccount ? target.streamKeySecretRef : undefined,
+              streamKeyPresent: sameAccount ? target.streamKeyPresent : false,
+              platformBroadcastId: sameAccount ? target.platformBroadcastId : undefined,
+              platformStreamId: sameAccount ? target.platformStreamId : undefined,
+              status: sameAccount ? target.status : undefined
+            }
+          })
+          return bridgeStreamingToLegacy({ ...current, streaming: { ...current.streaming, targets } })
+        })
+        await refreshYouTubeChannels(selected.accountId)
+        toast.success(`YouTube channel set to ${selected.accountLabel}.`)
+      } catch (error) {
+        reportError(error)
+      }
+    },
+    [
+      client,
+      refreshPlatformAccountsForClient,
+      refreshYouTubeChannels,
+      reportError,
+      validatePlatformAccountsForClient,
+      wsStatus
+    ]
+  )
+
+  useEffect(() => {
+    const account = platformAccounts.find((item) => item.platform === 'youtube')
+    if (!account) {
+      setYoutubeChannels([])
+      return
+    }
+    void refreshYouTubeChannels(account.accountId)
+  }, [platformAccounts, refreshYouTubeChannels])
 
   const refreshStreamMetadataForClient = useCallback(async (activeClient: BackendClient | null) => {
     if (!activeClient) {
@@ -2061,6 +2150,8 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     platformAccounts,
     platformAccountValidations,
     oauthProviderCredentials,
+    youtubeChannels,
+    youtubeChannelsLoading,
     streamMetadataDraft,
     streamMetadataValidation,
     goLivePreflight,
@@ -2103,6 +2194,8 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     validatePlatformAccounts,
     connectPlatformAccount,
     disconnectPlatformAccount,
+    refreshYouTubeChannels,
+    selectYouTubeChannel,
     refreshStreamMetadata,
     saveStreamMetadataDraft,
     cancelGoLiveConfirmation,
