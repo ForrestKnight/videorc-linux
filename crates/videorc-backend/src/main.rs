@@ -74,6 +74,10 @@ use crate::twitch::{
 };
 use crate::x_live::{XNativeLiveCapability, XNativeLiveCapabilityParams, XPrepareParams};
 use crate::youtube::{PreparedYouTubeBroadcast, YouTubePrepareParams, YouTubePrepareRequest};
+use crate::youtube::{
+    YouTubeBroadcastTransitionParams, YouTubeBroadcastTransitionRequest,
+    YouTubeBroadcastTransitionResult,
+};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -509,17 +513,7 @@ async fn prepare_youtube_stream_target(
         anyhow::bail!("{message}");
     }
 
-    let credentials = state.database.list_platform_account_credentials()?;
-    let credential = credentials
-        .into_iter()
-        .find(|credential| {
-            credential.account.platform == StreamPlatform::Youtube
-                && params.account_id.as_deref().is_none_or(|account_id| {
-                    credential.account.account_id == account_id
-                        || credential.account.id == account_id
-                })
-        })
-        .context("No connected YouTube OAuth account is available.")?;
+    let credential = youtube_account_credentials(state, params.account_id.as_deref())?;
     let access_ref = credential
         .token_secret_ref
         .as_deref()
@@ -561,6 +555,48 @@ async fn prepare_youtube_stream_target(
     }
 
     Ok(prepared)
+}
+
+async fn transition_youtube_stream_target(
+    state: &AppState,
+    params: YouTubeBroadcastTransitionParams,
+) -> anyhow::Result<YouTubeBroadcastTransitionResult> {
+    let credential = youtube_account_credentials(state, params.account_id.as_deref())?;
+    let access_ref = credential
+        .token_secret_ref
+        .as_deref()
+        .context("No YouTube access token is stored.")?;
+    let access_token = secrets::get_secret(access_ref)?;
+
+    youtube::transition_youtube_broadcast(
+        YouTubeBroadcastTransitionRequest {
+            access_token,
+            account_id: credential.account.account_id,
+            broadcast_id: params.broadcast_id,
+            status: params.status,
+            api_base_url: None,
+        },
+        &reqwest::Client::new(),
+    )
+    .await
+}
+
+fn youtube_account_credentials(
+    state: &AppState,
+    account_id: Option<&str>,
+) -> anyhow::Result<storage::PlatformAccountCredentials> {
+    state
+        .database
+        .list_platform_account_credentials()?
+        .into_iter()
+        .find(|credential| {
+            credential.account.platform == StreamPlatform::Youtube
+                && account_id.is_none_or(|account_id| {
+                    credential.account.account_id == account_id
+                        || credential.account.id == account_id
+                })
+        })
+        .context("No connected YouTube OAuth account is available.")
 }
 
 async fn search_twitch_categories(
@@ -1179,6 +1215,21 @@ async fn handle_text_message(state: &AppState, text: &str) -> ServerResponse {
                     Err(error) => ServerResponse::error(
                         command.id,
                         "youtube-prepare-failed",
+                        error.to_string(),
+                    ),
+                },
+                Err(error) => {
+                    ServerResponse::error(command.id, "invalid-params", error.to_string())
+                }
+            }
+        }
+        "streamTargets.youtube.transition" => {
+            match serde_json::from_value::<YouTubeBroadcastTransitionParams>(command.params) {
+                Ok(params) => match transition_youtube_stream_target(state, params).await {
+                    Ok(result) => ServerResponse::ok(command.id, result),
+                    Err(error) => ServerResponse::error(
+                        command.id,
+                        "youtube-transition-failed",
                         error.to_string(),
                     ),
                 },

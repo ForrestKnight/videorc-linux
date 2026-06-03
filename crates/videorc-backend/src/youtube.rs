@@ -47,6 +47,44 @@ pub struct PreparedYouTubeBroadcast {
     pub scheduled_start_time: String,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum YouTubeBroadcastTransitionStatus {
+    Complete,
+    Live,
+    Testing,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct YouTubeBroadcastTransitionParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
+    pub broadcast_id: String,
+    pub status: YouTubeBroadcastTransitionStatus,
+}
+
+#[derive(Debug, Clone)]
+pub struct YouTubeBroadcastTransitionRequest {
+    pub access_token: String,
+    pub account_id: String,
+    pub broadcast_id: String,
+    pub status: YouTubeBroadcastTransitionStatus,
+    pub api_base_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct YouTubeBroadcastTransitionResult {
+    pub platform: StreamPlatform,
+    pub account_id: String,
+    pub broadcast_id: String,
+    pub requested_status: YouTubeBroadcastTransitionStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle_status: Option<String>,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct EffectiveYouTubeMetadata {
     title: String,
@@ -79,6 +117,19 @@ struct YouTubeLiveStreamCdn {
 struct YouTubeIngestionInfo {
     ingestion_address: String,
     stream_name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct YouTubeBroadcastTransitionResponse {
+    id: String,
+    status: Option<YouTubeBroadcastStatus>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct YouTubeBroadcastStatus {
+    life_cycle_status: Option<String>,
 }
 
 pub async fn prepare_youtube_broadcast(
@@ -200,6 +251,48 @@ pub async fn prepare_youtube_broadcast(
     })
 }
 
+pub async fn transition_youtube_broadcast(
+    request: YouTubeBroadcastTransitionRequest,
+    client: &reqwest::Client,
+) -> Result<YouTubeBroadcastTransitionResult> {
+    if request.broadcast_id.trim().is_empty() {
+        anyhow::bail!("A YouTube broadcast ID is required.");
+    }
+
+    let base_url = request
+        .api_base_url
+        .unwrap_or_else(|| YOUTUBE_API_BASE_URL.to_string());
+    let status = youtube_transition_status(request.status);
+    let response: YouTubeBroadcastTransitionResponse = client
+        .post(youtube_api_url(
+            &base_url,
+            "/youtube/v3/liveBroadcasts/transition",
+            &[
+                ("broadcastStatus", status),
+                ("id", request.broadcast_id.as_str()),
+                ("part", "id,status"),
+            ],
+        )?)
+        .bearer_auth(&request.access_token)
+        .send()
+        .await
+        .context("Could not transition YouTube broadcast.")?
+        .error_for_status()
+        .context("YouTube broadcast transition failed.")?
+        .json()
+        .await
+        .context("Could not parse YouTube broadcast transition response.")?;
+
+    Ok(YouTubeBroadcastTransitionResult {
+        platform: StreamPlatform::Youtube,
+        account_id: request.account_id,
+        broadcast_id: response.id,
+        requested_status: request.status,
+        lifecycle_status: response.status.and_then(|status| status.life_cycle_status),
+        message: format!("YouTube broadcast transition requested: {status}."),
+    })
+}
+
 fn effective_youtube_metadata(draft: &StreamMetadataDraft) -> Result<EffectiveYouTubeMetadata> {
     let override_draft = draft
         .target_overrides
@@ -247,6 +340,14 @@ fn youtube_privacy(privacy: StreamPrivacy) -> &'static str {
         StreamPrivacy::Public => "public",
         StreamPrivacy::Unlisted => "unlisted",
         StreamPrivacy::Private => "private",
+    }
+}
+
+fn youtube_transition_status(status: YouTubeBroadcastTransitionStatus) -> &'static str {
+    match status {
+        YouTubeBroadcastTransitionStatus::Complete => "complete",
+        YouTubeBroadcastTransitionStatus::Live => "live",
+        YouTubeBroadcastTransitionStatus::Testing => "testing",
     }
 }
 
@@ -472,6 +573,87 @@ mod tests {
             logs[2].query,
             "id=broadcast-123&part=id%2CcontentDetails&streamId=stream-456"
         );
+    }
+
+    #[tokio::test]
+    async fn transitions_youtube_broadcast_without_request_body() {
+        async fn transition_broadcast(
+            State(logs): State<RequestLogs>,
+            OriginalUri(uri): OriginalUri,
+            headers: HeaderMap,
+        ) -> impl axum::response::IntoResponse {
+            logs.lock().unwrap().push(RequestLog {
+                path: "/youtube/v3/liveBroadcasts/transition".to_string(),
+                query: uri.query().unwrap_or_default().to_string(),
+                authorization: headers
+                    .get("authorization")
+                    .and_then(|header| header.to_str().ok())
+                    .map(ToOwned::to_owned),
+                body: Value::Null,
+            });
+            Json(json!({
+                "id": "broadcast-123",
+                "status": {
+                    "lifeCycleStatus": "live"
+                }
+            }))
+            .into_response()
+        }
+
+        let logs = Arc::new(Mutex::new(Vec::new()));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn({
+            let logs = logs.clone();
+            async move {
+                axum::serve(
+                    listener,
+                    Router::new()
+                        .route(
+                            "/youtube/v3/liveBroadcasts/transition",
+                            post(transition_broadcast),
+                        )
+                        .with_state(logs),
+                )
+                .await
+                .unwrap();
+            }
+        });
+
+        let result = transition_youtube_broadcast(
+            YouTubeBroadcastTransitionRequest {
+                access_token: "access-token".to_string(),
+                account_id: "UC123".to_string(),
+                broadcast_id: "broadcast-123".to_string(),
+                status: YouTubeBroadcastTransitionStatus::Live,
+                api_base_url: Some(format!("http://{address}")),
+            },
+            &reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.platform, StreamPlatform::Youtube);
+        assert_eq!(result.account_id, "UC123");
+        assert_eq!(result.broadcast_id, "broadcast-123");
+        assert_eq!(
+            result.requested_status,
+            YouTubeBroadcastTransitionStatus::Live
+        );
+        assert_eq!(result.lifecycle_status.as_deref(), Some("live"));
+
+        let logs = logs.lock().unwrap();
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].path, "/youtube/v3/liveBroadcasts/transition");
+        assert_eq!(
+            logs[0].query,
+            "broadcastStatus=live&id=broadcast-123&part=id%2Cstatus"
+        );
+        assert_eq!(
+            logs[0].authorization.as_deref(),
+            Some("Bearer access-token")
+        );
+        assert_eq!(logs[0].body, Value::Null);
     }
 
     #[test]

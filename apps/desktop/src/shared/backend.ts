@@ -474,6 +474,23 @@ export interface PreparedYouTubeBroadcast {
   scheduledStartTime: string
 }
 
+export type YouTubeBroadcastTransitionStatus = 'complete' | 'live' | 'testing'
+
+export interface YouTubeBroadcastTransitionParams {
+  accountId?: string
+  broadcastId: string
+  status: YouTubeBroadcastTransitionStatus
+}
+
+export interface YouTubeBroadcastTransitionResult {
+  platform: 'youtube'
+  accountId: string
+  broadcastId: string
+  requestedStatus: YouTubeBroadcastTransitionStatus
+  lifecycleStatus?: string
+  message: string
+}
+
 export interface TwitchPrepareParams {
   accountId?: string
 }
