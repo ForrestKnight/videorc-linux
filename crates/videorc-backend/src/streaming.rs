@@ -77,8 +77,8 @@ pub struct StreamTargetSettings {
     pub server_url: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url_mode: Option<StreamUrlMode>,
-    // Transitional: raw key until the secret-storage slice (M1b) moves it into
-    // Keychain/safeStorage and switches to stream_key_secret_ref.
+    // Raw only while a manual key is being edited or loaded from legacy config.
+    // Saved OAuth/manual keys use stream_key_secret_ref plus stream_key_present.
     pub stream_key: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stream_key_secret_ref: Option<String>,

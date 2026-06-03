@@ -363,8 +363,8 @@ export interface StreamTargetSettings {
   enabled: boolean
   serverUrl: string
   urlMode?: StreamUrlMode
-  // Transitional: the raw key lives here until the secret-storage slice (M1b)
-  // moves it into Keychain/safeStorage and replaces it with streamKeySecretRef.
+  // Raw only while a manual key is being edited or loaded from legacy config.
+  // Saved OAuth/manual keys use streamKeySecretRef plus streamKeyPresent.
   streamKey: string
   streamKeySecretRef?: string
   streamKeyPresent: boolean
