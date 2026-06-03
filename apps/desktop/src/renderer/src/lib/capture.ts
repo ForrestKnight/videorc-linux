@@ -2,6 +2,7 @@ import type {
   AudioSettings,
   CameraTransform,
   CameraTransformMode,
+  Device,
   LayoutPreset,
   LayoutSettings,
   RtmpPreset,
@@ -437,6 +438,60 @@ export function bridgeStreamingToLegacy(config: CaptureConfig): CaptureConfig {
   }
 
   return { ...config, streamEnabled: false }
+}
+
+function findRememberedSource(
+  sourceId: string | undefined,
+  sourceName: string | undefined,
+  devices: Device[]
+): Device | undefined {
+  if (sourceId) {
+    const exact = devices.find((device) => device.id === sourceId)
+    if (exact) {
+      return exact
+    }
+  }
+
+  const normalizedName = sourceName?.trim()
+  if (!normalizedName) {
+    return undefined
+  }
+
+  return devices.find((device) => device.name.trim() === normalizedName)
+}
+
+function sourceIdentityFor(device: Device | undefined): { id?: string; name?: string } {
+  return { id: device?.id, name: device?.name }
+}
+
+export function reconcileSourceSelection(sources: SourceSelection, devices: Device[]): SourceSelection {
+  const nextSources = { ...sources }
+  const captureDevices = devices.filter(
+    (device) => ['screen', 'window'].includes(device.kind) && device.status === 'available'
+  )
+  const cameras = devices.filter((device) => device.kind === 'camera' && device.status === 'available')
+  const microphones = devices.filter((device) => device.kind === 'microphone' && device.status === 'available')
+
+  const selectedCapture = nextSources.windowId
+    ? (findRememberedSource(nextSources.windowId, nextSources.windowName, captureDevices) ?? captureDevices[0])
+    : (findRememberedSource(nextSources.screenId, nextSources.screenName, captureDevices) ?? captureDevices[0])
+  nextSources.screenId = selectedCapture?.kind === 'screen' ? selectedCapture.id : undefined
+  nextSources.screenName = selectedCapture?.kind === 'screen' ? selectedCapture.name : undefined
+  nextSources.windowId = selectedCapture?.kind === 'window' ? selectedCapture.id : undefined
+  nextSources.windowName = selectedCapture?.kind === 'window' ? selectedCapture.name : undefined
+
+  const selectedCamera = findRememberedSource(nextSources.cameraId, nextSources.cameraName, cameras) ?? cameras[0]
+  const selectedMicrophone =
+    findRememberedSource(nextSources.microphoneId, nextSources.microphoneName, microphones) ?? microphones[0]
+
+  const cameraIdentity = sourceIdentityFor(selectedCamera)
+  nextSources.cameraId = cameraIdentity.id
+  nextSources.cameraName = cameraIdentity.name
+  const microphoneIdentity = sourceIdentityFor(selectedMicrophone)
+  nextSources.microphoneId = microphoneIdentity.id
+  nextSources.microphoneName = microphoneIdentity.name
+
+  return nextSources
 }
 
 export function clampNumber(value: unknown, fallback: number, min: number, max: number): number {

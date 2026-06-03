@@ -19,6 +19,7 @@ import {
   defaultSettings,
   loadCaptureConfig,
   loadJson,
+  reconcileSourceSelection,
   rtmpDefaults,
   STORAGE_KEYS,
   videoPresets,
@@ -226,35 +227,6 @@ const idleDiagnosticStats = (): DiagnosticStats => ({
   bottleneck: 'none',
   updatedAt: new Date().toISOString()
 })
-
-function findRememberedSource(
-  sourceId: string | undefined,
-  sourceName: string | undefined,
-  devices: Device[]
-): Device | undefined {
-  if (sourceId) {
-    const exact = devices.find((device) => device.id === sourceId)
-    if (exact) {
-      return exact
-    }
-  }
-
-  const normalizedName = sourceName?.trim()
-  if (!normalizedName) {
-    return undefined
-  }
-
-  return devices.find((device) => device.name.trim() === normalizedName)
-}
-
-function sourceIdentityFor(device: Device | undefined): Pick<SourceSelectionWithNames, 'id' | 'name'> {
-  return { id: device?.id, name: device?.name }
-}
-
-type SourceSelectionWithNames = {
-  id?: string
-  name?: string
-}
 
 export function useStudio(): StudioContextValue {
   const value = useContext(StudioContext)
@@ -687,33 +659,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
 
   useEffect(() => {
     setCaptureConfig((current) => {
-      const nextSources = { ...current.sources }
-      const captureDevices = deviceList.devices.filter(
-        (device) => ['screen', 'window'].includes(device.kind) && device.status === 'available'
-      )
-      const cameras = deviceList.devices.filter((device) => device.kind === 'camera' && device.status === 'available')
-      const microphones = deviceList.devices.filter(
-        (device) => device.kind === 'microphone' && device.status === 'available'
-      )
-
-      const selectedCapture = nextSources.windowId
-        ? (findRememberedSource(nextSources.windowId, nextSources.windowName, captureDevices) ?? captureDevices[0])
-        : (findRememberedSource(nextSources.screenId, nextSources.screenName, captureDevices) ?? captureDevices[0])
-      nextSources.screenId = selectedCapture?.kind === 'screen' ? selectedCapture.id : undefined
-      nextSources.screenName = selectedCapture?.kind === 'screen' ? selectedCapture.name : undefined
-      nextSources.windowId = selectedCapture?.kind === 'window' ? selectedCapture.id : undefined
-      nextSources.windowName = selectedCapture?.kind === 'window' ? selectedCapture.name : undefined
-
-      const selectedCamera = findRememberedSource(nextSources.cameraId, nextSources.cameraName, cameras) ?? cameras[0]
-      const selectedMicrophone =
-        findRememberedSource(nextSources.microphoneId, nextSources.microphoneName, microphones) ?? microphones[0]
-
-      const cameraIdentity = sourceIdentityFor(selectedCamera)
-      nextSources.cameraId = cameraIdentity.id
-      nextSources.cameraName = cameraIdentity.name
-      const microphoneIdentity = sourceIdentityFor(selectedMicrophone)
-      nextSources.microphoneId = microphoneIdentity.id
-      nextSources.microphoneName = microphoneIdentity.name
+      const nextSources = reconcileSourceSelection(current.sources, deviceList.devices)
 
       if (JSON.stringify(nextSources) === JSON.stringify(current.sources)) {
         return current
