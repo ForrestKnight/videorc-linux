@@ -778,6 +778,23 @@ export interface PreviewSurfaceBounds {
 
 export type PreviewSurfaceState = 'unavailable' | 'starting' | 'live' | 'stopped' | 'failed'
 export type PreviewSurfaceSource = 'synthetic' | 'camera' | 'screen' | 'window'
+export type CompositorState = 'stopped' | 'starting' | 'live' | 'failed'
+
+export interface CompositorStatus {
+  state: CompositorState
+  targetFps: number
+  width: number
+  height: number
+  renderFps?: number
+  framesRendered: number
+  repeatedFrames: number
+  droppedFrames: number
+  frameAgeMs?: number
+  frameTimeP95Ms?: number
+  updatedAt: string
+  message?: string
+}
+
 export type PreviewSurfaceSceneLayerKind = SceneSourceKind | 'screen-image'
 export type PreviewSurfaceSceneLayerFit = 'contain' | 'cover'
 
@@ -1125,6 +1142,7 @@ export interface VideorcApi {
   createNativePreviewSurface: (bounds: PreviewSurfaceBounds) => Promise<PreviewSurfaceStatus>
   updateNativePreviewSurfaceBounds: (bounds: PreviewSurfaceBounds) => Promise<PreviewSurfaceStatus>
   updateNativePreviewSurfaceScene: (scene: PreviewSurfaceSceneUpdateParams) => Promise<PreviewSurfaceStatus>
+  updateNativePreviewSurfaceCompositor: (status: CompositorStatus) => Promise<PreviewSurfaceStatus>
   destroyNativePreviewSurface: () => Promise<PreviewSurfaceStatus>
   getNativePreviewSurfaceStatus: () => Promise<PreviewSurfaceStatus>
   openSystemPermissions: (pane?: SystemPermissionPane) => Promise<void>

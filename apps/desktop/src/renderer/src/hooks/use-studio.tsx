@@ -41,6 +41,7 @@ import type {
   BackendConnection,
   BackendHealth,
   BackendLogEvent,
+  CompositorStatus,
   DiagnosticStats,
   Device,
   DeviceList,
@@ -838,6 +839,22 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       nextClient.on('preview.surface.status', (payload) => {
         applyPreviewSurfaceStatus(payload as PreviewSurfaceStatus)
       }),
+      nextClient.on('compositor.status', (payload) => {
+        const status = payload as CompositorStatus
+        if (nativePreviewSurfaceEnabled && window.videorc?.updateNativePreviewSurfaceCompositor) {
+          void window.videorc
+            .updateNativePreviewSurfaceCompositor(status)
+            .then((surfaceStatus) => {
+              applyPreviewSurfaceStatus({
+                ...surfaceStatus,
+                framesRendered: Math.max(surfaceStatus.framesRendered, status.framesRendered)
+              })
+            })
+            .catch((error: unknown) => {
+              console.error('Native preview compositor update failed:', error)
+            })
+        }
+      }),
       nextClient.on('preview.camera.status', (payload) => {
         applyPreviewCameraStatus(payload as PreviewCameraStatus)
       }),
@@ -948,6 +965,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     applyPreviewScreenStatus,
     applyPreviewSurfaceStatus,
     connection,
+    nativePreviewSurfaceEnabled,
     refreshPlatformAccountsForClient,
     refreshScreensForClient,
     refreshStreamMetadataForClient,

@@ -10,6 +10,7 @@ import type {
   BackendConnection,
   BackendLogEvent,
   CameraShape,
+  CompositorStatus,
   LayoutSettings,
   PreviewSurfaceBounds,
   PreviewSurfaceSceneLayer,
@@ -269,6 +270,8 @@ function nativePreviewSurfaceHtml(initialScene: PreviewSurfaceSceneState | null)
         const layers = new Map();
         const pollers = new Map();
         const sourceFrames = new Map();
+        let compositorStatus = null;
+        let compositorFrames = 0;
         let scene = ${initialSceneJson};
         let frames = 0;
         let liveLayerCount = 0;
@@ -450,14 +453,33 @@ function nativePreviewSurfaceHtml(initialScene: PreviewSurfaceSceneState | null)
 
         window.__videorcSetPreviewScene = applyScene;
 
+        function applyCompositorStatus(nextStatus) {
+          compositorStatus = nextStatus;
+          compositorFrames = Math.max(compositorFrames, Number(nextStatus?.framesRendered ?? 0));
+          if (nextStatus?.state === 'live') {
+            document.body.classList.add('surface-live');
+            const frame = Number(nextStatus.framesRendered ?? 0);
+            const width = Math.max(1, Number(nextStatus.width ?? window.innerWidth));
+            const x = (frame * 7) % (width + 140);
+            document.body.style.setProperty('--dot-x', String((x / Math.max(1, width)) * 100) + '%');
+            document.body.style.setProperty('--offset', String((frame * 3) % 240) + 'px');
+            document.body.style.setProperty('--stripe-offset', String((frame * 5) % 120) + 'px');
+            readout.textContent = 'native compositor surface';
+          }
+        }
+
+        window.__videorcSetCompositorStatus = applyCompositorStatus;
+
         function tick(now) {
           frames += 1;
           frameTimes.push(now);
           if (frameTimes.length > 900) frameTimes.shift();
-          const x = (now * 0.045) % Math.max(1, window.innerWidth + 140);
-          document.body.style.setProperty('--dot-x', String((x / Math.max(1, window.innerWidth)) * 100) + '%');
-          document.body.style.setProperty('--offset', String((now * 0.08) % 240) + 'px');
-          document.body.style.setProperty('--stripe-offset', String((now * 0.18) % 120) + 'px');
+          if (!compositorStatus) {
+            const x = (now * 0.045) % Math.max(1, window.innerWidth + 140);
+            document.body.style.setProperty('--dot-x', String((x / Math.max(1, window.innerWidth)) * 100) + '%');
+            document.body.style.setProperty('--offset', String((now * 0.08) % 240) + 'px');
+            document.body.style.setProperty('--stripe-offset', String((now * 0.18) % 120) + 'px');
+          }
           window.__videorcNativePreviewMetrics = () => {
             const intervals = frameTimes.slice(1).map((time, index) => time - frameTimes[index]);
             const sorted = [...intervals].sort((a, b) => a - b);
@@ -471,6 +493,8 @@ function nativePreviewSurfaceHtml(initialScene: PreviewSurfaceSceneState | null)
               frames,
               measuredFps: frames / elapsed * 1000,
               sceneRevision: scene?.revision ?? null,
+              compositorState: compositorStatus?.state ?? null,
+              compositorFrames,
               layerCount: layers.size,
               liveLayerCount,
               sourceFrames: Object.fromEntries(sourceFrames),
@@ -604,6 +628,24 @@ async function updateNativePreviewSurfaceScene(params: PreviewSurfaceSceneUpdate
     source: hasScreen ? 'screen' : hasCamera ? 'camera' : 'synthetic',
     updatedAt: new Date().toISOString(),
     message: 'Native preview surface scene updated.'
+  }
+  return nativePreviewSurfaceStatus
+}
+
+async function updateNativePreviewSurfaceCompositor(status: CompositorStatus): Promise<PreviewSurfaceStatus> {
+  if (nativePreviewSurfaceWindow && !nativePreviewSurfaceWindow.isDestroyed()) {
+    await waitForNativePreviewSurfaceScript()
+    const statusJson = jsonForInlineScript(status)
+    await nativePreviewSurfaceWindow.webContents.executeJavaScript(
+      `window.__videorcSetCompositorStatus?.(${statusJson})`,
+      true
+    )
+  }
+  nativePreviewSurfaceStatus = {
+    ...nativePreviewSurfaceStatus,
+    framesRendered: Math.max(nativePreviewSurfaceStatus.framesRendered, status.framesRendered),
+    updatedAt: new Date().toISOString(),
+    message: status.state === 'live' ? 'Native preview surface is displaying compositor output.' : status.message
   }
   return nativePreviewSurfaceStatus
 }
@@ -1285,6 +1327,9 @@ app.whenReady().then(() => {
   )
   ipcMain.handle('preview-surface:update-scene', (_event, scene: PreviewSurfaceSceneUpdateParams) =>
     updateNativePreviewSurfaceScene(scene)
+  )
+  ipcMain.handle('preview-surface:update-compositor', (_event, status: CompositorStatus) =>
+    updateNativePreviewSurfaceCompositor(status)
   )
   ipcMain.handle('preview-surface:destroy', () => destroyNativePreviewSurface())
   ipcMain.handle('preview-surface:status', () => nativePreviewSurfaceStatus)

@@ -133,6 +133,12 @@ function assertNativeMeasurement(measurement, label) {
   if ((measurement.blankFrames ?? 0) > 0) {
     throw new Error(`Native preview surface ${label} reported ${measurement.blankFrames} blank frame(s).`)
   }
+  if ((measurement.compositorFrames ?? 0) <= 0) {
+    throw new Error(`Native preview surface ${label} did not receive compositor frames.`)
+  }
+  if (measurement.compositorState !== 'live') {
+    throw new Error(`Native preview surface ${label} compositor state is ${measurement.compositorState}, expected live.`)
+  }
   if (!measurement.width || !measurement.height) {
     throw new Error(`Native preview surface ${label} has invalid dimensions ${measurement.width}x${measurement.height}.`)
   }
