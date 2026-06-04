@@ -918,6 +918,31 @@ export interface StreamHealth {
 
 export type DiagnosticBottleneck = 'none' | 'capture' | 'render' | 'encoder' | 'preview' | 'audio' | 'device' | 'unknown'
 
+export type SourceRegistrySourceKind = 'camera' | 'screen' | 'window' | 'image' | 'synthetic'
+export type SourceRegistryLifecycleStatus =
+  | 'stopped'
+  | 'starting'
+  | 'live'
+  | 'permission-needed'
+  | 'source-missing'
+  | 'failed'
+export type SourceRegistryConsumerReason = 'preview' | 'recording' | 'streaming' | 'diagnostics'
+
+export interface SourceRegistryKey {
+  kind: SourceRegistrySourceKind
+  id: string
+}
+
+export interface SourceRegistryEntrySnapshot {
+  key: SourceRegistryKey
+  status: SourceRegistryLifecycleStatus
+  consumers: SourceRegistryConsumerReason[]
+}
+
+export interface SourceRegistrySnapshot {
+  entries: SourceRegistryEntrySnapshot[]
+}
+
 export interface DiagnosticStats {
   sessionId?: string
   targetFps?: number
@@ -957,6 +982,7 @@ export interface DiagnosticStats {
   ffmpegMaintenanceCancelRequested: boolean
   ffmpegMaintenanceDeferredReason?: string
   duplicateCaptureSources: string[]
+  sourceRegistry: SourceRegistrySnapshot
   bottleneck: DiagnosticBottleneck
   updatedAt: string
 }

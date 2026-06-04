@@ -21,6 +21,8 @@ mod repair_service;
 mod scene;
 mod screen_capture;
 mod secrets;
+mod source_registry;
+mod source_status;
 mod state;
 mod storage;
 mod streaming;
@@ -1077,8 +1079,11 @@ async fn handle_text_message(state: &AppState, text: &str) -> ServerResponse {
             ServerResponse::ok(command.id, devices)
         }
         "diagnostics.stats" => {
+            let stats = state.diagnostics.lock().await.clone();
+            let source_registry = state.source_registry.lock().await.snapshot();
+            let stats = diagnostics::apply_source_registry_snapshot(stats, source_registry);
             let stats = diagnostics::apply_runtime_diagnostics_snapshot(
-                state.diagnostics.lock().await.clone(),
+                stats,
                 state.ffmpeg_work.snapshot(),
             );
             ServerResponse::ok(command.id, stats)

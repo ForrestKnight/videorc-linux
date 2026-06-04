@@ -8,6 +8,7 @@ use crate::protocol::{
     DiagnosticBottleneck, DiagnosticStats, PermissionPane, PreviewCameraStatus,
     PreviewScreenStatus, PreviewTransport, StreamHealth,
 };
+use crate::source_registry::SourceRegistrySnapshot;
 
 pub fn idle_diagnostics() -> DiagnosticStats {
     DiagnosticStats {
@@ -49,6 +50,7 @@ pub fn idle_diagnostics() -> DiagnosticStats {
         ffmpeg_maintenance_cancel_requested: false,
         ffmpeg_maintenance_deferred_reason: None,
         duplicate_capture_sources: Vec::new(),
+        source_registry: SourceRegistrySnapshot::default(),
         bottleneck: DiagnosticBottleneck::None,
         updated_at: Utc::now().to_rfc3339(),
     }
@@ -98,6 +100,15 @@ pub fn apply_duplicate_capture_sources(
     {
         stats.bottleneck = DiagnosticBottleneck::Capture;
     }
+    stats.updated_at = Utc::now().to_rfc3339();
+    stats
+}
+
+pub fn apply_source_registry_snapshot(
+    mut stats: DiagnosticStats,
+    snapshot: SourceRegistrySnapshot,
+) -> DiagnosticStats {
+    stats.source_registry = snapshot;
     stats.updated_at = Utc::now().to_rfc3339();
     stats
 }
@@ -435,5 +446,6 @@ mod tests {
         assert_eq!(stats.active_ffmpeg_processes, 0);
         assert_eq!(stats.active_ffprobe_processes, 0);
         assert!(stats.duplicate_capture_sources.is_empty());
+        assert!(stats.source_registry.entries.is_empty());
     }
 }

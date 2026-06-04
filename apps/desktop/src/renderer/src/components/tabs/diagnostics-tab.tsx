@@ -131,6 +131,7 @@ export function DiagnosticsTab(): ReactElement {
             <DiagnosticMetric label="FFprobe procs" value={diagnosticStats.activeFfprobeProcesses.toString()} />
             <DiagnosticMetric label="Backend RSS" value={formatBytes(diagnosticStats.backendRssBytes)} />
             <DiagnosticMetric label="Duplicate capture" value={formatDuplicateCapture(diagnosticStats.duplicateCaptureSources)} />
+            <DiagnosticMetric label="Source registry" value={formatSourceRegistry(diagnosticStats.sourceRegistry)} />
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <StatusBadge label="Likely bottleneck" tone={bottleneck.tone} value={bottleneck.label} />
@@ -536,6 +537,16 @@ function formatBytes(value?: number): string {
 
 function formatDuplicateCapture(sources: string[]): string {
   return sources.length ? sources.join(', ') : 'None'
+}
+
+function formatSourceRegistry(registry?: DiagnosticStats['sourceRegistry']): string {
+  const entries = registry?.entries ?? []
+  if (!entries.length) {
+    return 'None'
+  }
+  return entries
+    .map((entry) => `${entry.key.kind}:${entry.key.id} ${entry.status} [${entry.consumers.join(', ') || 'no consumers'}]`)
+    .join('; ')
 }
 
 function formatPreviewTransport(transport?: string): string {

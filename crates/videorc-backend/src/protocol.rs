@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::source_registry::SourceRegistrySnapshot;
 use crate::streaming::StreamingSettings;
 
 #[derive(Debug, Deserialize)]
@@ -766,6 +767,8 @@ pub struct DiagnosticStats {
     pub ffmpeg_maintenance_deferred_reason: Option<String>,
     #[serde(default)]
     pub duplicate_capture_sources: Vec<String>,
+    #[serde(default)]
+    pub source_registry: SourceRegistrySnapshot,
     pub bottleneck: DiagnosticBottleneck,
     pub updated_at: String,
 }

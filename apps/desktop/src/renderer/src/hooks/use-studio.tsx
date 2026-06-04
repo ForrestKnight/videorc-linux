@@ -264,6 +264,7 @@ const idleDiagnosticStats = (): DiagnosticStats => ({
   ffmpegMaintenanceRunning: false,
   ffmpegMaintenanceCancelRequested: false,
   duplicateCaptureSources: [],
+  sourceRegistry: { entries: [] },
   bottleneck: 'none',
   updatedAt: new Date().toISOString()
 })

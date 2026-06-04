@@ -1,0 +1,244 @@
+use std::collections::{BTreeMap, BTreeSet};
+
+use serde::{Deserialize, Serialize};
+
+use crate::source_status::SourceLifecycleStatus;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceKey {
+    pub kind: SourceKind,
+    pub id: String,
+}
+
+#[allow(dead_code)]
+impl SourceKey {
+    pub fn camera(id: impl Into<String>) -> Self {
+        Self {
+            kind: SourceKind::Camera,
+            id: id.into(),
+        }
+    }
+
+    pub fn screen(id: impl Into<String>) -> Self {
+        Self {
+            kind: SourceKind::Screen,
+            id: id.into(),
+        }
+    }
+
+    pub fn window(id: impl Into<String>) -> Self {
+        Self {
+            kind: SourceKind::Window,
+            id: id.into(),
+        }
+    }
+
+    pub fn image(id: impl Into<String>) -> Self {
+        Self {
+            kind: SourceKind::Image,
+            id: id.into(),
+        }
+    }
+
+    pub fn synthetic(id: impl Into<String>) -> Self {
+        Self {
+            kind: SourceKind::Synthetic,
+            id: id.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "kebab-case")]
+pub enum SourceKind {
+    Camera,
+    Screen,
+    Window,
+    Image,
+    Synthetic,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "kebab-case")]
+pub enum SourceConsumerReason {
+    Preview,
+    Recording,
+    Streaming,
+    Diagnostics,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceRegistryEntrySnapshot {
+    pub key: SourceKey,
+    pub status: SourceLifecycleStatus,
+    pub consumers: Vec<SourceConsumerReason>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceRegistrySnapshot {
+    #[serde(default)]
+    pub entries: Vec<SourceRegistryEntrySnapshot>,
+}
+
+#[derive(Debug, Clone)]
+struct SourceRegistryEntry {
+    key: SourceKey,
+    status: SourceLifecycleStatus,
+    consumers: BTreeSet<SourceConsumerReason>,
+}
+
+#[allow(dead_code)]
+impl SourceRegistryEntry {
+    fn new(key: SourceKey) -> Self {
+        Self {
+            key,
+            status: SourceLifecycleStatus::Stopped,
+            consumers: BTreeSet::new(),
+        }
+    }
+
+    fn snapshot(&self) -> SourceRegistryEntrySnapshot {
+        SourceRegistryEntrySnapshot {
+            key: self.key.clone(),
+            status: self.status.clone(),
+            consumers: self.consumers.iter().cloned().collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SourceRegistry {
+    entries: BTreeMap<SourceKey, SourceRegistryEntry>,
+}
+
+#[allow(dead_code)]
+impl SourceRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn acquire(
+        &mut self,
+        key: SourceKey,
+        consumer: SourceConsumerReason,
+    ) -> SourceRegistrySnapshot {
+        let entry = self
+            .entries
+            .entry(key.clone())
+            .or_insert_with(|| SourceRegistryEntry::new(key));
+        entry.consumers.insert(consumer);
+        self.snapshot()
+    }
+
+    pub fn release(
+        &mut self,
+        key: &SourceKey,
+        consumer: &SourceConsumerReason,
+    ) -> SourceRegistrySnapshot {
+        if let Some(entry) = self.entries.get_mut(key) {
+            entry.consumers.remove(consumer);
+            if entry.consumers.is_empty() {
+                entry.status = SourceLifecycleStatus::Stopped;
+            }
+        }
+        self.snapshot()
+    }
+
+    pub fn set_status(
+        &mut self,
+        key: SourceKey,
+        status: SourceLifecycleStatus,
+    ) -> SourceRegistrySnapshot {
+        let entry = self
+            .entries
+            .entry(key.clone())
+            .or_insert_with(|| SourceRegistryEntry::new(key));
+        entry.status = status;
+        self.snapshot()
+    }
+
+    pub fn snapshot(&self) -> SourceRegistrySnapshot {
+        SourceRegistrySnapshot {
+            entries: self
+                .entries
+                .values()
+                .map(SourceRegistryEntry::snapshot)
+                .collect(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn one_source_key_can_have_multiple_consumers_without_duplicates() {
+        let mut registry = SourceRegistry::new();
+        let key = SourceKey::camera("camera:avfoundation:0");
+
+        registry.acquire(key.clone(), SourceConsumerReason::Preview);
+        registry.acquire(key.clone(), SourceConsumerReason::Recording);
+        let snapshot = registry.acquire(key.clone(), SourceConsumerReason::Preview);
+
+        assert_eq!(snapshot.entries.len(), 1);
+        assert_eq!(
+            snapshot.entries[0].consumers,
+            vec![
+                SourceConsumerReason::Preview,
+                SourceConsumerReason::Recording
+            ]
+        );
+    }
+
+    #[test]
+    fn release_only_removes_the_named_consumer() {
+        let mut registry = SourceRegistry::new();
+        let key = SourceKey::screen("screen:avfoundation:3");
+
+        registry.acquire(key.clone(), SourceConsumerReason::Preview);
+        registry.acquire(key.clone(), SourceConsumerReason::Recording);
+        registry.set_status(key.clone(), SourceLifecycleStatus::Live);
+        let snapshot = registry.release(&key, &SourceConsumerReason::Preview);
+
+        assert_eq!(
+            snapshot.entries[0].consumers,
+            vec![SourceConsumerReason::Recording]
+        );
+        assert_eq!(snapshot.entries[0].status, SourceLifecycleStatus::Live);
+
+        let snapshot = registry.release(&key, &SourceConsumerReason::Recording);
+        assert!(snapshot.entries[0].consumers.is_empty());
+        assert_eq!(snapshot.entries[0].status, SourceLifecycleStatus::Stopped);
+    }
+
+    #[test]
+    fn source_status_is_reported_in_snapshot() {
+        let mut registry = SourceRegistry::new();
+        let key = SourceKey::synthetic("synthetic:preview");
+
+        let snapshot = registry.set_status(key, SourceLifecycleStatus::Live);
+
+        assert_eq!(snapshot.entries[0].status, SourceLifecycleStatus::Live);
+    }
+
+    #[test]
+    fn different_source_keys_remain_distinct() {
+        let mut registry = SourceRegistry::new();
+
+        registry.acquire(SourceKey::camera("camera:1"), SourceConsumerReason::Preview);
+        registry.acquire(SourceKey::screen("screen:1"), SourceConsumerReason::Preview);
+        registry.acquire(SourceKey::window("window:1"), SourceConsumerReason::Preview);
+        registry.acquire(SourceKey::image("image:1"), SourceConsumerReason::Preview);
+
+        let snapshot = registry.snapshot();
+        assert_eq!(snapshot.entries.len(), 4);
+        assert_eq!(snapshot.entries[0].key, SourceKey::camera("camera:1"));
+        assert_eq!(snapshot.entries[1].key, SourceKey::screen("screen:1"));
+        assert_eq!(snapshot.entries[2].key, SourceKey::window("window:1"));
+        assert_eq!(snapshot.entries[3].key, SourceKey::image("image:1"));
+    }
+}

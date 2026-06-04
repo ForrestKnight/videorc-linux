@@ -13,6 +13,7 @@ use crate::preview_surface::{PreviewSurfaceSlot, initial_preview_surface_state};
 use crate::protocol::{BackendLogEvent, DiagnosticStats, Scene, ServerEvent};
 use crate::recording::{LivePreviewSlot, RecordingSlot, initial_live_preview_state};
 use crate::scene::default_scene;
+use crate::source_registry::SourceRegistry;
 use crate::storage::Database;
 
 const PREVIEW_FRAME_CHANNEL_CAPACITY: usize = 256;
@@ -48,6 +49,7 @@ pub struct AppState {
     pub preview_screen: PreviewScreenSlot,
     pub preview_surface: PreviewSurfaceSlot,
     pub scene: Arc<tokio::sync::Mutex<Scene>>,
+    pub source_registry: Arc<tokio::sync::Mutex<SourceRegistry>>,
     pub diagnostics: Arc<tokio::sync::Mutex<DiagnosticStats>>,
     pub database: Database,
     pub oauth: Arc<OAuthSessions>,
@@ -74,6 +76,7 @@ impl AppState {
             preview_screen: Arc::new(tokio::sync::Mutex::new(initial_preview_screen_state())),
             preview_surface: Arc::new(tokio::sync::Mutex::new(initial_preview_surface_state())),
             scene: Arc::new(tokio::sync::Mutex::new(default_scene())),
+            source_registry: Arc::new(tokio::sync::Mutex::new(SourceRegistry::new())),
             diagnostics: Arc::new(tokio::sync::Mutex::new(idle_diagnostics())),
             database,
             oauth: Arc::new(OAuthSessions::default()),
