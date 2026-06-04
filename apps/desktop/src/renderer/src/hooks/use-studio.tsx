@@ -53,6 +53,7 @@ import type {
   PreviewCameraStatus,
   PreviewScreenStatus,
   PreviewSurfaceBounds,
+  PreviewSurfaceSceneUpdateParams,
   PreviewSurfaceStatus,
   PreviewLiveStatus,
   PlatformAccount,
@@ -363,6 +364,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   const previewScreenStatusRef = useRef<PreviewScreenStatus>(idlePreviewScreenStatus())
   const nativePreviewCameraKeyRef = useRef<string | null>(null)
   const nativePreviewScreenKeyRef = useRef<string | null>(null)
+  const nativePreviewSurfaceSceneRevisionRef = useRef(0)
   const sourceReconciliationMessages = useRef<string[]>([])
   const toastedFailedTargets = useRef<Set<string>>(new Set())
   const platformLifecycleRun = useRef(0)
@@ -1418,6 +1420,35 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       wsStatus
     ]
   )
+
+  const syncNativePreviewSurfaceScene = useCallback(async () => {
+    if (!nativePreviewSurfaceEnabled || !window.videorc?.updateNativePreviewSurfaceScene) {
+      return
+    }
+
+    const revision = nativePreviewSurfaceSceneRevisionRef.current + 1
+    nativePreviewSurfaceSceneRevisionRef.current = revision
+    const params: PreviewSurfaceSceneUpdateParams = {
+      revision,
+      scene: scene ?? null,
+      layout: captureConfig.layout,
+      activeScreen: activeScreen ?? null
+    }
+    const status = await window.videorc.updateNativePreviewSurfaceScene(params)
+    applyPreviewSurfaceStatus({
+      ...status,
+      framesRendered: Math.max(status.framesRendered, previewSurfaceStatusRef.current.framesRendered)
+    })
+  }, [activeScreen, applyPreviewSurfaceStatus, captureConfig.layout, nativePreviewSurfaceEnabled, scene])
+
+  useEffect(() => {
+    if (!nativePreviewSurfaceEnabled) {
+      return
+    }
+    void syncNativePreviewSurfaceScene().catch((error: unknown) => {
+      console.error('Native preview surface scene update failed:', error)
+    })
+  }, [nativePreviewSurfaceEnabled, syncNativePreviewSurfaceScene])
 
   const registerPreviewSurfaceResize = useCallback(() => {
     if (!client || wsStatus !== 'connected') {

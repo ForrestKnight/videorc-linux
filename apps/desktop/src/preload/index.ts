@@ -60,6 +60,7 @@ const api: VideorcApi = {
   getNativePreviewSurfaceMode: () => ipcRenderer.invoke('preview-surface:mode'),
   createNativePreviewSurface: (bounds) => ipcRenderer.invoke('preview-surface:create', bounds),
   updateNativePreviewSurfaceBounds: (bounds) => ipcRenderer.invoke('preview-surface:update-bounds', bounds),
+  updateNativePreviewSurfaceScene: (scene) => ipcRenderer.invoke('preview-surface:update-scene', scene),
   destroyNativePreviewSurface: () => ipcRenderer.invoke('preview-surface:destroy'),
   getNativePreviewSurfaceStatus: () => ipcRenderer.invoke('preview-surface:status'),
   openSystemPermissions,

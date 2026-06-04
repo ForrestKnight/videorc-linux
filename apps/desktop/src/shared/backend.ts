@@ -777,6 +777,37 @@ export interface PreviewSurfaceBounds {
 
 export type PreviewSurfaceState = 'unavailable' | 'starting' | 'live' | 'stopped' | 'failed'
 export type PreviewSurfaceSource = 'synthetic' | 'camera' | 'screen' | 'window'
+export type PreviewSurfaceSceneLayerKind = SceneSourceKind | 'screen-image'
+export type PreviewSurfaceSceneLayerFit = 'contain' | 'cover'
+
+export interface PreviewSurfaceSceneLayer {
+  id: string
+  name: string
+  kind: PreviewSurfaceSceneLayerKind
+  transform: SceneTransform
+  visible: boolean
+  frameUrl?: string
+  imageUrl?: string
+  fit: PreviewSurfaceSceneLayerFit
+  mirror: boolean
+  shape?: CameraShape
+}
+
+export interface PreviewSurfaceSceneState {
+  revision: number
+  sceneId?: string
+  layout: LayoutSettings
+  sources: PreviewSurfaceSceneLayer[]
+  activeScreenId?: string
+  updatedAt: string
+}
+
+export interface PreviewSurfaceSceneUpdateParams {
+  revision: number
+  scene: Scene | null
+  layout: LayoutSettings
+  activeScreen?: StreamScreen | null
+}
 
 export interface PreviewSurfaceStatus {
   state: PreviewSurfaceState
@@ -1044,6 +1075,7 @@ export interface VideorcApi {
   getNativePreviewSurfaceMode: () => Promise<boolean>
   createNativePreviewSurface: (bounds: PreviewSurfaceBounds) => Promise<PreviewSurfaceStatus>
   updateNativePreviewSurfaceBounds: (bounds: PreviewSurfaceBounds) => Promise<PreviewSurfaceStatus>
+  updateNativePreviewSurfaceScene: (scene: PreviewSurfaceSceneUpdateParams) => Promise<PreviewSurfaceStatus>
   destroyNativePreviewSurface: () => Promise<PreviewSurfaceStatus>
   getNativePreviewSurfaceStatus: () => Promise<PreviewSurfaceStatus>
   openSystemPermissions: (pane?: SystemPermissionPane) => Promise<void>

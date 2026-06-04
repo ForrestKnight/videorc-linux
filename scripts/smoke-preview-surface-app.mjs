@@ -27,8 +27,12 @@ async function runPreviewSurfaceSmoke(connection, smoke) {
   const ws = await connectBackend(connection, timeoutMs)
   try {
     await smokeCommand(smoke, 'open-layout-tab')
+    const bootstrap = await smokeCommand(smoke, 'inspect-native-preview-bootstrap')
+    assertNativeBootstrap(bootstrap)
     const firstStatus = await waitForNativeSurface(ws)
     await assertJpegFallbackInactive(connection)
+    const sceneExercise = await smokeCommand(smoke, 'exercise-native-preview-scene')
+    assertSceneExercise(sceneExercise)
 
     const firstMeasurement = await smokeCommand(smoke, 'measure-native-preview-surface', {
       durationMs: measurementMs
@@ -56,7 +60,7 @@ async function runPreviewSurfaceSmoke(connection, smoke) {
     }
 
     console.log(
-      `Preview surface smoke: native ${format(firstMeasurement.measuredFps)}fps initial, ${format(resizedMeasurement.measuredFps)}fps after resize, frames ${resizedStatus.framesRendered}, p95 ${format(resizedMeasurement.intervalP95Ms)}ms, resize count ${resizedDiagnostics.previewSurfaceResizeCount}`
+      `Preview surface smoke: native ${format(firstMeasurement.measuredFps)}fps initial, ${format(resizedMeasurement.measuredFps)}fps after resize, scene update ${format(sceneExercise.updateLatencyMs)}ms, frames ${resizedStatus.framesRendered}, p95 ${format(resizedMeasurement.intervalP95Ms)}ms, resize count ${resizedDiagnostics.previewSurfaceResizeCount}`
     )
   } finally {
     ws.close()
@@ -105,6 +109,36 @@ function assertNativeMeasurement(measurement, label) {
   }
   if (!measurement.width || !measurement.height) {
     throw new Error(`Native preview surface ${label} has invalid dimensions ${measurement.width}x${measurement.height}.`)
+  }
+}
+
+function assertNativeBootstrap(result) {
+  if (!result.hasStage || !result.hasSurface) {
+    throw new Error(`Preview stage did not render: ${JSON.stringify(result)}`)
+  }
+  if (!result.hasVideorcBridge || !result.hasCreateNativePreviewSurface || !result.hasUpdateNativePreviewSurfaceBounds) {
+    throw new Error(`Native preview bridge is incomplete: ${JSON.stringify(result)}`)
+  }
+  if (!result.hasUpdateNativePreviewSurfaceScene) {
+    throw new Error(`Native preview scene bridge is unavailable: ${JSON.stringify(result)}`)
+  }
+  if ((result.surfaceWidth ?? 0) <= 0 || (result.surfaceHeight ?? 0) <= 0) {
+    throw new Error(`Native preview surface has invalid bounds: ${JSON.stringify(result)}`)
+  }
+}
+
+function assertSceneExercise(result) {
+  if (result.sceneRevision !== 2) {
+    throw new Error(`Native preview scene revision ${result.sceneRevision} did not reach the surface.`)
+  }
+  if ((result.layerCount ?? 0) < 2) {
+    throw new Error(`Native preview scene rendered ${result.layerCount ?? 0} layer(s), expected at least 2.`)
+  }
+  if (result.cameraLeft !== '62%') {
+    throw new Error(`Native preview camera layer left was ${result.cameraLeft}, expected 62%.`)
+  }
+  if ((result.updateLatencyMs ?? Number.POSITIVE_INFINITY) > 50) {
+    throw new Error(`Native preview scene update took ${format(result.updateLatencyMs)}ms, expected <= 50ms.`)
   }
 }
 
