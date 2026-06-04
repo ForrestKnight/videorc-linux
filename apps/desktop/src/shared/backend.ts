@@ -780,6 +780,7 @@ export type PreviewSurfaceState = 'unavailable' | 'starting' | 'live' | 'stopped
 export type PreviewSurfaceSource = 'synthetic' | 'camera' | 'screen' | 'window'
 export type CompositorState = 'stopped' | 'starting' | 'live' | 'failed'
 export type CompositorSourceKind = 'camera' | 'screen' | 'window'
+export type CompositorSceneSourceKind = SceneSourceKind | 'screen-image'
 
 export interface CompositorSourceStatus {
   kind: CompositorSourceKind
@@ -793,11 +794,29 @@ export interface CompositorSourceStatus {
   message?: string
 }
 
+export interface CompositorSceneSourceStatus {
+  id: string
+  name: string
+  kind: CompositorSceneSourceKind
+  deviceId?: string
+  visible: boolean
+  transform: SceneTransform
+}
+
+export interface CompositorSceneUpdateParams {
+  revision: number
+  scene: Scene | null
+  layout: LayoutSettings
+  activeScreen?: StreamScreen | null
+}
+
 export interface CompositorStatus {
   state: CompositorState
   targetFps: number
   width: number
   height: number
+  sceneRevision?: number
+  sceneSources: CompositorSceneSourceStatus[]
   sources: CompositorSourceStatus[]
   renderFps?: number
   framesRendered: number

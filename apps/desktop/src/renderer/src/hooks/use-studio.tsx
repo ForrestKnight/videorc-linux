@@ -41,6 +41,7 @@ import type {
   BackendConnection,
   BackendHealth,
   BackendLogEvent,
+  CompositorSceneUpdateParams,
   CompositorStatus,
   DiagnosticStats,
   Device,
@@ -1466,12 +1467,16 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       layout: captureConfig.layout,
       activeScreen: activeScreen ?? null
     }
+    if (client && wsStatus === 'connected') {
+      const compositorParams: CompositorSceneUpdateParams = params
+      await client.request<CompositorStatus>('compositor.scene.update', compositorParams)
+    }
     const status = await window.videorc.updateNativePreviewSurfaceScene(params)
     applyPreviewSurfaceStatus({
       ...status,
       framesRendered: Math.max(status.framesRendered, previewSurfaceStatusRef.current.framesRendered)
     })
-  }, [activeScreen, applyPreviewSurfaceStatus, captureConfig.layout, nativePreviewSurfaceEnabled, scene])
+  }, [activeScreen, applyPreviewSurfaceStatus, captureConfig.layout, client, nativePreviewSurfaceEnabled, scene, wsStatus])
 
   useEffect(() => {
     if (!nativePreviewSurfaceEnabled) {

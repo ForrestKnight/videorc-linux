@@ -869,6 +869,10 @@ pub struct CompositorStatus {
     pub target_fps: u32,
     pub width: u32,
     pub height: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scene_revision: Option<u64>,
+    #[serde(default)]
+    pub scene_sources: Vec<CompositorSceneSourceStatus>,
     #[serde(default)]
     pub sources: Vec<CompositorSourceStatus>,
     pub render_fps: Option<f64>,
@@ -909,6 +913,38 @@ pub enum CompositorSourceKind {
     Camera,
     Screen,
     Window,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CompositorSceneUpdateParams {
+    pub revision: u64,
+    pub scene: Option<Scene>,
+    pub layout: LayoutSettings,
+    #[serde(default)]
+    pub active_screen: Option<StreamScreen>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CompositorSceneSourceStatus {
+    pub id: String,
+    pub name: String,
+    pub kind: CompositorSceneSourceKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<String>,
+    pub visible: bool,
+    pub transform: SceneTransform,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum CompositorSceneSourceKind {
+    Screen,
+    Window,
+    Camera,
+    TestPattern,
+    ScreenImage,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -11,8 +11,10 @@ use crate::diagnostics::{apply_compositor_stats, apply_runtime_diagnostics_snaps
 use crate::preview_camera::{preview_camera_latest_frame_info, preview_camera_status};
 use crate::preview_screen::{preview_screen_latest_frame_info, preview_screen_status};
 use crate::protocol::{
+    CompositorSceneSourceKind, CompositorSceneSourceStatus, CompositorSceneUpdateParams,
     CompositorSourceKind, CompositorSourceStatus, CompositorState, CompositorStatus,
-    PreviewCameraState, PreviewScreenSourceKind, PreviewScreenState, PreviewSurfaceState,
+    LayoutSettings, PreviewCameraState, PreviewScreenSourceKind, PreviewScreenState,
+    PreviewSurfaceState, Scene, SceneSourceKind, SceneTransform, StreamScreen,
 };
 use crate::state::AppState;
 
@@ -21,6 +23,7 @@ pub type CompositorSlot = std::sync::Arc<tokio::sync::Mutex<CompositorRuntime>>;
 #[derive(Debug)]
 pub struct CompositorRuntime {
     pub status: CompositorStatus,
+    scene: Option<CompositorSceneSnapshot>,
     run_id: Option<String>,
     stop_tx: Option<watch::Sender<bool>>,
     render_task: Option<JoinHandle<()>>,
@@ -44,9 +47,18 @@ struct CompositorMetrics {
     sources: Vec<CompositorSourceStatus>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct CompositorSceneSnapshot {
+    revision: u64,
+    scene: Option<Scene>,
+    layout: LayoutSettings,
+    active_screen: Option<StreamScreen>,
+}
+
 pub fn initial_compositor_state() -> CompositorRuntime {
     CompositorRuntime {
         status: stopped_status(Some("Compositor is not running.".to_string())),
+        scene: None,
         run_id: None,
         stop_tx: None,
         render_task: None,
@@ -66,6 +78,8 @@ pub async fn start_synthetic_compositor(
         target_fps,
         width: params.width.max(1),
         height: params.height.max(1),
+        scene_revision: None,
+        scene_sources: Vec::new(),
         sources: Vec::new(),
         render_fps: None,
         frames_rendered: 0,
@@ -125,6 +139,36 @@ pub async fn stop_compositor(state: &AppState) -> CompositorStatus {
 
 pub async fn compositor_status(state: &AppState) -> CompositorStatus {
     state.compositor.lock().await.status.clone()
+}
+
+pub async fn update_compositor_scene(
+    state: &AppState,
+    params: CompositorSceneUpdateParams,
+) -> CompositorStatus {
+    let status = {
+        let mut compositor = state.compositor.lock().await;
+        if compositor
+            .scene
+            .as_ref()
+            .is_some_and(|current| params.revision < current.revision)
+        {
+            return compositor.status.clone();
+        }
+
+        let snapshot = CompositorSceneSnapshot {
+            revision: params.revision,
+            scene: params.scene,
+            layout: params.layout,
+            active_screen: params.active_screen,
+        };
+        compositor.status.scene_revision = Some(snapshot.revision);
+        compositor.status.scene_sources = compositor_scene_sources(&snapshot);
+        compositor.status.updated_at = Utc::now().to_rfc3339();
+        compositor.scene = Some(snapshot);
+        compositor.status.clone()
+    };
+    state.emit_event("compositor.status", status.clone());
+    status
 }
 
 async fn stop_current_compositor(state: &AppState) {
@@ -372,6 +416,8 @@ fn stopped_status(message: Option<String>) -> CompositorStatus {
         target_fps: 0,
         width: 0,
         height: 0,
+        scene_revision: None,
+        scene_sources: Vec::new(),
         sources: Vec::new(),
         render_fps: None,
         frames_rendered: 0,
@@ -381,6 +427,66 @@ fn stopped_status(message: Option<String>) -> CompositorStatus {
         frame_time_p95_ms: None,
         updated_at: Utc::now().to_rfc3339(),
         message,
+    }
+}
+
+fn compositor_scene_sources(
+    snapshot: &CompositorSceneSnapshot,
+) -> Vec<CompositorSceneSourceStatus> {
+    let scene_source_count = snapshot
+        .scene
+        .as_ref()
+        .map(|scene| scene.sources.len())
+        .unwrap_or(0);
+    let mut sources =
+        Vec::with_capacity(scene_source_count + usize::from(snapshot.active_screen.is_some()));
+    if let Some(scene) = &snapshot.scene {
+        sources.extend(
+            scene
+                .sources
+                .iter()
+                .map(|source| CompositorSceneSourceStatus {
+                    id: source.id.clone(),
+                    name: source.name.clone(),
+                    kind: compositor_scene_source_kind(&source.kind),
+                    device_id: source.device_id.clone(),
+                    visible: source.visible,
+                    transform: source.transform.clone(),
+                }),
+        );
+    }
+    if let Some(active_screen) = &snapshot.active_screen {
+        sources.push(CompositorSceneSourceStatus {
+            id: active_screen.id.clone(),
+            name: active_screen.name.clone(),
+            kind: CompositorSceneSourceKind::ScreenImage,
+            device_id: None,
+            visible: true,
+            transform: full_frame_transform(),
+        });
+    }
+    sources
+}
+
+fn compositor_scene_source_kind(kind: &SceneSourceKind) -> CompositorSceneSourceKind {
+    match kind {
+        SceneSourceKind::Screen => CompositorSceneSourceKind::Screen,
+        SceneSourceKind::Window => CompositorSceneSourceKind::Window,
+        SceneSourceKind::Camera => CompositorSceneSourceKind::Camera,
+        SceneSourceKind::TestPattern => CompositorSceneSourceKind::TestPattern,
+    }
+}
+
+fn full_frame_transform() -> SceneTransform {
+    SceneTransform {
+        x: 0.0,
+        y: 0.0,
+        width: 1.0,
+        height: 1.0,
+        crop_left: 0.0,
+        crop_top: 0.0,
+        crop_right: 0.0,
+        crop_bottom: 0.0,
     }
 }
 
@@ -407,6 +513,7 @@ fn percentile(sorted: &[f64], p: u32) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::StreamScreenStatus;
     use crate::storage::Database;
     use tokio::sync::broadcast;
 
@@ -444,6 +551,59 @@ mod tests {
         assert_eq!(status.height, 360);
     }
 
+    #[tokio::test]
+    async fn compositor_scene_update_keeps_latest_revision() {
+        let state = test_state();
+        let scene = crate::scene::default_scene();
+        let layout = crate::protocol::default_layout_settings();
+        let status = update_compositor_scene(
+            &state,
+            CompositorSceneUpdateParams {
+                revision: 10,
+                scene: Some(scene.clone()),
+                layout: layout.clone(),
+                active_screen: None,
+            },
+        )
+        .await;
+
+        assert_eq!(status.scene_revision, Some(10));
+        assert_eq!(status.scene_sources.len(), scene.sources.len());
+
+        let stale = update_compositor_scene(
+            &state,
+            CompositorSceneUpdateParams {
+                revision: 9,
+                scene: None,
+                layout: layout.clone(),
+                active_screen: Some(test_stream_screen("stale-screen")),
+            },
+        )
+        .await;
+
+        assert_eq!(stale.scene_revision, Some(10));
+        assert_eq!(stale.scene_sources.len(), scene.sources.len());
+
+        let newest = update_compositor_scene(
+            &state,
+            CompositorSceneUpdateParams {
+                revision: 11,
+                scene: None,
+                layout,
+                active_screen: Some(test_stream_screen("new-screen")),
+            },
+        )
+        .await;
+
+        assert_eq!(newest.scene_revision, Some(11));
+        assert_eq!(newest.scene_sources.len(), 1);
+        assert_eq!(newest.scene_sources[0].id, "new-screen");
+        assert_eq!(
+            newest.scene_sources[0].kind,
+            CompositorSceneSourceKind::ScreenImage
+        );
+    }
+
     #[test]
     fn compositor_frame_age_uses_latest_real_source_age() {
         let sources = vec![
@@ -472,5 +632,18 @@ mod tests {
         ];
 
         assert_eq!(compositor_frame_age_ms(&sources, 0), 130);
+    }
+
+    fn test_stream_screen(id: &str) -> StreamScreen {
+        StreamScreen {
+            id: id.to_string(),
+            name: format!("Screen {id}"),
+            image_path: format!("/tmp/{id}.png"),
+            thumbnail_path: None,
+            sort_order: 1,
+            status: StreamScreenStatus::Ready,
+            created_at: "2026-06-04T00:00:00Z".to_string(),
+            updated_at: "2026-06-04T00:00:00Z".to_string(),
+        }
     }
 }

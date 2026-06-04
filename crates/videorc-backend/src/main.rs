@@ -47,7 +47,7 @@ use axum::response::Html;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
-use compositor::compositor_status;
+use compositor::{compositor_status, update_compositor_scene};
 use futures_util::stream;
 use futures_util::{SinkExt, StreamExt};
 use preview_camera::{
@@ -1146,6 +1146,17 @@ async fn handle_text_message(state: &AppState, text: &str) -> ServerResponse {
         "compositor.status" => {
             let status = compositor_status(state).await;
             ServerResponse::ok(command.id, status)
+        }
+        "compositor.scene.update" => {
+            match serde_json::from_value::<protocol::CompositorSceneUpdateParams>(command.params) {
+                Ok(params) => {
+                    let status = update_compositor_scene(state, params).await;
+                    ServerResponse::ok(command.id, status)
+                }
+                Err(error) => {
+                    ServerResponse::error(command.id, "invalid-params", error.to_string())
+                }
+            }
         }
         "preview.camera.start" => {
             match serde_json::from_value::<protocol::PreviewCameraStartParams>(command.params) {
