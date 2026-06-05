@@ -237,13 +237,19 @@ export function avSkewMs(probe) {
   const video = probe.video
   const audio = probe.audio?.[0]
   if (!video || !audio) return null
+  // Report the WORSE of the start-time offset and the duration mismatch. A constant audio
+  // delay (e.g. the mic starting late) shows up as equal start_times but a shorter audio
+  // stream — so trusting start_time alone misses it (real recordings have start_time=0 on
+  // both streams yet can be hundreds of ms out of sync).
+  let skew = null
   if (Number.isFinite(video.startTime) && Number.isFinite(audio.startTime)) {
-    return Math.abs(video.startTime - audio.startTime) * 1000
+    skew = Math.abs(video.startTime - audio.startTime) * 1000
   }
   if (Number.isFinite(video.duration) && Number.isFinite(audio.duration)) {
-    return Math.abs(video.duration - audio.duration) * 1000
+    const durationSkew = Math.abs(video.duration - audio.duration) * 1000
+    skew = skew == null ? durationSkew : Math.max(skew, durationSkew)
   }
-  return null
+  return skew
 }
 
 function parseFraction(value) {

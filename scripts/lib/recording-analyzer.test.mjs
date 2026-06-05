@@ -148,7 +148,7 @@ describe('audioPtsGaps', () => {
 })
 
 describe('avSkewMs', () => {
-  it('prefers start-time offset', () => {
+  it('reports the start-time offset', () => {
     const probe = { video: { startTime: 0.0, duration: 3 }, audio: [{ startTime: 0.12, duration: 3 }] }
     assert.ok(Math.abs(avSkewMs(probe) - 120) < 1e-6)
   })
@@ -156,6 +156,12 @@ describe('avSkewMs', () => {
   it('falls back to duration mismatch', () => {
     const probe = { video: { duration: 3.0 }, audio: [{ duration: 3.2 }] }
     assert.ok(Math.abs(avSkewMs(probe) - 200) < 1e-6)
+  })
+
+  it('catches a constant audio delay (equal start_times, shorter audio)', () => {
+    // The real-recording case: both streams start at 0 but audio is 391ms shorter.
+    const probe = { video: { startTime: 0, duration: 14.3 }, audio: [{ startTime: 0, duration: 13.909 }] }
+    assert.ok(Math.abs(avSkewMs(probe) - 391) < 0.5, `got ${avSkewMs(probe)}`)
   })
 })
 
