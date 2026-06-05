@@ -13,12 +13,33 @@ fails a "native" claim — by design.
 
 ## Current state (landed)
 
-- `metal_compositor::composite_sources()` — GPU composite of `GpuSource` layers (BGRA →
-  texture → transformed quad → offscreen BGRA target), readback-tested.
-- Scene/transform math already lives in `scene.rs` (tested) and maps 1:1 to each
-  `GpuSource.dest` rect.
-- Honest diagnostics already expose `previewTransport`, `previewImagePollCounts`,
+- `metal_compositor::composite_sources()` / `MetalSceneCompositor` — GPU composite of
+  `GpuSource` layers (BGRA → texture → transformed quad → offscreen BGRA target), readback-
+  tested. `MetalSceneCompositor` persists the device/queue/pipeline/sampler and is `Send`.
+- `bgra_to_yuv420p()` — full-range BT.601 conversion byte-compatible with the CPU
+  compositor, so GPU frames drop straight into the existing encoder pipeline.
+- **The GPU compositor is wired into the live compositor loop** behind
+  `VIDEORC_METAL_COMPOSITOR` (default off): it composites the cases it reproduces exactly
+  (fill-placed Screen/Window/Camera, no crop/mirror/circle/contain/image) and falls back to
+  the exact CPU compositor otherwise, so enabling it never changes a frame.
+- `make_preview_layer()` / `present_texture_to_layer()` — the GPU-side preview present
+  (CAMetalLayer + blit + present), compile-and-run tested headlessly.
+- Scene/transform math in `scene.rs` (tested) maps 1:1 to each `GpuSource.dest` rect.
+- Honest diagnostics expose `previewTransport`, `previewImagePollCounts`,
   `recordingProtected`, `encodeBackend`, and the at-risk classification.
+
+## What remains (on-device only)
+
+1. **Electron native view (Phase 2).** Embed the `CAMetalLayer` (driven by
+   `present_texture_to_layer`) in a native `NSView` over the React preview rect, and stop
+   the PNG polling on that path. This lives in Electron's AppKit main-thread runtime — it
+   cannot be built or visually validated from the backend process or headlessly.
+2. **GPU shader feature-completeness (Phase 3).** Extend the fragment path to crop, camera
+   mirror, circle mask, and fit/contain so the GPU path covers every scene the CPU path
+   does (today those fall back to CPU).
+3. **Zero-copy + load validation.** `CVMetalTextureCache` import of camera/screen
+   `CVPixelBuffer`s and an IOSurface export to `h264_videotoolbox`, validated against the
+   p95 frame-time budget under real 1080p/1440p load, and the human OBS side-by-side.
 
 ## Phase 3 — replace the CPU compositor hot path
 
