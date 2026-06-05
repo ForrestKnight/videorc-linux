@@ -673,8 +673,22 @@ fn try_gpu_compose(
 ) -> Option<Vec<u8>> {
     let gpu = gpu?;
     let snapshot = inputs.snapshot?;
-    if inputs.active_image_source.is_some() {
-        return None;
+    if let Some(image) = inputs
+        .active_image_source
+        .and_then(|source| source.rgba.as_ref().zip(source.width.zip(source.height)))
+    {
+        let (rgba, (image_width, image_height)) = image;
+        let bgra = rgba_to_bgra_bytes(rgba);
+        let sources = [crate::metal_compositor::GpuSource {
+            bgra: &bgra,
+            width: image_width as usize,
+            height: image_height as usize,
+            dest: [0.0, 0.0, 1.0, 1.0],
+            crop: [0.0; 4],
+            mirror: false,
+            circle: false,
+        }];
+        return gpu.compose_yuv420p(inputs.width as usize, inputs.height as usize, &sources);
     }
     let scene = snapshot.scene.as_ref()?;
     let layout = &snapshot.layout;
@@ -763,6 +777,15 @@ fn gpu_source_placement(
         (1.0 - ((fit.source_y + fit.source_height) / source_height)).clamp(0.0, 1.0) as f32,
     ];
     Some((dest, crop))
+}
+
+#[cfg(target_os = "macos")]
+fn rgba_to_bgra_bytes(rgba: &[u8]) -> Vec<u8> {
+    let mut bgra = Vec::with_capacity(rgba.len());
+    for pixel in rgba.chunks_exact(4) {
+        bgra.extend_from_slice(&[pixel[2], pixel[1], pixel[0], pixel[3]]);
+    }
+    bgra
 }
 #[cfg(not(target_os = "macos"))]
 fn try_gpu_compose(
@@ -1845,6 +1868,15 @@ mod tests {
 
         assert_eq!(dest, [0.0, 0.25, 1.0, 0.5]);
         assert_eq!(crop, [0.0, 0.0, 0.0, 0.0]);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn rgba_to_bgra_bytes_prepares_cached_images_for_metal() {
+        assert_eq!(
+            rgba_to_bgra_bytes(&[10, 20, 30, 40, 50, 60, 70, 80]),
+            vec![30, 20, 10, 40, 70, 60, 50, 80]
+        );
     }
 
     fn test_state() -> AppState {
