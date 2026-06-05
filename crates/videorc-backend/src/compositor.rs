@@ -6,7 +6,7 @@ use std::time::{Instant, SystemTime};
 use chrono::Utc;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
-use tokio::time::{Duration, MissedTickBehavior};
+use tokio::time::{Duration, MissedTickBehavior, sleep};
 use uuid::Uuid;
 
 use crate::compositor_synthetic::SyntheticMovingSource;
@@ -46,6 +46,7 @@ pub struct CompositorRuntime {
     scene: Option<CompositorSceneSnapshot>,
     image_sources: HashMap<String, CompositorImageSource>,
     frame_store: CompositorFrameStore,
+    latest_frame_evidence: Option<CompositorFrameEvidence>,
     run_id: Option<String>,
     stop_tx: Option<watch::Sender<bool>>,
     render_task: Option<JoinHandle<()>>,
@@ -56,6 +57,35 @@ pub struct CompositorStartParams {
     pub target_fps: u32,
     pub width: u32,
     pub height: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompositorFrameEvidence {
+    pub sequence: u64,
+    pub width: u32,
+    pub height: u32,
+    pub has_real_source: bool,
+    pub camera_sequence: Option<u64>,
+    pub screen_sequence: Option<u64>,
+    pub published_at: Instant,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct CompositorStartupBarrierParams {
+    pub width: u32,
+    pub height: u32,
+    pub min_consecutive_frames: u32,
+    pub timeout: Duration,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompositorStartupBarrierResult {
+    pub ready: bool,
+    pub wait_ms: u64,
+    pub frames_observed: u32,
+    pub first_source_frame_ms: Option<u64>,
+    pub first_full_resolution_frame_ms: Option<u64>,
+    pub timeout_reason: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -94,6 +124,7 @@ pub fn initial_compositor_state() -> CompositorRuntime {
         scene: None,
         image_sources: HashMap::new(),
         frame_store: Arc::new(StdMutex::new(FrameStore::new(2))),
+        latest_frame_evidence: None,
         run_id: None,
         stop_tx: None,
         render_task: None,
@@ -148,6 +179,8 @@ pub async fn start_synthetic_compositor(
 
     {
         let mut compositor = state.compositor.lock().await;
+        compositor.frame_store = Arc::new(StdMutex::new(FrameStore::new(2)));
+        compositor.latest_frame_evidence = None;
         compositor.status = status.clone();
         compositor.run_id = Some(run_id);
         compositor.stop_tx = Some(stop_tx);
@@ -190,6 +223,7 @@ pub async fn stop_compositor(state: &AppState) -> CompositorStatus {
     {
         let mut compositor = state.compositor.lock().await;
         compositor.status = status.clone();
+        compositor.latest_frame_evidence = None;
     }
     state.emit_event("compositor.status", status.clone());
     status
@@ -201,6 +235,82 @@ pub async fn compositor_status(state: &AppState) -> CompositorStatus {
 
 pub async fn compositor_frame_store(state: &AppState) -> CompositorFrameStore {
     state.compositor.lock().await.frame_store.clone()
+}
+
+pub async fn compositor_latest_frame_evidence(state: &AppState) -> Option<CompositorFrameEvidence> {
+    state.compositor.lock().await.latest_frame_evidence
+}
+
+pub async fn wait_for_compositor_startup_frames(
+    state: &AppState,
+    params: CompositorStartupBarrierParams,
+) -> CompositorStartupBarrierResult {
+    let started_at = Instant::now();
+    let min_consecutive = params.min_consecutive_frames.max(1);
+    let mut frames_observed = 0_u32;
+    let mut last_sequence = None;
+    let mut first_source_frame_ms = None;
+    let mut first_full_resolution_frame_ms = None;
+    let mut timeout_reason = "waiting for compositor frame".to_string();
+
+    loop {
+        if let Some(evidence) = compositor_latest_frame_evidence(state).await {
+            if evidence.has_real_source && first_source_frame_ms.is_none() {
+                first_source_frame_ms = Some(started_at.elapsed().as_millis() as u64);
+            }
+
+            if evidence.width == params.width
+                && evidence.height == params.height
+                && evidence.has_real_source
+            {
+                if first_full_resolution_frame_ms.is_none() {
+                    first_full_resolution_frame_ms = Some(started_at.elapsed().as_millis() as u64);
+                }
+                if last_sequence != Some(evidence.sequence) {
+                    frames_observed = frames_observed.saturating_add(1);
+                    last_sequence = Some(evidence.sequence);
+                }
+                if frames_observed >= min_consecutive {
+                    return CompositorStartupBarrierResult {
+                        ready: true,
+                        wait_ms: started_at.elapsed().as_millis() as u64,
+                        frames_observed,
+                        first_source_frame_ms,
+                        first_full_resolution_frame_ms,
+                        timeout_reason: None,
+                    };
+                }
+                timeout_reason = format!(
+                    "only {frames_observed}/{min_consecutive} target-resolution compositor frame(s) observed"
+                );
+            } else {
+                frames_observed = 0;
+                last_sequence = None;
+                timeout_reason =
+                    if evidence.width != params.width || evidence.height != params.height {
+                        format!(
+                            "latest compositor frame is {}x{}, expected {}x{}",
+                            evidence.width, evidence.height, params.width, params.height
+                        )
+                    } else {
+                        "latest compositor frame has no real source".to_string()
+                    };
+            }
+        }
+
+        if started_at.elapsed() >= params.timeout {
+            return CompositorStartupBarrierResult {
+                ready: false,
+                wait_ms: started_at.elapsed().as_millis() as u64,
+                frames_observed,
+                first_source_frame_ms,
+                first_full_resolution_frame_ms,
+                timeout_reason: Some(timeout_reason),
+            };
+        }
+
+        sleep(Duration::from_millis(10)).await;
+    }
 }
 
 pub async fn update_compositor_scene(
@@ -336,6 +446,8 @@ async fn stop_current_compositor(state: &AppState) {
     if let Some(task) = previous_task {
         task.abort();
     }
+    let mut compositor = state.compositor.lock().await;
+    compositor.latest_frame_evidence = None;
 }
 
 async fn run_synthetic_compositor_loop(
@@ -507,8 +619,12 @@ fn is_repeated_compositor_frame(
 
 /// Whether the flag-gated Metal/GPU compositor path is requested.
 fn metal_compositor_enabled() -> bool {
-    std::env::var("VIDEORC_METAL_COMPOSITOR")
-        .is_ok_and(|value| matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "on"))
+    std::env::var("VIDEORC_METAL_COMPOSITOR").is_ok_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "on"
+        )
+    })
 }
 
 #[cfg(target_os = "macos")]
@@ -546,7 +662,10 @@ fn new_gpu_compositor() -> Option<GpuCompositor> {
 /// used instead — enabling the flag therefore never produces a frame that differs from the
 /// CPU path; it only offloads the cases it can match.
 #[cfg(target_os = "macos")]
-fn try_gpu_compose(gpu: Option<&GpuCompositor>, inputs: &CompositorRenderInputs<'_>) -> Option<Vec<u8>> {
+fn try_gpu_compose(
+    gpu: Option<&GpuCompositor>,
+    inputs: &CompositorRenderInputs<'_>,
+) -> Option<Vec<u8>> {
     let gpu = gpu?;
     let snapshot = inputs.snapshot?;
     if inputs.active_image_source.is_some() {
@@ -613,7 +732,10 @@ fn try_gpu_compose(gpu: Option<&GpuCompositor>, inputs: &CompositorRenderInputs<
     gpu.compose_yuv420p(inputs.width as usize, inputs.height as usize, &sources)
 }
 #[cfg(not(target_os = "macos"))]
-fn try_gpu_compose(_gpu: Option<&GpuCompositor>, _inputs: &CompositorRenderInputs<'_>) -> Option<Vec<u8>> {
+fn try_gpu_compose(
+    _gpu: Option<&GpuCompositor>,
+    _inputs: &CompositorRenderInputs<'_>,
+) -> Option<Vec<u8>> {
     None
 }
 
@@ -640,40 +762,56 @@ async fn publish_compositor_frame(
     };
     let camera_frame = preview_camera_latest_frame(state).await;
     let screen_frame = preview_screen_latest_frame(state).await;
+    let has_image_source = active_image_source
+        .as_ref()
+        .is_some_and(|source| source.rgba.is_some());
     let fingerprint = SourceFrameFingerprint {
         camera: camera_frame.as_ref().map(|(frame, _layout)| frame.sequence),
         screen: screen_frame.as_ref().map(|frame| frame.sequence),
     };
     let captured_at = Instant::now();
-    let mut store = frame_store
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let mut bytes = store.checkout_buffer(raw_yuv420p_len(width, height));
-    let inputs = CompositorRenderInputs {
-        sequence,
-        width,
-        height,
-        snapshot: snapshot.as_ref(),
-        active_image_source: active_image_source.as_ref(),
-        camera_frame: camera_frame.as_ref().map(|(frame, _layout)| frame),
-        screen_frame: screen_frame.as_ref(),
-    };
-    // GPU path for the cases it reproduces exactly; otherwise the CPU compositor.
-    match try_gpu_compose(gpu, &inputs) {
-        Some(yuv) => {
-            let len = bytes.len().min(yuv.len());
-            bytes[..len].copy_from_slice(&yuv[..len]);
+    {
+        let mut store = frame_store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut bytes = store.checkout_buffer(raw_yuv420p_len(width, height));
+        let inputs = CompositorRenderInputs {
+            sequence,
+            width,
+            height,
+            snapshot: snapshot.as_ref(),
+            active_image_source: active_image_source.as_ref(),
+            camera_frame: camera_frame.as_ref().map(|(frame, _layout)| frame),
+            screen_frame: screen_frame.as_ref(),
+        };
+        // GPU path for the cases it reproduces exactly; otherwise the CPU compositor.
+        match try_gpu_compose(gpu, &inputs) {
+            Some(yuv) => {
+                let len = bytes.len().min(yuv.len());
+                bytes[..len].copy_from_slice(&yuv[..len]);
+            }
+            None => render_compositor_yuv420p_frame(inputs, &mut bytes),
         }
-        None => render_compositor_yuv420p_frame(inputs, &mut bytes),
+        store.publish(
+            sequence,
+            width,
+            height,
+            CompositorPixelFormat::Yuv420p,
+            captured_at,
+            bytes,
+        );
     }
-    store.publish(
+    let evidence = CompositorFrameEvidence {
         sequence,
         width,
         height,
-        CompositorPixelFormat::Yuv420p,
-        captured_at,
-        bytes,
-    );
+        has_real_source: fingerprint.has_real_source() || has_image_source,
+        camera_sequence: fingerprint.camera,
+        screen_sequence: fingerprint.screen,
+        published_at: captured_at,
+    };
+    let mut compositor = state.compositor.lock().await;
+    compositor.latest_frame_evidence = Some(evidence);
     CompositorPublishResult {
         fallback_frame_age_ms: captured_at.elapsed().as_millis() as u64,
         fingerprint,
@@ -1512,14 +1650,23 @@ mod tests {
     #[test]
     fn an_advancing_source_is_not_a_repeat() {
         let prev = fp(Some(5), Some(9));
-        assert!(!is_repeated_compositor_frame(Some(prev), fp(Some(6), Some(9))));
-        assert!(!is_repeated_compositor_frame(Some(prev), fp(Some(5), Some(10))));
+        assert!(!is_repeated_compositor_frame(
+            Some(prev),
+            fp(Some(6), Some(9))
+        ));
+        assert!(!is_repeated_compositor_frame(
+            Some(prev),
+            fp(Some(5), Some(10))
+        ));
     }
 
     #[test]
     fn an_appearing_or_disappearing_source_is_not_a_repeat() {
         let prev = fp(None, Some(9));
-        assert!(!is_repeated_compositor_frame(Some(prev), fp(Some(1), Some(9))));
+        assert!(!is_repeated_compositor_frame(
+            Some(prev),
+            fp(Some(1), Some(9))
+        ));
         let prev = fp(Some(1), Some(9));
         assert!(!is_repeated_compositor_frame(Some(prev), fp(None, Some(9))));
     }
@@ -1532,6 +1679,25 @@ mod tests {
             events,
             Database::open_in_memory_for_tests(),
         )
+    }
+
+    async fn set_latest_frame_evidence(
+        state: &AppState,
+        sequence: u64,
+        width: u32,
+        height: u32,
+        has_real_source: bool,
+    ) {
+        let mut compositor = state.compositor.lock().await;
+        compositor.latest_frame_evidence = Some(CompositorFrameEvidence {
+            sequence,
+            width,
+            height,
+            has_real_source,
+            camera_sequence: has_real_source.then_some(sequence),
+            screen_sequence: None,
+            published_at: Instant::now(),
+        });
     }
 
     #[tokio::test]
@@ -1556,6 +1722,111 @@ mod tests {
         assert!(status.render_fps.unwrap_or_default() >= 30.0);
         assert_eq!(status.width, 640);
         assert_eq!(status.height, 360);
+    }
+
+    #[tokio::test]
+    async fn startup_barrier_waits_for_consecutive_target_real_frames() {
+        let state = test_state();
+        let writer_state = state.clone();
+        tokio::spawn(async move {
+            sleep(Duration::from_millis(10)).await;
+            set_latest_frame_evidence(&writer_state, 1, 1920, 1080, true).await;
+            sleep(Duration::from_millis(10)).await;
+            set_latest_frame_evidence(&writer_state, 2, 1920, 1080, true).await;
+        });
+
+        let result = wait_for_compositor_startup_frames(
+            &state,
+            CompositorStartupBarrierParams {
+                width: 1920,
+                height: 1080,
+                min_consecutive_frames: 2,
+                timeout: Duration::from_millis(250),
+            },
+        )
+        .await;
+
+        assert!(result.ready, "{result:?}");
+        assert_eq!(result.frames_observed, 2);
+        assert!(result.first_source_frame_ms.is_some());
+        assert!(result.first_full_resolution_frame_ms.is_some());
+        assert_eq!(result.timeout_reason, None);
+    }
+
+    #[tokio::test]
+    async fn startup_barrier_times_out_on_preview_sized_or_synthetic_frames() {
+        let state = test_state();
+        set_latest_frame_evidence(&state, 1, 640, 360, true).await;
+
+        let preview_sized = wait_for_compositor_startup_frames(
+            &state,
+            CompositorStartupBarrierParams {
+                width: 1920,
+                height: 1080,
+                min_consecutive_frames: 1,
+                timeout: Duration::from_millis(20),
+            },
+        )
+        .await;
+        assert!(!preview_sized.ready);
+        assert!(
+            preview_sized
+                .timeout_reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("640x360"))
+        );
+
+        set_latest_frame_evidence(&state, 2, 1920, 1080, false).await;
+        let synthetic = wait_for_compositor_startup_frames(
+            &state,
+            CompositorStartupBarrierParams {
+                width: 1920,
+                height: 1080,
+                min_consecutive_frames: 1,
+                timeout: Duration::from_millis(20),
+            },
+        )
+        .await;
+        assert!(!synthetic.ready);
+        assert!(
+            synthetic
+                .timeout_reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("no real source"))
+        );
+    }
+
+    #[tokio::test]
+    async fn compositor_start_replaces_stale_frame_store() {
+        let state = test_state();
+        let old_store = compositor_frame_store(&state).await;
+        {
+            let mut store = old_store
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            store.publish(
+                99,
+                640,
+                360,
+                CompositorPixelFormat::Yuv420p,
+                Instant::now(),
+                vec![0; raw_yuv420p_len(640, 360)],
+            );
+        }
+
+        start_synthetic_compositor(
+            state.clone(),
+            CompositorStartParams {
+                target_fps: 30,
+                width: 1920,
+                height: 1080,
+            },
+        )
+        .await;
+        let new_store = compositor_frame_store(&state).await;
+        stop_compositor(&state).await;
+
+        assert!(!Arc::ptr_eq(&old_store, &new_store));
     }
 
     #[tokio::test]

@@ -839,6 +839,20 @@ pub struct DiagnosticStats {
     /// FFmpeg capture. Drives the "Recording protected" badge.
     #[serde(default)]
     pub recording_protected: bool,
+    /// Startup barrier state for protected recordings. The encoder bridge must not start
+    /// until the compositor has produced fresh target-resolution real-source frames.
+    #[serde(default)]
+    pub recording_startup_barrier_state: Option<String>,
+    #[serde(default)]
+    pub recording_startup_barrier_wait_ms: Option<u64>,
+    #[serde(default)]
+    pub recording_startup_barrier_timeout_reason: Option<String>,
+    #[serde(default)]
+    pub first_source_frame_ms: Option<u64>,
+    #[serde(default)]
+    pub first_full_resolution_compositor_frame_ms: Option<u64>,
+    #[serde(default)]
+    pub first_encoded_frame_ms: Option<u64>,
     pub updated_at: String,
 }
 

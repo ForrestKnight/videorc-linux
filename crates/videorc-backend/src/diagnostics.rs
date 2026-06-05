@@ -126,6 +126,12 @@ pub fn idle_diagnostics() -> DiagnosticStats {
         recording_at_risk: false,
         recording_risk_reasons: Vec::new(),
         recording_protected: false,
+        recording_startup_barrier_state: None,
+        recording_startup_barrier_wait_ms: None,
+        recording_startup_barrier_timeout_reason: None,
+        first_source_frame_ms: None,
+        first_full_resolution_compositor_frame_ms: None,
+        first_encoded_frame_ms: None,
         updated_at: Utc::now().to_rfc3339(),
     }
 }
@@ -352,6 +358,31 @@ pub fn apply_encoder_bridge_stats(
     if stats.encoder_bridge_error.is_some() {
         stats.bottleneck = DiagnosticBottleneck::Encoder;
     }
+    stats.updated_at = Utc::now().to_rfc3339();
+    stats
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordingStartupBarrierDiagnosticSnapshot {
+    pub state: String,
+    pub wait_ms: u64,
+    pub timeout_reason: Option<String>,
+    pub first_source_frame_ms: Option<u64>,
+    pub first_full_resolution_compositor_frame_ms: Option<u64>,
+    pub first_encoded_frame_ms: Option<u64>,
+}
+
+pub fn apply_recording_startup_barrier_stats(
+    mut stats: DiagnosticStats,
+    barrier: RecordingStartupBarrierDiagnosticSnapshot,
+) -> DiagnosticStats {
+    stats.recording_startup_barrier_state = Some(barrier.state);
+    stats.recording_startup_barrier_wait_ms = Some(barrier.wait_ms);
+    stats.recording_startup_barrier_timeout_reason = barrier.timeout_reason;
+    stats.first_source_frame_ms = barrier.first_source_frame_ms;
+    stats.first_full_resolution_compositor_frame_ms =
+        barrier.first_full_resolution_compositor_frame_ms;
+    stats.first_encoded_frame_ms = barrier.first_encoded_frame_ms;
     stats.updated_at = Utc::now().to_rfc3339();
     stats
 }
@@ -703,7 +734,36 @@ mod tests {
         gappy.mic_capture_coverage = Some(0.5);
         let (risk, reasons) = classify_recording_risk(&gappy);
         assert!(risk);
-        assert!(reasons.iter().any(|reason| reason.contains("microphone capture gap")));
+        assert!(
+            reasons
+                .iter()
+                .any(|reason| reason.contains("microphone capture gap"))
+        );
+    }
+
+    #[test]
+    fn startup_barrier_stats_are_recorded_in_diagnostics() {
+        let stats = apply_recording_startup_barrier_stats(
+            starting_diagnostics("s", 30, "record"),
+            RecordingStartupBarrierDiagnosticSnapshot {
+                state: "ready".to_string(),
+                wait_ms: 42,
+                timeout_reason: None,
+                first_source_frame_ms: Some(10),
+                first_full_resolution_compositor_frame_ms: Some(20),
+                first_encoded_frame_ms: Some(43),
+            },
+        );
+
+        assert_eq!(
+            stats.recording_startup_barrier_state.as_deref(),
+            Some("ready")
+        );
+        assert_eq!(stats.recording_startup_barrier_wait_ms, Some(42));
+        assert_eq!(stats.recording_startup_barrier_timeout_reason, None);
+        assert_eq!(stats.first_source_frame_ms, Some(10));
+        assert_eq!(stats.first_full_resolution_compositor_frame_ms, Some(20));
+        assert_eq!(stats.first_encoded_frame_ms, Some(43));
     }
 
     #[test]

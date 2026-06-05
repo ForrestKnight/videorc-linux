@@ -19,24 +19,26 @@ use tokio::time::{Duration, sleep, timeout};
 use uuid::Uuid;
 
 use crate::audio::{
-    AudioCaptureStats, AudioProcessingSettings, NATIVE_AUDIO_CHANNELS, NATIVE_AUDIO_FFMPEG_QUEUE_SIZE,
-    NATIVE_AUDIO_SAMPLE_RATE, NativeAudioCaptureSession, NativeAudioSource, attach_fifo_writer,
-    audio_capture_coverage, create_native_audio_fifo, native_audio_fifo_path,
-    parse_coreaudio_microphone_id, start_native_audio_source,
+    AudioCaptureStats, AudioProcessingSettings, NATIVE_AUDIO_CHANNELS,
+    NATIVE_AUDIO_FFMPEG_QUEUE_SIZE, NATIVE_AUDIO_SAMPLE_RATE, NativeAudioCaptureSession,
+    NativeAudioSource, attach_fifo_writer, audio_capture_coverage, create_native_audio_fifo,
+    native_audio_fifo_path, parse_coreaudio_microphone_id, start_native_audio_source,
 };
 use crate::camera_capture::{native_camera_name_for_id, parse_native_camera_id};
 use crate::compositor::{
-    CompositorStartParams, compositor_frame_store, start_synthetic_compositor,
-    update_compositor_scene,
+    CompositorStartParams, CompositorStartupBarrierParams, CompositorStartupBarrierResult,
+    compositor_frame_store, start_synthetic_compositor, update_compositor_scene,
+    wait_for_compositor_startup_frames,
 };
 use crate::devices::{
     find_avfoundation_camera_index, find_avfoundation_screen_index,
     find_avfoundation_screen_index_for_native_display_id,
 };
 use crate::diagnostics::{
-    apply_active_scene_revision, apply_audio_stats, apply_duplicate_capture_sources,
-    apply_preview_frame_age, apply_preview_stats, apply_runtime_diagnostics_snapshot,
-    apply_stream_health, starting_diagnostics,
+    RecordingStartupBarrierDiagnosticSnapshot, apply_active_scene_revision, apply_audio_stats,
+    apply_duplicate_capture_sources, apply_preview_frame_age, apply_preview_stats,
+    apply_recording_startup_barrier_stats, apply_runtime_diagnostics_snapshot, apply_stream_health,
+    starting_diagnostics,
 };
 use crate::encoder_bridge::{EncoderBridgeRecordingSession, start_synthetic_recording_bridge};
 use crate::ffmpeg::{ffprobe_path_for, resolve_ffmpeg_path};
@@ -47,13 +49,12 @@ use crate::preview_screen::preview_screen_latest_frame_info;
 use crate::protocol::{
     AudioSettings, AudioTrack, AudioTrackSource, CameraCorner, CameraFit, CameraShape, CameraSize,
     CameraTransformMode, CompositorSceneUpdateParams, CompositorState, EncodeBackend, HealthLevel,
-    LayoutPreset,
-    LayoutSettings, PreviewCameraState, PreviewLiveParams, PreviewLiveSource, PreviewLiveState,
-    PreviewLiveStatus, PreviewScreenSourceKind, PreviewScreenState, PreviewSnapshot,
-    PreviewSnapshotParams, PreviewSurfaceState, PreviewTransport, RecordingPipelineStage,
-    RecordingState, RecordingStatus, RemuxSessionParams, RtmpPreset, RtmpSettings, Scene,
-    SceneConfigParams, SceneSourceKind, SideBySideCameraSide, SideBySideSplit, StartSessionParams,
-    StreamHealth, VideoPreset, VideoSettings,
+    LayoutPreset, LayoutSettings, PreviewCameraState, PreviewLiveParams, PreviewLiveSource,
+    PreviewLiveState, PreviewLiveStatus, PreviewScreenSourceKind, PreviewScreenState,
+    PreviewSnapshot, PreviewSnapshotParams, PreviewSurfaceState, PreviewTransport,
+    RecordingPipelineStage, RecordingState, RecordingStatus, RemuxSessionParams, RtmpPreset,
+    RtmpSettings, Scene, SceneConfigParams, SceneSourceKind, SideBySideCameraSide, SideBySideSplit,
+    StartSessionParams, StreamHealth, VideoPreset, VideoSettings,
 };
 use crate::repair::{
     GateStatus, MAINTENANCE_CANCELLED, QualityExpectations, QualityThresholds, RepairJob,
@@ -483,6 +484,7 @@ pub async fn start_session(
             height: params.output.video.height,
             fps: SCREEN_OVERLAY_FPS,
         });
+    let mut startup_barrier_result: Option<CompositorStartupBarrierResult> = None;
     let encoder_bridge_frame_store = if use_encoder_bridge {
         let target_fps = recording_compositor_target_fps(&state, &params.output.video).await;
         start_synthetic_compositor(
@@ -512,6 +514,24 @@ pub async fn start_session(
             },
         )
         .await;
+        match await_recording_startup_barrier(
+            &state,
+            &session_id,
+            params.output.video.width,
+            params.output.video.height,
+        )
+        .await
+        {
+            Ok(result) => {
+                startup_barrier_result = Some(result);
+            }
+            Err(error) => {
+                if let Some(fifo_path) = encoder_bridge_fifo.as_ref() {
+                    let _ = std::fs::remove_file(fifo_path);
+                }
+                return Err(error);
+            }
+        }
         Some(compositor_frame_store(&state).await)
     } else {
         None
@@ -592,6 +612,15 @@ pub async fn start_session(
     } else {
         None
     };
+    if let Some(result) = startup_barrier_result.as_ref() {
+        publish_recording_startup_barrier_diagnostics(
+            &state,
+            "encoding",
+            result,
+            Some(result.wait_ms),
+        )
+        .await;
+    }
     pipeline.mark_running();
     let has_native_audio = native_audio_source.is_some();
     // Post-recording quality gate inputs (slice 8): what this session is expected to
@@ -1911,8 +1940,12 @@ async fn sample_native_audio_during_recording(state: AppState, session_id: Strin
         );
         let diagnostic_stats = {
             let mut diagnostics = state.diagnostics.lock().await;
-            let next =
-                apply_audio_stats(diagnostics.clone(), captured_frames, dropped_frames, coverage);
+            let next = apply_audio_stats(
+                diagnostics.clone(),
+                captured_frames,
+                dropped_frames,
+                coverage,
+            );
             *diagnostics = next.clone();
             next
         };
@@ -2695,6 +2728,10 @@ async fn resolve_screen_input(ffmpeg_path: &str, screen_id: Option<&str>) -> Opt
 
 /// Maximum time to wait for the microphone to warm up before starting the video pipeline.
 const MICROPHONE_WARMUP_TIMEOUT: Duration = Duration::from_millis(1500);
+/// Maximum time to wait for fresh target-resolution compositor frames before encoding.
+const RECORDING_STARTUP_BARRIER_TIMEOUT: Duration = Duration::from_millis(2500);
+/// Consecutive target-resolution real-source compositor frames required before encoding.
+const RECORDING_STARTUP_BARRIER_MIN_FRAMES: u32 = 3;
 
 /// Wait for CoreAudio to deliver its first callback (the mic-warmed-up signal) before the
 /// video pipeline starts, so audio and video begin in lockstep instead of the audio
@@ -2718,6 +2755,97 @@ async fn await_microphone_warmup(state: &AppState, stats: Arc<AudioCaptureStats>
             "Microphone warmed up in {}ms; starting video aligned to audio.",
             started_at.elapsed().as_millis()
         ),
+    );
+}
+
+async fn await_recording_startup_barrier(
+    state: &AppState,
+    session_id: &str,
+    width: u32,
+    height: u32,
+) -> Result<CompositorStartupBarrierResult> {
+    publish_recording_startup_barrier_diagnostics(
+        state,
+        "waiting",
+        &CompositorStartupBarrierResult {
+            ready: false,
+            wait_ms: 0,
+            frames_observed: 0,
+            first_source_frame_ms: None,
+            first_full_resolution_frame_ms: None,
+            timeout_reason: None,
+        },
+        None,
+    )
+    .await;
+
+    let result = wait_for_compositor_startup_frames(
+        state,
+        CompositorStartupBarrierParams {
+            width,
+            height,
+            min_consecutive_frames: RECORDING_STARTUP_BARRIER_MIN_FRAMES,
+            timeout: RECORDING_STARTUP_BARRIER_TIMEOUT,
+        },
+    )
+    .await;
+
+    if result.ready {
+        publish_recording_startup_barrier_diagnostics(state, "ready", &result, None).await;
+        let _ = emit_health_event(
+            state,
+            Some(session_id),
+            HealthLevel::Info,
+            "recording-startup-barrier-ready",
+            &format!(
+                "Recording startup waited {}ms for {} fresh {}x{} compositor frame(s).",
+                result.wait_ms, result.frames_observed, width, height
+            ),
+        );
+        return Ok(result);
+    }
+
+    publish_recording_startup_barrier_diagnostics(state, "timed-out", &result, None).await;
+    let reason = result
+        .timeout_reason
+        .clone()
+        .unwrap_or_else(|| "compositor did not produce ready frames".to_string());
+    let message = format!("Recording startup blocked before encoding: {reason}.");
+    let _ = emit_health_event(
+        state,
+        Some(session_id),
+        HealthLevel::Error,
+        "recording-startup-barrier-timeout",
+        &message,
+    );
+    bail!(message)
+}
+
+async fn publish_recording_startup_barrier_diagnostics(
+    state: &AppState,
+    state_label: &str,
+    result: &CompositorStartupBarrierResult,
+    first_encoded_frame_ms: Option<u64>,
+) {
+    let diagnostic_stats = {
+        let mut diagnostics = state.diagnostics.lock().await;
+        let next = apply_recording_startup_barrier_stats(
+            diagnostics.clone(),
+            RecordingStartupBarrierDiagnosticSnapshot {
+                state: state_label.to_string(),
+                wait_ms: result.wait_ms,
+                timeout_reason: result.timeout_reason.clone(),
+                first_source_frame_ms: result.first_source_frame_ms,
+                first_full_resolution_compositor_frame_ms: result.first_full_resolution_frame_ms,
+                first_encoded_frame_ms,
+            },
+        );
+        *diagnostics = next.clone();
+        next
+    };
+    state.emit_event(
+        "diagnostics.stats",
+        apply_runtime_diagnostics_snapshot(diagnostic_stats, state.ffmpeg_work.snapshot()),
     );
 }
 

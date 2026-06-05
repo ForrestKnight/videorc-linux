@@ -1052,6 +1052,13 @@ export interface DiagnosticStats {
   recordingRiskReasons: string[]
   /** True when recording consumes the shared compositor output via the protected encoder-bridge path. */
   recordingProtected: boolean
+  /** Startup barrier state before protected recording begins encoding. */
+  recordingStartupBarrierState?: string
+  recordingStartupBarrierWaitMs?: number
+  recordingStartupBarrierTimeoutReason?: string
+  firstSourceFrameMs?: number
+  firstFullResolutionCompositorFrameMs?: number
+  firstEncodedFrameMs?: number
   previewTargetFps?: number
   previewFrameAgeMs?: number
   previewTransport: PreviewTransport
