@@ -1432,22 +1432,20 @@ async fn handle_text_message(state: &AppState, text: &str) -> ServerResponse {
                 ServerResponse::error(command.id, "live-chat-capability-failed", error.to_string())
             }
         },
-        "liveChat.status" => {
-            ServerResponse::ok(command.id, live_chat::current_status(&state).await)
-        }
+        "liveChat.status" => ServerResponse::ok(command.id, live_chat::current_status(state).await),
         "liveChat.start" => {
             match serde_json::from_value::<live_chat::LiveChatStartParams>(command.params) {
                 Ok(params) => {
-                    ServerResponse::ok(command.id, live_chat::start_live_chat(&state, params).await)
+                    ServerResponse::ok(command.id, live_chat::start_live_chat(state, params).await)
                 }
                 Err(error) => {
                     ServerResponse::error(command.id, "invalid-params", error.to_string())
                 }
             }
         }
-        "liveChat.stop" => ServerResponse::ok(command.id, live_chat::stop_live_chat(&state).await),
+        "liveChat.stop" => ServerResponse::ok(command.id, live_chat::stop_live_chat(state).await),
         "liveChat.clearLocal" => {
-            ServerResponse::ok(command.id, live_chat::clear_local_live_chat(&state).await)
+            ServerResponse::ok(command.id, live_chat::clear_local_live_chat(state).await)
         }
         "platformAccounts.oauth.start" => {
             match serde_json::from_value::<OAuthStartParams>(command.params) {
