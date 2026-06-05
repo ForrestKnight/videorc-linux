@@ -37,6 +37,7 @@ const SHADER_SOURCE: &str = r#"
 #include <metal_stdlib>
 using namespace metal;
 struct VOut { float4 pos [[position]]; float2 uv; };
+struct FragParams { float4 crop; float mirror; float circle; };
 vertex VOut v_main(uint vid [[vertex_id]], const device float4* verts [[buffer(0)]]) {
     VOut out;
     float4 v = verts[vid];
@@ -46,10 +47,33 @@ vertex VOut v_main(uint vid [[vertex_id]], const device float4* verts [[buffer(0
 }
 fragment float4 f_main(VOut in [[stage_in]],
                        texture2d<float> tex [[texture(0)]],
-                       sampler samp [[sampler(0)]]) {
-    return tex.sample(samp, in.uv);
+                       sampler samp [[sampler(0)]],
+                       constant FragParams& params [[buffer(0)]]) {
+    float2 uv = in.uv;
+    // Hard-edge ellipse mask (matches the CPU compositor's inside_ellipse): drop fragments
+    // outside the circle so whatever was drawn underneath (e.g. the screen) shows through.
+    if (params.circle > 0.5) {
+        float2 c = (uv - 0.5) * 2.0;
+        if (dot(c, c) > 1.0) {
+            discard_fragment();
+        }
+    }
+    // Horizontal mirror.
+    float u = (params.mirror > 0.5) ? (1.0 - uv.x) : uv.x;
+    // Crop: sample only the visible region [cl, 1-cr] x [ct, 1-cb] of the source.
+    float cl = params.crop.x, ct = params.crop.y, cr = params.crop.z, cb = params.crop.w;
+    float2 src = float2(cl + u * (1.0 - cl - cr), ct + uv.y * (1.0 - ct - cb));
+    return tex.sample(samp, src);
 }
 "#;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct FragParams {
+    crop: [f32; 4],
+    mirror: f32,
+    circle: f32,
+}
 
 /// One source layer to composite: BGRA8 pixels at `width`×`height`, drawn into the
 /// destination rectangle `dest` = (x, y, w, h) in normalized [0,1] coordinates with the
@@ -58,7 +82,14 @@ pub struct GpuSource<'a> {
     pub bgra: &'a [u8],
     pub width: usize,
     pub height: usize,
+    /// Destination rect (x, y, w, h) in normalized [0,1] coords, top-left origin.
     pub dest: [f32; 4],
+    /// Crop fractions trimmed off each edge of the source (left, top, right, bottom).
+    pub crop: [f32; 4],
+    /// Mirror the source horizontally (camera selfie view).
+    pub mirror: bool,
+    /// Hard-edge circular/elliptical mask over the destination rect.
+    pub circle: bool,
 }
 
 /// True when a Metal device is available on this machine.
@@ -99,47 +130,7 @@ pub fn composite_sources(
     background: [f64; 4],
     sources: &[GpuSource<'_>],
 ) -> Option<Vec<u8>> {
-    let device = MTLCreateSystemDefaultDevice()?;
-    let queue = device.newCommandQueue()?;
-    let pipeline = build_pipeline(&device)?;
-    let sampler = build_sampler(&device)?;
-    let target = make_texture(
-        &device,
-        out_width,
-        out_height,
-        MTLTextureUsage::RenderTarget | MTLTextureUsage::ShaderRead,
-    )?;
-
-    let command_buffer = queue.commandBuffer()?;
-    let encoder = {
-        let pass = clear_pass(&target, background);
-        command_buffer.renderCommandEncoderWithDescriptor(&pass)?
-    };
-    encoder.setRenderPipelineState(&pipeline);
-    unsafe { encoder.setFragmentSamplerState_atIndex(Some(&sampler), 0) };
-
-    for source in sources {
-        let texture = upload_texture(&device, source)?;
-        let vertices = quad_vertices(source.dest);
-        let buffer = unsafe {
-            device.newBufferWithBytes_length_options(
-                NonNull::new(vertices.as_ptr() as *mut c_void)?,
-                std::mem::size_of_val(&vertices),
-                MTLResourceOptions::StorageModeShared,
-            )?
-        };
-        unsafe {
-            encoder.setVertexBuffer_offset_atIndex(Some(&buffer), 0, 0);
-            encoder.setFragmentTexture_atIndex(Some(&texture), 0);
-            encoder.drawPrimitives_vertexStart_vertexCount(MTLPrimitiveType::Triangle, 0, 6);
-        }
-    }
-
-    encoder.endEncoding();
-    command_buffer.commit();
-    command_buffer.waitUntilCompleted();
-
-    Some(read_texture_bgra(&target, out_width, out_height))
+    MetalSceneCompositor::new()?.compose_bgra(out_width, out_height, background, sources)
 }
 
 /// A persisted GPU compositor: device, command queue, render pipeline, and sampler built
@@ -199,9 +190,19 @@ impl MetalSceneCompositor {
                     MTLResourceOptions::StorageModeShared,
                 )?
             };
+            let params = FragParams {
+                crop: source.crop,
+                mirror: f32::from(u8::from(source.mirror)),
+                circle: f32::from(u8::from(source.circle)),
+            };
             unsafe {
                 encoder.setVertexBuffer_offset_atIndex(Some(&buffer), 0, 0);
                 encoder.setFragmentTexture_atIndex(Some(&texture), 0);
+                encoder.setFragmentBytes_length_atIndex(
+                    NonNull::new(std::ptr::addr_of!(params) as *mut c_void)?,
+                    std::mem::size_of::<FragParams>(),
+                    0,
+                );
                 encoder.drawPrimitives_vertexStart_vertexCount(MTLPrimitiveType::Triangle, 0, 6);
             }
         }
@@ -502,11 +503,89 @@ mod tests {
             width: 2,
             height: 2,
             dest: [0.0, 0.0, 1.0, 1.0],
+            crop: [0.0; 4],
+            mirror: false,
+            circle: false,
         }];
         let yuv = compositor.compose_yuv420p(4, 4, &sources).unwrap();
         assert_eq!(yuv.len(), 16 + 2 * 4);
         assert!(yuv[..16].iter().all(|&y| y == 76), "Y plane red");
         assert!(yuv[16..20].iter().all(|&u| u == 85), "U plane red");
+    }
+
+    fn full_frame(bgra: &[u8], w: usize, h: usize, mirror: bool, circle: bool, crop: [f32; 4]) -> GpuSource<'_> {
+        GpuSource {
+            bgra,
+            width: w,
+            height: h,
+            dest: [0.0, 0.0, 1.0, 1.0],
+            crop,
+            mirror,
+            circle,
+        }
+    }
+
+    #[test]
+    fn gpu_circle_mask_discards_corners_or_skips() {
+        if !metal_available() {
+            return;
+        }
+        let out = 8usize;
+        let green = [0u8, 255, 0, 255].repeat(2 * 2);
+        let sources = [full_frame(&green, 2, 2, false, true, [0.0; 4])];
+        // Black background; the circle mask drops the corners so the background shows.
+        let px = composite_sources(out, out, [0.0, 0.0, 0.0, 1.0], &sources).unwrap();
+        assert_eq!(pixel(&px, out, 4, 4), [0, 255, 0, 255], "center is green");
+        assert_eq!(pixel(&px, out, 0, 0), [0, 0, 0, 255], "corner masked to background");
+    }
+
+    #[test]
+    fn gpu_mirror_flips_the_source_horizontally_or_skips() {
+        if !metal_available() {
+            return;
+        }
+        // 2×2 source: column 0 red, column 1 blue (BGRA).
+        let src = [0u8, 0, 255, 255, 255, 0, 0, 255, 0, 0, 255, 255, 255, 0, 0, 255];
+        let sources = [full_frame(&src, 2, 2, true, false, [0.0; 4])];
+        let px = composite_sources(4, 4, [0.0, 0.0, 0.0, 1.0], &sources).unwrap();
+        assert_eq!(pixel(&px, 4, 0, 0), [255, 0, 0, 255], "mirrored left is blue");
+        assert_eq!(pixel(&px, 4, 3, 0), [0, 0, 255, 255], "mirrored right is red");
+    }
+
+    #[test]
+    fn gpu_crop_samples_only_the_visible_region_or_skips() {
+        if !metal_available() {
+            return;
+        }
+        // 4×2 source: left half (cols 0,1) red, right half (cols 2,3) blue.
+        let mut src = Vec::new();
+        for _row in 0..2 {
+            for col in 0..4 {
+                src.extend(if col < 2 { [0, 0, 255, 255] } else { [255, 0, 0, 255] });
+            }
+        }
+        // Crop off the right 50% → only the red half is sampled, stretched to the frame.
+        let sources = [full_frame(&src, 4, 2, false, false, [0.0, 0.0, 0.5, 0.0])];
+        let px = composite_sources(4, 4, [0.0, 0.0, 0.0, 1.0], &sources).unwrap();
+        assert_eq!(pixel(&px, 4, 0, 0), [0, 0, 255, 255], "left red");
+        assert_eq!(pixel(&px, 4, 3, 0), [0, 0, 255, 255], "right still red after crop");
+    }
+
+    #[test]
+    fn gpu_composites_1080p_screen_plus_camera_or_skips() {
+        let Some(compositor) = MetalSceneCompositor::new() else {
+            return;
+        };
+        // A 1080p screen fill + a 320×180 camera in the corner — the common scene at the
+        // real output resolution, proving the GPU path handles full size (not just tiles).
+        let screen = vec![200u8; 1920 * 1080 * 4];
+        let camera = vec![100u8; 320 * 180 * 4];
+        let sources = [
+            GpuSource { bgra: &screen, width: 1920, height: 1080, dest: [0.0, 0.0, 1.0, 1.0], crop: [0.0; 4], mirror: false, circle: false },
+            GpuSource { bgra: &camera, width: 320, height: 180, dest: [0.7, 0.7, 0.28, 0.28], crop: [0.0; 4], mirror: true, circle: false },
+        ];
+        let yuv = compositor.compose_yuv420p(1920, 1080, &sources).unwrap();
+        assert_eq!(yuv.len(), 1920 * 1080 + 2 * (960 * 540));
     }
 
     #[test]
@@ -546,6 +625,9 @@ mod tests {
             width: 2,
             height: 2,
             dest: [0.5, 0.0, 0.5, 1.0],
+            crop: [0.0; 4],
+            mirror: false,
+            circle: false,
         }];
         let pixels = composite_sources(out, out, [0.0, 0.0, 1.0, 1.0], &sources).unwrap();
         assert_eq!(pixels.len(), out * out * 4);

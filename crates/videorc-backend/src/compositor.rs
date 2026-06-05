@@ -572,9 +572,12 @@ fn try_gpu_compose(gpu: Option<&GpuCompositor>, inputs: &CompositorRenderInputs<
         ];
         match source.kind {
             SceneSourceKind::Camera => {
-                if layout.camera_mirror
-                    || camera_circle_mask_applies(layout)
-                    || matches!(layout.camera_fit, CameraFit::Fit)
+                // The GPU shader reproduces fill placement + mirror + circle exactly; defer
+                // contain/zoom/offset (which reshape the source sampling) to the CPU path.
+                if !matches!(layout.camera_fit, CameraFit::Fill)
+                    || layout.camera_zoom != 100
+                    || layout.camera_offset_x != 0
+                    || layout.camera_offset_y != 0
                 {
                     return None;
                 }
@@ -584,6 +587,9 @@ fn try_gpu_compose(gpu: Option<&GpuCompositor>, inputs: &CompositorRenderInputs<
                     width: frame.width as usize,
                     height: frame.height as usize,
                     dest,
+                    crop: [0.0; 4],
+                    mirror: layout.camera_mirror,
+                    circle: camera_circle_mask_applies(layout),
                 });
             }
             SceneSourceKind::Screen | SceneSourceKind::Window => {
@@ -593,6 +599,9 @@ fn try_gpu_compose(gpu: Option<&GpuCompositor>, inputs: &CompositorRenderInputs<
                     width: frame.width as usize,
                     height: frame.height as usize,
                     dest,
+                    crop: [0.0; 4],
+                    mirror: false,
+                    circle: false,
                 });
             }
             SceneSourceKind::TestPattern => return None,
