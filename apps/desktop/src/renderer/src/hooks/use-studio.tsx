@@ -52,6 +52,7 @@ import type {
   GoLivePreflight,
   HealthEvent,
   LayoutSettings,
+  LiveChatSnapshot,
   PreviewCameraStatus,
   PreviewScreenStatus,
   PreviewSurfaceBounds,
@@ -91,6 +92,7 @@ import type {
   YouTubeChannel,
   YouTubeStreamStatusResult
 } from '@/lib/backend'
+import { createEmptyLiveChatSnapshot } from '@/lib/backend'
 import {
   findDevice,
   durationLabel,
@@ -123,6 +125,8 @@ export type StudioContextValue = {
   twitchCategorySearchPending: boolean
   xNativeCapability: XNativeLiveCapability | null
   xNativeCapabilityLoading: boolean
+  /** Read-only live-chat snapshot for the studio comments panel (populated in later slices). */
+  liveChatSnapshot: LiveChatSnapshot
   streamMetadataDraft: StreamMetadataDraft | null
   streamMetadataValidation: StreamMetadataValidation | null
   goLivePreflight: GoLivePreflight | null
@@ -354,6 +358,11 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   const [twitchCategorySearchPending, setTwitchCategorySearchPending] = useState(false)
   const [xNativeCapability, setXNativeCapability] = useState<XNativeLiveCapability | null>(null)
   const [xNativeCapabilityLoading, setXNativeCapabilityLoading] = useState(false)
+  // Read-only, ephemeral chat store: never persisted, replaced by live snapshots/events in
+  // later slices. The setter is added with the event wiring (slices 7-8).
+  const [liveChatSnapshot] = useState<LiveChatSnapshot>(() =>
+    createEmptyLiveChatSnapshot(new Date().toISOString())
+  )
   const [streamMetadataDraft, setStreamMetadataDraft] = useState<StreamMetadataDraft | null>(null)
   const [streamMetadataValidation, setStreamMetadataValidation] = useState<StreamMetadataValidation | null>(null)
   const [goLivePreflight, setGoLivePreflight] = useState<GoLivePreflight | null>(null)
@@ -2686,6 +2695,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     twitchCategorySearchPending,
     xNativeCapability,
     xNativeCapabilityLoading,
+    liveChatSnapshot,
     streamMetadataDraft,
     streamMetadataValidation,
     goLivePreflight,

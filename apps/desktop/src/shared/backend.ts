@@ -1304,3 +1304,110 @@ export interface RepairFileParams {
 export interface RepairRestoreParams {
   path: string
 }
+
+// --- In-app live chat (read-only unified comments feed) ---
+// Wire mirror of crates/videorc-backend/src/live_chat.rs. Plan:
+// "2026-06-06 - Videorc In-App Livestream Comments Plan". The renderer treats chat as
+// read-only and ephemeral: never persisted to localStorage, never round-tripped to the
+// backend; only the latest snapshot/events drive the panel.
+
+/** Whether a connected account can read live chat for a platform (setup-time audit). */
+export type ChatCapabilityState =
+  | 'available'
+  | 'needs-reconnect'
+  | 'not-connected'
+  | 'unsupported'
+
+/** Per-platform live-chat readiness, surfaced before Go Live (the `liveChat.capability` result). */
+export interface ChatCapability {
+  platform: StreamPlatform
+  state: ChatCapabilityState
+  /** True only when chat can actually be read right now. */
+  chatReadAvailable: boolean
+  requiredScope?: string
+  accountId?: string
+  accountLabel?: string
+  message: string
+}
+
+/** Runtime connection state of one platform's chat connector. */
+export type LiveChatProviderConnectionState =
+  | 'disabled'
+  | 'connecting'
+  | 'connected'
+  | 'reconnecting'
+  | 'waiting'
+  | 'failed'
+  | 'unsupported'
+  | 'ended'
+
+/** What kind of chat row a message is — drives styling for monetized/system events. */
+export type LiveChatEventType =
+  | 'message'
+  | 'paid'
+  | 'membership'
+  | 'system'
+  | 'deleted'
+  | 'moderation'
+
+/** Live connector state for one platform within a session. */
+export interface LiveChatProviderState {
+  platform: StreamPlatform
+  targetId?: string
+  accountId?: string
+  accountLabel?: string
+  state: LiveChatProviderConnectionState
+  message: string
+  lastConnectedAt?: string
+  lastMessageAt?: string
+  lastError?: string
+  capabilities: string[]
+}
+
+/** A rich-text fragment of a message (plain text, emote, mention, …). */
+export interface LiveChatMessageFragment {
+  type: string
+  text: string
+  imageUrl?: string
+}
+
+/** One normalized chat message. `id` (`{platform}:{providerMessageId}`) is the dedupe key. */
+export interface LiveChatMessage {
+  id: string
+  providerMessageId: string
+  platform: StreamPlatform
+  targetId?: string
+  sessionId: string
+  authorId?: string
+  authorName: string
+  authorAvatarUrl?: string
+  authorBadges: string[]
+  authorRoles: string[]
+  publishedAt: string
+  receivedAt: string
+  messageText: string
+  fragments: LiveChatMessageFragment[]
+  eventType: LiveChatEventType
+  amountText?: string
+  isDeleted: boolean
+  rawProviderType?: string
+}
+
+/** Full live-chat snapshot: provider rows + buffered messages + unread count. */
+export interface LiveChatSnapshot {
+  sessionId?: string
+  providers: LiveChatProviderState[]
+  messages: LiveChatMessage[]
+  unreadCount: number
+  updatedAt: string
+}
+
+/** An empty snapshot for the renderer store before any chat session starts. */
+export function createEmptyLiveChatSnapshot(updatedAt: string): LiveChatSnapshot {
+  return {
+    providers: [],
+    messages: [],
+    unreadCount: 0,
+    updatedAt,
+  }
+}
