@@ -5,8 +5,14 @@
 //! per-platform connectors arrive in later slices; this is the capability the Studio UI
 //! uses to warn the streamer before they go live.
 
-use serde::{Deserialize, Serialize};
+use std::collections::{HashSet, VecDeque};
+use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
+use tokio::task::JoinHandle;
+use tokio::time::{Duration, sleep};
+
+use crate::state::AppState;
 use crate::streaming::{PlatformAccount, StreamPlatform, stream_platform_id};
 
 // --- Live chat shared data model (slice 2) ---
@@ -311,6 +317,387 @@ pub fn chat_capabilities(accounts: &[PlatformAccount]) -> Vec<ChatCapability> {
     .collect()
 }
 
+// --- Live chat coordinator (slice 3) ---
+
+/// Default cap on the in-memory message buffer for one active chat session.
+pub const DEFAULT_MAX_CHAT_MESSAGES: usize = 5_000;
+
+/// Shared, lockable handle to the live-chat coordinator owned by `AppState`.
+pub type LiveChatSlot = Arc<tokio::sync::Mutex<LiveChatCoordinator>>;
+
+/// Outcome of ingesting one message into the bounded, de-duplicated buffer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IngestOutcome {
+    /// A new message was buffered (the caller should emit it to the renderer).
+    New,
+    /// The message id was already present and was skipped.
+    Duplicate,
+}
+
+/// Owns the active chat session's provider rows, a bounded + de-duplicated message buffer,
+/// connector task handles, and lightweight diagnostics counters.
+///
+/// The coordinator is pure state: it never touches the websocket itself. The runtime
+/// functions below lock it, mutate, drop the guard, and emit through `AppState`. Keeping
+/// emission out of the coordinator makes the buffer/de-dup/lifecycle logic unit-testable
+/// with no running backend.
+pub struct LiveChatCoordinator {
+    session_id: Option<String>,
+    providers: Vec<LiveChatProviderState>,
+    messages: VecDeque<LiveChatMessage>,
+    /// Ids currently in `messages` — the de-duplication set, kept in lock-step with the
+    /// buffer (trimming a message drops its id) so it stays bounded.
+    seen: HashSet<String>,
+    unread_count: u64,
+    max_messages: usize,
+    /// Diagnostics (surfaced in slice 9; counted from the start so the cap is testable now).
+    trimmed_count: u64,
+    duplicates_skipped: u64,
+    /// Running connector tasks, aborted on stop/restart.
+    tasks: Vec<JoinHandle<()>>,
+}
+
+impl Default for LiveChatCoordinator {
+    fn default() -> Self {
+        Self::new(DEFAULT_MAX_CHAT_MESSAGES)
+    }
+}
+
+impl LiveChatCoordinator {
+    pub fn new(max_messages: usize) -> Self {
+        Self {
+            session_id: None,
+            providers: Vec::new(),
+            messages: VecDeque::new(),
+            seen: HashSet::new(),
+            unread_count: 0,
+            max_messages: max_messages.max(1),
+            trimmed_count: 0,
+            duplicates_skipped: 0,
+            tasks: Vec::new(),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn is_active(&self) -> bool {
+        self.session_id.is_some()
+    }
+
+    #[allow(dead_code)]
+    pub fn trimmed_count(&self) -> u64 {
+        self.trimmed_count
+    }
+
+    #[allow(dead_code)]
+    pub fn duplicates_skipped(&self) -> u64 {
+        self.duplicates_skipped
+    }
+
+    pub fn provider(&self, platform: StreamPlatform) -> Option<&LiveChatProviderState> {
+        self.providers.iter().find(|p| p.platform == platform)
+    }
+
+    /// True once a session has been started (or left a transcript) — drives whether
+    /// `current_status` returns the live view versus the setup-time capability snapshot.
+    pub fn has_session_view(&self) -> bool {
+        self.session_id.is_some() || !self.messages.is_empty() || !self.providers.is_empty()
+    }
+
+    /// Begin a chat session: abort any leftover tasks and reset the buffer/de-dup/counters,
+    /// installing the provider rows for this session.
+    pub fn start_session(&mut self, session_id: String, providers: Vec<LiveChatProviderState>) {
+        self.abort_tasks();
+        self.session_id = Some(session_id);
+        self.providers = providers;
+        self.messages.clear();
+        self.seen.clear();
+        self.unread_count = 0;
+        self.trimmed_count = 0;
+        self.duplicates_skipped = 0;
+    }
+
+    /// Abort connector tasks and mark every connected provider `ended`. The transcript is
+    /// retained so the panel keeps showing it until the local view is cleared.
+    pub fn stop_session(&mut self) {
+        self.abort_tasks();
+        for provider in &mut self.providers {
+            if provider.state != LiveChatProviderConnectionState::Unsupported {
+                provider.state = LiveChatProviderConnectionState::Ended;
+            }
+        }
+        self.session_id = None;
+    }
+
+    /// Clear the local message view (buffer + unread) without touching providers, the
+    /// session, or platform-side messages — the `liveChat.clearLocal` semantics.
+    pub fn clear_local(&mut self) {
+        self.messages.clear();
+        self.seen.clear();
+        self.unread_count = 0;
+    }
+
+    /// Buffer one message, skipping duplicates by id and trimming the oldest when the cap is
+    /// exceeded. Returns whether the message was new.
+    pub fn ingest(&mut self, message: LiveChatMessage) -> IngestOutcome {
+        if self.seen.contains(&message.id) {
+            self.duplicates_skipped += 1;
+            return IngestOutcome::Duplicate;
+        }
+        if let Some(provider) = self
+            .providers
+            .iter_mut()
+            .find(|p| p.platform == message.platform)
+        {
+            provider.last_message_at = Some(message.received_at.clone());
+        }
+        self.seen.insert(message.id.clone());
+        self.messages.push_back(message);
+        self.unread_count += 1;
+        while self.messages.len() > self.max_messages {
+            match self.messages.pop_front() {
+                Some(trimmed) => {
+                    self.seen.remove(&trimmed.id);
+                    self.trimmed_count += 1;
+                }
+                None => break,
+            }
+        }
+        IngestOutcome::New
+    }
+
+    /// Update one provider's connection state + message (e.g. connecting → connected → ended).
+    pub fn set_provider_status(
+        &mut self,
+        platform: StreamPlatform,
+        connection: LiveChatProviderConnectionState,
+        message: &str,
+        now: &str,
+    ) {
+        if let Some(provider) = self.providers.iter_mut().find(|p| p.platform == platform) {
+            provider.state = connection;
+            provider.message = message.to_string();
+            if connection == LiveChatProviderConnectionState::Connected {
+                provider.last_connected_at = Some(now.to_string());
+                provider.last_error = None;
+            }
+        }
+    }
+
+    pub fn attach_task(&mut self, task: JoinHandle<()>) {
+        self.tasks.push(task);
+    }
+
+    fn abort_tasks(&mut self) {
+        for task in self.tasks.drain(..) {
+            task.abort();
+        }
+    }
+
+    pub fn snapshot(&self, updated_at: String) -> LiveChatSnapshot {
+        LiveChatSnapshot {
+            session_id: self.session_id.clone(),
+            providers: self.providers.clone(),
+            messages: self.messages.iter().cloned().collect(),
+            unread_count: self.unread_count,
+            updated_at,
+        }
+    }
+}
+
+/// Provider rows for a starting session, derived from current chat capabilities. The
+/// connectors (slices 4-5) drive each row to connecting → connected/failed; platforms with
+/// no native path stay `unsupported`.
+fn session_provider_rows(accounts: &[PlatformAccount]) -> Vec<LiveChatProviderState> {
+    chat_capabilities(accounts)
+        .into_iter()
+        .map(provider_state_from_capability)
+        .collect()
+}
+
+/// Parameters for `liveChat.start`. Real connectors arrive in slices 4-5; until then a
+/// `fake` connector exercises the buffer + event path for tests and the live-chat smoke.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveChatStartParams {
+    pub session_id: String,
+    #[serde(default)]
+    pub fake: Option<FakeChatConfig>,
+}
+
+/// A deterministic, bounded fake chat source for tests / `smoke:live-chat-fake-providers`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FakeChatConfig {
+    #[serde(default = "default_fake_platform")]
+    pub platform: StreamPlatform,
+    #[serde(default = "default_fake_count")]
+    pub count: u32,
+    #[serde(default = "default_fake_interval_ms")]
+    pub interval_ms: u64,
+    /// Re-send the first message once to prove de-duplication skips it.
+    #[serde(default)]
+    pub include_duplicate: bool,
+}
+
+fn default_fake_platform() -> StreamPlatform {
+    StreamPlatform::Youtube
+}
+
+fn default_fake_count() -> u32 {
+    5
+}
+
+fn default_fake_interval_ms() -> u64 {
+    200
+}
+
+/// Start a chat session: install provider rows, optionally spawn the fake connector, and
+/// emit the initial snapshot. Returns the snapshot for the command response.
+pub async fn start_live_chat(state: &AppState, params: LiveChatStartParams) -> LiveChatSnapshot {
+    let accounts = state.database.list_platform_accounts().unwrap_or_default();
+    let providers = session_provider_rows(&accounts);
+    {
+        let mut coordinator = state.live_chat.lock().await;
+        coordinator.start_session(params.session_id.clone(), providers);
+    }
+    if let Some(fake) = params.fake.clone() {
+        let handle = tokio::spawn(run_fake_connector(
+            state.clone(),
+            params.session_id.clone(),
+            fake,
+        ));
+        let mut coordinator = state.live_chat.lock().await;
+        coordinator.attach_task(handle);
+    }
+    let snapshot = current_status(state).await;
+    state.emit_event("liveChat.snapshot", snapshot.clone());
+    snapshot
+}
+
+/// Stop the active chat session, aborting connectors and marking providers ended.
+pub async fn stop_live_chat(state: &AppState) -> LiveChatSnapshot {
+    {
+        let mut coordinator = state.live_chat.lock().await;
+        coordinator.stop_session();
+    }
+    let snapshot = current_status(state).await;
+    state.emit_event("liveChat.snapshot", snapshot.clone());
+    snapshot
+}
+
+/// Clear the local message view (not platform messages) and emit `liveChat.cleared`.
+pub async fn clear_local_live_chat(state: &AppState) -> LiveChatSnapshot {
+    {
+        let mut coordinator = state.live_chat.lock().await;
+        coordinator.clear_local();
+    }
+    let snapshot = current_status(state).await;
+    state.emit_event("liveChat.cleared", snapshot.clone());
+    snapshot
+}
+
+/// Current status: the live coordinator view when a session is active or has a transcript,
+/// otherwise the setup-time capability snapshot.
+pub async fn current_status(state: &AppState) -> LiveChatSnapshot {
+    let now = chrono::Utc::now().to_rfc3339();
+    let live_view = {
+        let coordinator = state.live_chat.lock().await;
+        if coordinator.has_session_view() {
+            Some(coordinator.snapshot(now.clone()))
+        } else {
+            None
+        }
+    };
+    if let Some(snapshot) = live_view {
+        return snapshot;
+    }
+    let accounts = state.database.list_platform_accounts().unwrap_or_default();
+    initial_chat_snapshot(&accounts, now)
+}
+
+/// Lock the coordinator, ingest one message, and emit it to the renderer if it was new.
+async fn deliver_message(state: &AppState, message: LiveChatMessage) {
+    let outcome = {
+        let mut coordinator = state.live_chat.lock().await;
+        coordinator.ingest(message.clone())
+    };
+    if outcome == IngestOutcome::New {
+        state.emit_event("liveChat.message", message);
+    }
+}
+
+/// Set a provider's connection state and emit `liveChat.providerStatus`.
+async fn set_provider_and_emit(
+    state: &AppState,
+    platform: StreamPlatform,
+    connection: LiveChatProviderConnectionState,
+    message: &str,
+) {
+    let now = chrono::Utc::now().to_rfc3339();
+    let provider = {
+        let mut coordinator = state.live_chat.lock().await;
+        coordinator.set_provider_status(platform, connection, message, &now);
+        coordinator.provider(platform).cloned()
+    };
+    if let Some(provider) = provider {
+        state.emit_event("liveChat.providerStatus", provider);
+    }
+}
+
+/// The fake connector task: marks its platform connected, delivers `count` messages at
+/// `interval_ms`, optionally re-sending the first to exercise de-dup, then marks ended.
+async fn run_fake_connector(state: AppState, session_id: String, config: FakeChatConfig) {
+    let platform = config.platform;
+    set_provider_and_emit(
+        &state,
+        platform,
+        LiveChatProviderConnectionState::Connected,
+        "Live chat connected.",
+    )
+    .await;
+    let interval = Duration::from_millis(config.interval_ms.max(1));
+    for seq in 0..config.count {
+        sleep(interval).await;
+        deliver_message(&state, fake_message(&session_id, platform, seq)).await;
+        if config.include_duplicate && seq == 0 {
+            deliver_message(&state, fake_message(&session_id, platform, 0)).await;
+        }
+    }
+    set_provider_and_emit(
+        &state,
+        platform,
+        LiveChatProviderConnectionState::Ended,
+        "Live chat ended.",
+    )
+    .await;
+}
+
+/// Build one deterministic fake message. Shared by the fake connector and the unit tests.
+fn fake_message(session_id: &str, platform: StreamPlatform, seq: u32) -> LiveChatMessage {
+    let now = chrono::Utc::now().to_rfc3339();
+    let provider_message_id = format!("fake-{seq}");
+    LiveChatMessage {
+        id: live_chat_message_id(platform, &provider_message_id),
+        provider_message_id,
+        platform,
+        target_id: None,
+        session_id: session_id.to_string(),
+        author_id: Some(format!("fake-author-{}", seq % 3)),
+        author_name: format!("Test Viewer {}", seq % 3),
+        author_avatar_url: None,
+        author_badges: Vec::new(),
+        author_roles: Vec::new(),
+        published_at: now.clone(),
+        received_at: now,
+        message_text: format!("Fake chat message #{seq}"),
+        fragments: Vec::new(),
+        event_type: LiveChatEventType::Message,
+        amount_text: None,
+        is_deleted: false,
+        raw_provider_type: Some("fake".to_string()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -333,6 +720,89 @@ mod tests {
             updated_at: "2026-06-06T00:00:00Z".to_string(),
             status: PlatformAccountStatus::Connected,
         }
+    }
+
+    fn provider_row(platform: StreamPlatform) -> LiveChatProviderState {
+        LiveChatProviderState {
+            platform,
+            target_id: None,
+            account_id: None,
+            account_label: None,
+            state: LiveChatProviderConnectionState::Connecting,
+            message: "Connecting…".to_string(),
+            last_connected_at: None,
+            last_message_at: None,
+            last_error: None,
+            capabilities: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn coordinator_caps_buffer_and_reports_trimmed_count() {
+        let mut coordinator = LiveChatCoordinator::new(3);
+        for seq in 0..5 {
+            assert_eq!(
+                coordinator.ingest(fake_message("s1", StreamPlatform::Youtube, seq)),
+                IngestOutcome::New
+            );
+        }
+        let snapshot = coordinator.snapshot("now".to_string());
+        assert_eq!(snapshot.messages.len(), 3);
+        assert_eq!(coordinator.trimmed_count(), 2);
+        // The two oldest were trimmed; the buffer keeps seq 2, 3, 4 in order.
+        assert_eq!(
+            snapshot.messages.first().unwrap().provider_message_id,
+            "fake-2"
+        );
+        assert_eq!(
+            snapshot.messages.last().unwrap().provider_message_id,
+            "fake-4"
+        );
+    }
+
+    #[test]
+    fn coordinator_skips_duplicate_message_ids() {
+        let mut coordinator = LiveChatCoordinator::new(10);
+        let message = fake_message("s1", StreamPlatform::Youtube, 0);
+        assert_eq!(coordinator.ingest(message.clone()), IngestOutcome::New);
+        assert_eq!(coordinator.ingest(message), IngestOutcome::Duplicate);
+        assert_eq!(coordinator.duplicates_skipped(), 1);
+        assert_eq!(coordinator.snapshot("now".to_string()).messages.len(), 1);
+    }
+
+    #[test]
+    fn clear_local_empties_view_but_keeps_session_active() {
+        let mut coordinator = LiveChatCoordinator::new(10);
+        coordinator.start_session(
+            "s1".to_string(),
+            vec![provider_row(StreamPlatform::Youtube)],
+        );
+        coordinator.ingest(fake_message("s1", StreamPlatform::Youtube, 0));
+        coordinator.clear_local();
+        let snapshot = coordinator.snapshot("now".to_string());
+        assert!(coordinator.is_active());
+        assert_eq!(snapshot.session_id.as_deref(), Some("s1"));
+        assert!(snapshot.messages.is_empty());
+        assert_eq!(snapshot.unread_count, 0);
+        assert_eq!(snapshot.providers.len(), 1);
+    }
+
+    #[test]
+    fn stop_session_marks_providers_ended_and_keeps_transcript() {
+        let mut coordinator = LiveChatCoordinator::new(10);
+        coordinator.start_session(
+            "s1".to_string(),
+            vec![provider_row(StreamPlatform::Youtube)],
+        );
+        coordinator.ingest(fake_message("s1", StreamPlatform::Youtube, 0));
+        coordinator.stop_session();
+        let snapshot = coordinator.snapshot("now".to_string());
+        assert!(!coordinator.is_active());
+        assert_eq!(
+            snapshot.providers[0].state,
+            LiveChatProviderConnectionState::Ended
+        );
+        assert_eq!(snapshot.messages.len(), 1);
     }
 
     #[test]

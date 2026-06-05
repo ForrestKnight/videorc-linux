@@ -7,6 +7,7 @@ use tokio::sync::broadcast;
 use crate::compositor::{CompositorSlot, initial_compositor_state};
 use crate::diagnostics::idle_diagnostics;
 use crate::ffmpeg_work::FfmpegWorkCoordinator;
+use crate::live_chat::{LiveChatCoordinator, LiveChatSlot};
 use crate::oauth::OAuthSessions;
 use crate::preview_camera::{PreviewCameraSlot, initial_preview_camera_state};
 use crate::preview_screen::{PreviewScreenSlot, initial_preview_screen_state};
@@ -56,6 +57,7 @@ pub struct AppState {
     pub database: Database,
     pub oauth: Arc<OAuthSessions>,
     pub ffmpeg_work: Arc<FfmpegWorkCoordinator>,
+    pub live_chat: LiveChatSlot,
 }
 
 impl AppState {
@@ -84,6 +86,7 @@ impl AppState {
             database,
             oauth: Arc::new(OAuthSessions::default()),
             ffmpeg_work: Arc::new(FfmpegWorkCoordinator::new()),
+            live_chat: Arc::new(tokio::sync::Mutex::new(LiveChatCoordinator::default())),
         }
     }
 
