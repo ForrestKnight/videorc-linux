@@ -16,6 +16,7 @@ function cleanInput() {
       encoderBridgeMetalTargetFrames: 120,
       encoderBridgeRawVideoCopiedFrames: 0,
       encoderBridgeMetalTargetCopiedFrames: 0,
+      encoderBridgeMetalTargetHandleFrames: 120,
       encoderBridgeZeroCopyFrames: 120,
       encoderBridgeRepeatedFrames: 0,
       encoderBridgeSyntheticFrames: 0,
@@ -84,6 +85,7 @@ test('obs parity evidence highlights GPU fallback and missing Metal target expor
   input.diagnostics.compositorCpuFallbackFrames = 412
   input.diagnostics.compositorFallbackReason = 'camera frame unavailable'
   input.diagnostics.encoderBridgeMetalTargetFrames = 0
+  input.diagnostics.encoderBridgeMetalTargetHandleFrames = 0
   input.diagnostics.encoderBridgeZeroCopyFrames = 0
 
   const items = classifyObsParityEvidence(input)
@@ -102,6 +104,7 @@ test('obs parity evidence highlights copied Metal target export as a zero-copy g
   const input = cleanInput()
   input.diagnostics.encoderBridgeRawVideoCopiedFrames = 120
   input.diagnostics.encoderBridgeMetalTargetCopiedFrames = 120
+  input.diagnostics.encoderBridgeMetalTargetHandleFrames = 120
   input.diagnostics.encoderBridgeZeroCopyFrames = 0
 
   const hotPath = byArea(classifyObsParityEvidence(input), 'Recording hot path')
@@ -109,6 +112,18 @@ test('obs parity evidence highlights copied Metal target export as a zero-copy g
   assert.equal(hotPath.status, 'fail')
   assert.match(hotPath.owner, /zero-copy encoder export/)
   assert.match(hotPath.evidence.join(' '), /120 Metal target frame/)
+})
+
+test('obs parity evidence highlights missing retained Metal target handles', () => {
+  const input = cleanInput()
+  input.diagnostics.encoderBridgeMetalTargetFrames = 120
+  input.diagnostics.encoderBridgeMetalTargetHandleFrames = 0
+
+  const hotPath = byArea(classifyObsParityEvidence(input), 'Recording hot path')
+
+  assert.equal(hotPath.status, 'fail')
+  assert.match(hotPath.owner, /retained Metal target handoff/)
+  assert.match(hotPath.evidence.join(' '), /0 retained Metal target handles/)
 })
 
 test('obs parity evidence assigns high native latency to presenter currentness', () => {

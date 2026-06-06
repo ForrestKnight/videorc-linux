@@ -14,6 +14,7 @@ const cleanInput = () => ({
     encoderBridgeMetalTargetFrames: 120,
     encoderBridgeRawVideoCopiedFrames: 0,
     encoderBridgeMetalTargetCopiedFrames: 0,
+    encoderBridgeMetalTargetHandleFrames: 120,
     encoderBridgeZeroCopyFrames: 120,
     minEncoderSpeed: 1.0,
     micDroppedFrames: 0,
@@ -87,11 +88,25 @@ describe('evaluateAcceptance', () => {
     input.diagnostics.compositorBackend = 'metal'
     input.diagnostics.compositorCpuFallbackFrames = 0
     input.diagnostics.encoderBridgeMetalTargetFrames = 0
+    input.diagnostics.encoderBridgeMetalTargetHandleFrames = 0
     input.diagnostics.encoderBridgeZeroCopyFrames = 0
     const v = evaluateAcceptance(input)
 
     assert.equal(v.pass, false)
     assert.match(v.failures.join(' '), /IOSurface-backed Metal target frames/)
+  })
+
+  it('fails the strict OBS compositor gate when Metal target handles do not reach the bridge', () => {
+    const input = cleanInput()
+    input.requireGpuCompositor = true
+    input.diagnostics.compositorBackend = 'metal'
+    input.diagnostics.compositorCpuFallbackFrames = 0
+    input.diagnostics.encoderBridgeMetalTargetFrames = 120
+    input.diagnostics.encoderBridgeMetalTargetHandleFrames = 0
+    const v = evaluateAcceptance(input)
+
+    assert.equal(v.pass, false)
+    assert.match(v.failures.join(' '), /retained Metal target handles/)
   })
 
   it('fails the strict OBS compositor gate when Metal target frames are still copied', () => {
@@ -102,6 +117,7 @@ describe('evaluateAcceptance', () => {
     input.diagnostics.encoderBridgeMetalTargetFrames = 120
     input.diagnostics.encoderBridgeRawVideoCopiedFrames = 120
     input.diagnostics.encoderBridgeMetalTargetCopiedFrames = 120
+    input.diagnostics.encoderBridgeMetalTargetHandleFrames = 120
     input.diagnostics.encoderBridgeZeroCopyFrames = 0
     const v = evaluateAcceptance(input)
 

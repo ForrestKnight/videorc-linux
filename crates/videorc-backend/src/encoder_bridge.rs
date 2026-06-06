@@ -70,6 +70,8 @@ struct EncoderBridgeRuntimeStats {
     raw_video_copied_frames: u64,
     /// Raw-video FFmpeg writes whose source frame also exposed a Metal IOSurface target.
     metal_target_copied_frames: u64,
+    /// Raw-video FFmpeg writes whose source frame carried the retained CoreVideo handle.
+    metal_target_handle_frames: u64,
     /// Frames submitted to the encoder without a CPU raw-video copy.
     zero_copy_frames: u64,
 }
@@ -80,6 +82,7 @@ struct FedCompositorFrame {
     sequence: u64,
     age_ms: u64,
     has_metal_iosurface_target: bool,
+    has_metal_export_handle: bool,
 }
 
 /// How one encoder-bridge tick consumed a compositor frame.
@@ -592,6 +595,7 @@ fn write_synthetic_recording_frames(params: SyntheticRecordingWriterParams) {
     let mut metal_target_frames = 0_u64;
     let mut raw_video_copied_frames = 0_u64;
     let mut metal_target_copied_frames = 0_u64;
+    let mut metal_target_handle_frames = 0_u64;
     let mut last_fed_sequence: Option<u64> = None;
     let mut consecutive_repeated_frames = 0_u64;
 
@@ -635,6 +639,7 @@ fn write_synthetic_recording_frames(params: SyntheticRecordingWriterParams) {
                 Some(max_source_to_encode_age_ms.map_or(frame.age_ms, |age| age.max(frame.age_ms)));
         }
         let wrote_metal_target_frame = fed.is_some_and(|frame| frame.has_metal_iosurface_target);
+        let wrote_metal_target_handle = fed.is_some_and(|frame| frame.has_metal_export_handle);
 
         queue_depth = 1;
         if let Err(error) = fifo.write_all(&bytes) {
@@ -653,6 +658,7 @@ fn write_synthetic_recording_frames(params: SyntheticRecordingWriterParams) {
                     metal_target_frames,
                     raw_video_copied_frames,
                     metal_target_copied_frames,
+                    metal_target_handle_frames,
                     zero_copy_frames: 0,
                 },
                 Some(format!(
@@ -666,6 +672,9 @@ fn write_synthetic_recording_frames(params: SyntheticRecordingWriterParams) {
         if wrote_metal_target_frame {
             metal_target_frames = metal_target_frames.saturating_add(1);
             metal_target_copied_frames = metal_target_copied_frames.saturating_add(1);
+        }
+        if wrote_metal_target_handle {
+            metal_target_handle_frames = metal_target_handle_frames.saturating_add(1);
         }
         frames_in_window = frames_in_window.saturating_add(1);
 
@@ -685,6 +694,7 @@ fn write_synthetic_recording_frames(params: SyntheticRecordingWriterParams) {
                     metal_target_frames,
                     raw_video_copied_frames,
                     metal_target_copied_frames,
+                    metal_target_handle_frames,
                     zero_copy_frames: 0,
                 },
                 None,
@@ -711,6 +721,7 @@ fn write_synthetic_recording_frames(params: SyntheticRecordingWriterParams) {
             metal_target_frames,
             raw_video_copied_frames,
             metal_target_copied_frames,
+            metal_target_handle_frames,
             zero_copy_frames: 0,
         },
         None,
@@ -733,6 +744,7 @@ fn copy_latest_compositor_frame(
         sequence: frame.sequence,
         age_ms: frame.captured_at.elapsed().as_millis() as u64,
         has_metal_iosurface_target: frame.pixel_format.has_metal_iosurface_target(),
+        has_metal_export_handle: frame.metadata.has_metal_iosurface_target(),
     })
 }
 
@@ -907,6 +919,7 @@ async fn emit_encoder_bridge_diagnostics(
                 metal_target_frames: runtime.metal_target_frames,
                 raw_video_copied_frames: runtime.raw_video_copied_frames,
                 metal_target_copied_frames: runtime.metal_target_copied_frames,
+                metal_target_handle_frames: runtime.metal_target_handle_frames,
                 zero_copy_frames: runtime.zero_copy_frames,
                 error,
             },
@@ -1000,6 +1013,7 @@ mod tests {
 
         assert_eq!(fed.sequence, 11);
         assert!(!fed.has_metal_iosurface_target);
+        assert!(!fed.has_metal_export_handle);
         assert_eq!(
             classify_bridge_frame(None, Some(fed.sequence)),
             BridgeFrameSource::Fresh
@@ -1035,6 +1049,7 @@ mod tests {
 
         assert_eq!(fed.sequence, 12);
         assert!(fed.has_metal_iosurface_target);
+        assert!(!fed.has_metal_export_handle);
         assert_eq!(bytes, expected);
     }
 

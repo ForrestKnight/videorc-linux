@@ -140,13 +140,13 @@ fails a "native" claim — by design.
   regression verifies that a missing visible camera frame reports the specific camera
   source instead of the old generic `camera frame unavailable` reason.
 - 2026-06-06 source-aware fallback smoke: `pnpm smoke:recording-native-preview`
-  passed at 1080p30 with preview 120.20fps, proof-host p95 interval 9.80ms,
-  present 30.31fps, source-to-present p95/p99 11ms, compositor lag 0,
-  startup/final max repeated-frame run 2, `Metal targets 1`, `raw copied 423`,
-  `Metal copied 1`, `zero-copy 0`, `CPU fallback frames 412 (camera source
-  "Camera" id=source:camera frame unavailable)`, and 18ms A/V skew. FFmpeg
-  speed/live FPS telemetry still warned, but decoded startup/final-file gates and direct
-  proof-host measurement passed.
+  passed at 1080p30 with preview 120.18fps, proof-host p95 interval 9.70ms,
+  present 18.46fps, source-to-present p95/p99 10ms, compositor lag 0,
+  startup/final max repeated-frame run 2, `Metal targets 1`, `Metal handles 1`,
+  `raw copied 423`, `Metal copied 1`, `zero-copy 0`, `CPU fallback frames 289
+  (camera source "Camera" id=source:camera frame unavailable)`, and 8ms A/V skew.
+  FFmpeg speed/live FPS telemetry and preview-present diagnostics still warned, but
+  decoded startup/final-file gates and direct proof-host measurement passed.
 - The native-preview recording smoke now has an opt-in source-complete Metal stress mode:
   set `VIDEORC_NATIVE_PREVIEW_SOURCE_COMPLETE_SCENE=1` to replace the intentionally missing
   camera overlay with a synthetic test-pattern overlay. On 2026-06-06, the default smoke
@@ -161,9 +161,9 @@ fails a "native" claim — by design.
   making the source-complete stress bottleneck explicit in one log line.
 - Native-preview smoke analyzer failures now include the same copy/zero-copy summary and
   report path. The 2026-06-06 short source-complete stress failed as expected with
-  `Metal targets 34`, `raw copied 34`, `Metal copied 34`, `zero-copy 0`, `CPU fallback
-  frames 0`, min speed 0.20x, and min FPS 6.48, proving the failure is the copied Metal
-  export path rather than source fallback.
+  `Metal targets 32`, `Metal handles 32`, `raw copied 32`, `Metal copied 32`,
+  `zero-copy 0`, `CPU fallback frames 0`, min speed 0.20x, and min FPS 6.49,
+  proving the failure is the copied Metal export path rather than source fallback.
 - A focused Metal regression now proves a synthetic test-pattern overlay scene can compose
   on Metal without requiring camera frames. Switching the default native-preview smoke to
   that fully Metal overlay path is still premature: the readback/encode path exposed the

@@ -18,6 +18,7 @@ export function classifyObsParityEvidence(input, gates = DEFAULT_ACCEPTANCE_GATE
   const metalTargetFrames = diagnostics.encoderBridgeMetalTargetFrames ?? 0
   const rawVideoCopiedFrames = diagnostics.encoderBridgeRawVideoCopiedFrames ?? 0
   const metalTargetCopiedFrames = diagnostics.encoderBridgeMetalTargetCopiedFrames ?? 0
+  const metalTargetHandleFrames = diagnostics.encoderBridgeMetalTargetHandleFrames ?? 0
   const zeroCopyFrames = diagnostics.encoderBridgeZeroCopyFrames ?? 0
 
   return [
@@ -32,6 +33,7 @@ export function classifyObsParityEvidence(input, gates = DEFAULT_ACCEPTANCE_GATE
       metalTargetFrames,
       rawVideoCopiedFrames,
       metalTargetCopiedFrames,
+      metalTargetHandleFrames,
       zeroCopyFrames,
       gates,
     }),
@@ -179,6 +181,7 @@ function classifyRecordingHotPath({
   metalTargetFrames,
   rawVideoCopiedFrames,
   metalTargetCopiedFrames,
+  metalTargetHandleFrames,
   zeroCopyFrames,
   gates,
 }) {
@@ -204,6 +207,10 @@ function classifyRecordingHotPath({
   if (metalTargetFrames <= 0) {
     owners.add('Metal target export evidence')
     evidence.push('encoder bridge observed 0 IOSurface-backed Metal target frames')
+  }
+  if (metalTargetFrames > 0 && metalTargetHandleFrames <= 0) {
+    owners.add('retained Metal target handoff')
+    evidence.push('encoder bridge received 0 retained Metal target handles')
   }
   if (metalTargetCopiedFrames > 0) {
     owners.add('zero-copy encoder export')

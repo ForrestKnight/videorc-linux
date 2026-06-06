@@ -46,6 +46,7 @@ test('native preview diagnostics summarize only steady active recording samples 
         encoderBridgeMetalTargetFrames: 61,
         encoderBridgeRawVideoCopiedFrames: 90,
         encoderBridgeMetalTargetCopiedFrames: 61,
+        encoderBridgeMetalTargetHandleFrames: 61,
         encoderBridgeZeroCopyFrames: 0,
         compositorCpuFallbackFrames: 0,
         compositorFallbackReason: '',
@@ -87,6 +88,7 @@ test('native preview diagnostics summarize only steady active recording samples 
   assert.equal(summary.maxEncoderBridgeMetalTargetFrames, 61)
   assert.equal(summary.maxEncoderBridgeRawVideoCopiedFrames, 90)
   assert.equal(summary.maxEncoderBridgeMetalTargetCopiedFrames, 61)
+  assert.equal(summary.maxEncoderBridgeMetalTargetHandleFrames, 61)
   assert.equal(summary.maxEncoderBridgeZeroCopyFrames, 0)
   assert.equal(summary.maxCompositorCpuFallbackFrames, 0)
   assert.equal(summary.lastCompositorFallbackReason, null)
@@ -112,6 +114,7 @@ test('native preview diagnostics fall back to active samples when warmup hides t
         encoderBridgeMetalTargetFrames: 12,
         encoderBridgeRawVideoCopiedFrames: 18,
         encoderBridgeMetalTargetCopiedFrames: 12,
+        encoderBridgeMetalTargetHandleFrames: 12,
         encoderBridgeZeroCopyFrames: 0,
         compositorCpuFallbackFrames: 4,
         compositorFallbackReason: 'camera frame unavailable'
@@ -135,6 +138,7 @@ test('native preview diagnostics fall back to active samples when warmup hides t
   assert.equal(summary.maxEncoderBridgeMetalTargetFrames, 12)
   assert.equal(summary.maxEncoderBridgeRawVideoCopiedFrames, 18)
   assert.equal(summary.maxEncoderBridgeMetalTargetCopiedFrames, 12)
+  assert.equal(summary.maxEncoderBridgeMetalTargetHandleFrames, 12)
   assert.equal(summary.maxEncoderBridgeZeroCopyFrames, 0)
   assert.equal(summary.maxCompositorCpuFallbackFrames, 4)
   assert.equal(summary.lastCompositorFallbackReason, 'camera frame unavailable')
@@ -158,6 +162,7 @@ test('native preview diagnostics can use surface status samples for host-present
         encoderBridgeMetalTargetFrames: 24,
         encoderBridgeRawVideoCopiedFrames: 24,
         encoderBridgeMetalTargetCopiedFrames: 24,
+        encoderBridgeMetalTargetHandleFrames: 24,
         encoderBridgeZeroCopyFrames: 0,
         compositorCpuFallbackFrames: 8,
         compositorFallbackReason: 'screen frame unavailable'
@@ -185,6 +190,7 @@ test('native preview diagnostics can use surface status samples for host-present
   assert.equal(summary.maxEncoderBridgeMetalTargetFrames, 24)
   assert.equal(summary.maxEncoderBridgeRawVideoCopiedFrames, 24)
   assert.equal(summary.maxEncoderBridgeMetalTargetCopiedFrames, 24)
+  assert.equal(summary.maxEncoderBridgeMetalTargetHandleFrames, 24)
   assert.equal(summary.maxEncoderBridgeZeroCopyFrames, 0)
   assert.equal(summary.maxCompositorCpuFallbackFrames, 8)
   assert.equal(summary.lastCompositorFallbackReason, 'screen frame unavailable')

@@ -88,6 +88,7 @@ pub fn idle_diagnostics() -> DiagnosticStats {
         encoder_bridge_metal_target_frames: 0,
         encoder_bridge_raw_video_copied_frames: 0,
         encoder_bridge_metal_target_copied_frames: 0,
+        encoder_bridge_metal_target_handle_frames: 0,
         encoder_bridge_zero_copy_frames: 0,
         encoder_bridge_error: None,
         encode_backend: None,
@@ -342,6 +343,7 @@ pub struct EncoderBridgeDiagnosticSnapshot {
     pub metal_target_frames: u64,
     pub raw_video_copied_frames: u64,
     pub metal_target_copied_frames: u64,
+    pub metal_target_handle_frames: u64,
     pub zero_copy_frames: u64,
     pub error: Option<String>,
 }
@@ -360,6 +362,7 @@ pub fn apply_encoder_bridge_stats(
     stats.encoder_bridge_metal_target_frames = bridge.metal_target_frames;
     stats.encoder_bridge_raw_video_copied_frames = bridge.raw_video_copied_frames;
     stats.encoder_bridge_metal_target_copied_frames = bridge.metal_target_copied_frames;
+    stats.encoder_bridge_metal_target_handle_frames = bridge.metal_target_handle_frames;
     stats.encoder_bridge_zero_copy_frames = bridge.zero_copy_frames;
     stats.encoder_bridge_error = bridge.error;
     stats.capture_fps = stats.encoder_bridge_input_fps;
@@ -843,6 +846,7 @@ mod tests {
         assert_eq!(stats.encoder_bridge_dropped_frames, 0);
         assert_eq!(stats.encoder_bridge_raw_video_copied_frames, 0);
         assert_eq!(stats.encoder_bridge_metal_target_copied_frames, 0);
+        assert_eq!(stats.encoder_bridge_metal_target_handle_frames, 0);
         assert_eq!(stats.encoder_bridge_zero_copy_frames, 0);
         assert_eq!(stats.encoder_bridge_error, None);
         assert_eq!(stats.compositor_backend, None);
@@ -978,6 +982,7 @@ mod tests {
                 metal_target_frames: 0,
                 raw_video_copied_frames: 0,
                 metal_target_copied_frames: 0,
+                metal_target_handle_frames: 0,
                 zero_copy_frames: 0,
                 error: None,
             },
@@ -1003,6 +1008,7 @@ mod tests {
                 metal_target_frames: 24,
                 raw_video_copied_frames: 80,
                 metal_target_copied_frames: 24,
+                metal_target_handle_frames: 24,
                 zero_copy_frames: 0,
                 error: None,
             },
@@ -1016,6 +1022,7 @@ mod tests {
         assert_eq!(lagging.encoder_bridge_metal_target_frames, 24);
         assert_eq!(lagging.encoder_bridge_raw_video_copied_frames, 80);
         assert_eq!(lagging.encoder_bridge_metal_target_copied_frames, 24);
+        assert_eq!(lagging.encoder_bridge_metal_target_handle_frames, 24);
         assert_eq!(lagging.encoder_bridge_zero_copy_frames, 0);
         assert_eq!(lagging.bottleneck, DiagnosticBottleneck::Encoder);
     }

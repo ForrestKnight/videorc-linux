@@ -817,6 +817,10 @@ pub struct DiagnosticStats {
     /// target. This proves the current Metal-target path is still copied.
     #[serde(default)]
     pub encoder_bridge_metal_target_copied_frames: u64,
+    /// Raw-video FFmpeg writes where the encoder bridge also received the retained
+    /// CoreVideo handle for the IOSurface-backed Metal target.
+    #[serde(default)]
+    pub encoder_bridge_metal_target_handle_frames: u64,
     /// Frames submitted to the encoder without a CPU raw-video copy.
     #[serde(default)]
     pub encoder_bridge_zero_copy_frames: u64,

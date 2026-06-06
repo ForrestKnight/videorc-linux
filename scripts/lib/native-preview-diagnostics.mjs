@@ -61,6 +61,7 @@ export function summarizeNativePreviewRecordingDiagnostics(
     maxEncoderBridgeMetalTargetFrames: maxOf(collectCounts('encoderBridgeMetalTargetFrames')) ?? 0,
     maxEncoderBridgeRawVideoCopiedFrames: maxOf(collectCounts('encoderBridgeRawVideoCopiedFrames')) ?? 0,
     maxEncoderBridgeMetalTargetCopiedFrames: maxOf(collectCounts('encoderBridgeMetalTargetCopiedFrames')) ?? 0,
+    maxEncoderBridgeMetalTargetHandleFrames: maxOf(collectCounts('encoderBridgeMetalTargetHandleFrames')) ?? 0,
     maxEncoderBridgeZeroCopyFrames: maxOf(collectCounts('encoderBridgeZeroCopyFrames')) ?? 0,
     maxCompositorCpuFallbackFrames: maxOf(collectCounts('compositorCpuFallbackFrames')) ?? 0,
     lastCompositorFallbackReason: lastString('compositorFallbackReason'),
