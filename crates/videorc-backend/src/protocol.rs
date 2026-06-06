@@ -915,6 +915,26 @@ pub struct DiagnosticStats {
     /// store.
     #[serde(default)]
     pub compositor_frame_store_publish_p95_ms: Option<f64>,
+    /// P95 wall time spent refreshing cached live source handles outside the measured
+    /// render block.
+    #[serde(default)]
+    pub compositor_live_source_refresh_p95_ms: Option<f64>,
+    /// P95 wall time spent updating preview-surface frame progress outside the measured
+    /// render block.
+    #[serde(default)]
+    pub compositor_preview_surface_progress_p95_ms: Option<f64>,
+    /// P95 wall time spent updating/emitting compositor frame progress outside the
+    /// measured render block.
+    #[serde(default)]
+    pub compositor_status_progress_p95_ms: Option<f64>,
+    /// Cumulative compositor ticks that skipped preview-surface progress because the
+    /// UI status lock was busy.
+    #[serde(default)]
+    pub compositor_preview_surface_lock_contentions: u64,
+    /// Cumulative compositor ticks that skipped compositor progress because the status
+    /// lock was busy.
+    #[serde(default)]
+    pub compositor_status_lock_contentions: u64,
     pub preview_repeated_frames: u64,
     pub preview_surface_resize_count: u64,
     pub preview_latency_ms: Option<u64>,

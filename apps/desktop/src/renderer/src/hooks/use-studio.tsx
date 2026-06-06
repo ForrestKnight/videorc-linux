@@ -294,6 +294,8 @@ const idleDiagnosticStats = (): DiagnosticStats => ({
   previewTransport: 'unavailable',
   previewSourceFps: {},
   previewSurfaceBacking: 'none',
+  compositorPreviewSurfaceLockContentions: 0,
+  compositorStatusLockContentions: 0,
   previewRepeatedFrames: 0,
   previewSurfaceResizeCount: 0,
   previewDroppedFrames: 0,

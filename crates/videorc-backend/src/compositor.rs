@@ -13,8 +13,9 @@ use uuid::Uuid;
 use crate::color::rgb_to_yuv_full_range_bt601 as rgb_to_yuv;
 use crate::compositor_synthetic::SyntheticMovingSource;
 use crate::diagnostics::{
-    apply_active_scene_revision, apply_compositor_stats, apply_compositor_timing_stats,
-    apply_runtime_diagnostics_snapshot,
+    CompositorOutsideRenderTimingStats, apply_active_scene_revision,
+    apply_compositor_outside_render_timing_stats, apply_compositor_stats,
+    apply_compositor_timing_stats, apply_runtime_diagnostics_snapshot,
 };
 use crate::frame_store::{FrameHandle, FrameStore};
 use crate::preview_camera::{
@@ -30,7 +31,8 @@ use crate::protocol::{
     CompositorSceneSourceStatus, CompositorSceneUpdateParams, CompositorSourceKind,
     CompositorSourceStatus, CompositorState, CompositorStatus, LayoutPreset, LayoutSettings,
     PreviewCameraState, PreviewScreenSourceKind, PreviewScreenState, PreviewSurfaceState,
-    PreviewTransport, Scene, SceneSource, SceneSourceKind, SceneTransform, StreamScreen,
+    PreviewSurfaceStatus, PreviewTransport, Scene, SceneSource, SceneSourceKind, SceneTransform,
+    StreamScreen,
 };
 use crate::state::AppState;
 
@@ -704,6 +706,13 @@ async fn run_synthetic_compositor_loop(
     let mut gpu_command_wait_times_ms = Vec::with_capacity(128);
     let mut gpu_total_times_ms = Vec::with_capacity(128);
     let mut frame_store_publish_times_ms = Vec::with_capacity(128);
+    let mut live_source_refresh_times_ms = Vec::with_capacity(16);
+    let mut preview_surface_progress_times_ms = Vec::with_capacity(128);
+    let mut compositor_status_progress_times_ms = Vec::with_capacity(128);
+    let mut preview_surface_lock_contentions = 0_u64;
+    let mut compositor_status_lock_contentions = 0_u64;
+    let mut preview_surface_active = false;
+    let mut latest_surface_status: Option<PreviewSurfaceStatus> = None;
     let mut cpu_fallback_frames = 0_u64;
 
     loop {
@@ -725,7 +734,10 @@ async fn run_synthetic_compositor_loop(
                 }
                 previous_tick_at = Some(ticked_at);
                 if ticked_at >= next_live_source_refresh_at {
+                    let refresh_started_at = Instant::now();
                     live_sources = live_sources.refresh_sources(&state).await;
+                    live_source_refresh_times_ms
+                        .push(refresh_started_at.elapsed().as_secs_f64() * 1000.0);
                     next_live_source_refresh_at =
                         ticked_at + COMPOSITOR_LIVE_SOURCE_REFRESH_INTERVAL;
                 }
@@ -763,17 +775,41 @@ async fn run_synthetic_compositor_loop(
                 gpu_total_times_ms.push(published.timings.gpu_total_ms);
                 frame_store_publish_times_ms.push(published.timings.frame_store_publish_ms);
 
-                let surface_status = update_preview_surface_frames(&state, frames_rendered).await;
-                if surface_status
-                    .as_ref()
-                    .is_some_and(|status| status.transport.is_surface())
-                {
-                    let Some(status) =
-                        update_compositor_frame_progress(&state, &run_id, frames_rendered).await
-                    else {
-                        break;
-                    };
-                    state.emit_event("compositor.status", status);
+                let surface_progress_started_at = Instant::now();
+                let surface_status = match try_update_preview_surface_frames(&state, frames_rendered) {
+                    Ok(Some(status)) => {
+                        preview_surface_active = status.transport.is_surface();
+                        latest_surface_status = Some(status.clone());
+                        Some(status)
+                    }
+                    Ok(None) => {
+                        preview_surface_active = false;
+                        latest_surface_status = None;
+                        None
+                    }
+                    Err(()) => {
+                        preview_surface_lock_contentions =
+                            preview_surface_lock_contentions.saturating_add(1);
+                        latest_surface_status.clone()
+                    }
+                };
+                preview_surface_progress_times_ms
+                    .push(surface_progress_started_at.elapsed().as_secs_f64() * 1000.0);
+
+                if preview_surface_active {
+                    let status_progress_started_at = Instant::now();
+                    match try_update_compositor_frame_progress(&state, &run_id, frames_rendered) {
+                        Ok(Some(status)) => {
+                            state.emit_event("compositor.status", status);
+                        }
+                        Ok(None) => break,
+                        Err(()) => {
+                            compositor_status_lock_contentions =
+                                compositor_status_lock_contentions.saturating_add(1);
+                        }
+                    }
+                    compositor_status_progress_times_ms
+                        .push(status_progress_started_at.elapsed().as_secs_f64() * 1000.0);
                 }
 
                 if window_started_at.elapsed() >= COMPOSITOR_DIAGNOSTIC_WINDOW {
@@ -795,6 +831,12 @@ async fn run_synthetic_compositor_loop(
                     let (_, gpu_total_p95, _) = frame_time_percentiles(&gpu_total_times_ms);
                     let (_, frame_store_publish_p95, _) =
                         frame_time_percentiles(&frame_store_publish_times_ms);
+                    let live_source_refresh_p95 =
+                        frame_time_p95(&live_source_refresh_times_ms);
+                    let preview_surface_progress_p95 =
+                        frame_time_p95(&preview_surface_progress_times_ms);
+                    let compositor_status_progress_p95 =
+                        frame_time_p95(&compositor_status_progress_times_ms);
                     let sources = compositor_source_statuses(&state).await;
                     let frame_age_ms = compositor_frame_age_ms(
                         &sources,
@@ -855,6 +897,17 @@ async fn run_synthetic_compositor_loop(
                             gpu_total_p95,
                             frame_store_publish_p95,
                         );
+                        let next = apply_compositor_outside_render_timing_stats(
+                            next,
+                            CompositorOutsideRenderTimingStats {
+                                live_source_refresh_p95_ms: live_source_refresh_p95,
+                                preview_surface_progress_p95_ms: preview_surface_progress_p95,
+                                compositor_status_progress_p95_ms:
+                                    compositor_status_progress_p95,
+                                preview_surface_lock_contentions,
+                                compositor_status_lock_contentions,
+                            },
+                        );
                         *diagnostics = next.clone();
                         next
                     };
@@ -883,6 +936,9 @@ async fn run_synthetic_compositor_loop(
                     gpu_command_wait_times_ms.clear();
                     gpu_total_times_ms.clear();
                     frame_store_publish_times_ms.clear();
+                    live_source_refresh_times_ms.clear();
+                    preview_surface_progress_times_ms.clear();
+                    compositor_status_progress_times_ms.clear();
                 }
             }
         }
@@ -1678,32 +1734,36 @@ fn render_compositor_yuv420p_frame(inputs: CompositorRenderInputs<'_>, bytes: &m
     }
 }
 
-async fn update_preview_surface_frames(
+fn try_update_preview_surface_frames(
     state: &AppState,
     frames_rendered: u64,
-) -> Option<crate::protocol::PreviewSurfaceStatus> {
-    let mut surface = state.preview_surface.lock().await;
+) -> Result<Option<PreviewSurfaceStatus>, ()> {
+    let Ok(mut surface) = state.preview_surface.try_lock() else {
+        return Err(());
+    };
     if surface.status.state != PreviewSurfaceState::Live {
-        return None;
+        return Ok(None);
     }
     surface.status.frames_rendered = frames_rendered;
     surface.status.updated_at = Utc::now().to_rfc3339();
-    Some(surface.status.clone())
+    Ok(Some(surface.status.clone()))
 }
 
-async fn update_compositor_frame_progress(
+fn try_update_compositor_frame_progress(
     state: &AppState,
     run_id: &str,
     frames_rendered: u64,
-) -> Option<CompositorStatus> {
-    let mut compositor = state.compositor.lock().await;
+) -> Result<Option<CompositorStatus>, ()> {
+    let Ok(mut compositor) = state.compositor.try_lock() else {
+        return Err(());
+    };
     if compositor.run_id.as_deref() != Some(run_id) {
-        return None;
+        return Ok(None);
     }
     compositor.status.state = CompositorState::Live;
     compositor.status.frames_rendered = frames_rendered;
     compositor.status.updated_at = Utc::now().to_rfc3339();
-    Some(compositor.status.clone())
+    Ok(Some(compositor.status.clone()))
 }
 
 async fn update_compositor_status(
@@ -2366,6 +2426,10 @@ fn frame_time_percentiles(values: &[f64]) -> (f64, f64, f64) {
     )
 }
 
+fn frame_time_p95(values: &[f64]) -> Option<f64> {
+    (!values.is_empty()).then(|| frame_time_percentiles(values).1)
+}
+
 fn percentile(sorted: &[f64], p: u32) -> f64 {
     let index = (((p as f64 / 100.0) * sorted.len() as f64).ceil() as usize)
         .saturating_sub(1)
@@ -2964,8 +3028,8 @@ mod tests {
             compositor.run_id = Some("run".to_string());
         }
 
-        let status = update_compositor_frame_progress(&state, "run", 42)
-            .await
+        let status = try_update_compositor_frame_progress(&state, "run", 42)
+            .expect("progress lock")
             .expect("progress status");
 
         assert_eq!(status.state, CompositorState::Live);
@@ -2976,8 +3040,8 @@ mod tests {
         assert_eq!(status.frame_age_ms, Some(9));
         assert_eq!(status.frame_time_p95_ms, Some(12.5));
         assert!(
-            update_compositor_frame_progress(&state, "stale-run", 43)
-                .await
+            try_update_compositor_frame_progress(&state, "stale-run", 43)
+                .expect("progress lock")
                 .is_none()
         );
     }

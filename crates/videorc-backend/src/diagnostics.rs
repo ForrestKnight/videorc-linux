@@ -125,6 +125,11 @@ pub fn idle_diagnostics() -> DiagnosticStats {
         compositor_gpu_command_wait_p95_ms: None,
         compositor_gpu_total_p95_ms: None,
         compositor_frame_store_publish_p95_ms: None,
+        compositor_live_source_refresh_p95_ms: None,
+        compositor_preview_surface_progress_p95_ms: None,
+        compositor_status_progress_p95_ms: None,
+        compositor_preview_surface_lock_contentions: 0,
+        compositor_status_lock_contentions: 0,
         preview_repeated_frames: 0,
         preview_surface_resize_count: 0,
         preview_latency_ms: None,
@@ -650,6 +655,28 @@ pub fn apply_compositor_timing_stats(
     stats.compositor_gpu_command_wait_p95_ms = Some(gpu_command_wait_p95_ms);
     stats.compositor_gpu_total_p95_ms = Some(gpu_total_p95_ms);
     stats.compositor_frame_store_publish_p95_ms = Some(frame_store_publish_p95_ms);
+    stats.updated_at = Utc::now().to_rfc3339();
+    stats
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CompositorOutsideRenderTimingStats {
+    pub live_source_refresh_p95_ms: Option<f64>,
+    pub preview_surface_progress_p95_ms: Option<f64>,
+    pub compositor_status_progress_p95_ms: Option<f64>,
+    pub preview_surface_lock_contentions: u64,
+    pub compositor_status_lock_contentions: u64,
+}
+
+pub fn apply_compositor_outside_render_timing_stats(
+    mut stats: DiagnosticStats,
+    timings: CompositorOutsideRenderTimingStats,
+) -> DiagnosticStats {
+    stats.compositor_live_source_refresh_p95_ms = timings.live_source_refresh_p95_ms;
+    stats.compositor_preview_surface_progress_p95_ms = timings.preview_surface_progress_p95_ms;
+    stats.compositor_status_progress_p95_ms = timings.compositor_status_progress_p95_ms;
+    stats.compositor_preview_surface_lock_contentions = timings.preview_surface_lock_contentions;
+    stats.compositor_status_lock_contentions = timings.compositor_status_lock_contentions;
     stats.updated_at = Utc::now().to_rfc3339();
     stats
 }

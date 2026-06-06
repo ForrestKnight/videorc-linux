@@ -467,6 +467,13 @@ function summarizeDiagnostics(events, snapshots, startedAt, stopRequestedAt) {
     compositorGpuCommandWaitP95Ms: maxOf(collect('compositorGpuCommandWaitP95Ms')),
     compositorGpuTotalP95Ms: maxOf(collect('compositorGpuTotalP95Ms')),
     compositorFrameStorePublishP95Ms: maxOf(collect('compositorFrameStorePublishP95Ms')),
+    compositorLiveSourceRefreshP95Ms: maxOf(collect('compositorLiveSourceRefreshP95Ms')),
+    compositorPreviewSurfaceProgressP95Ms: maxOf(collect('compositorPreviewSurfaceProgressP95Ms')),
+    compositorStatusProgressP95Ms: maxOf(collect('compositorStatusProgressP95Ms')),
+    compositorPreviewSurfaceLockContentions:
+      maxOf(measured.map((s) => s.compositorPreviewSurfaceLockContentions ?? 0)) ?? 0,
+    compositorStatusLockContentions:
+      maxOf(measured.map((s) => s.compositorStatusLockContentions ?? 0)) ?? 0,
     maxBackendRssBytes: maxOf(rss),
     maxActiveFfmpegProcesses: maxOf(ffmpegProcs) ?? 0,
     maxActiveFfprobeProcesses: maxOf(ffprobeProcs) ?? 0,
@@ -606,6 +613,11 @@ function writeBaselineReport(outputPath, { sources, previewTransport, size, diag
       `command wait ${fmt(diagnostics.compositorGpuCommandWaitP95Ms)}ms | Metal total ${fmt(diagnostics.compositorGpuTotalP95Ms)}ms | ` +
       `frame-store publish ${fmt(diagnostics.compositorFrameStorePublishP95Ms)}ms`
   )
+  lines.push(
+    `- Compositor outside-render p95: source refresh ${fmt(diagnostics.compositorLiveSourceRefreshP95Ms)}ms | ` +
+      `surface progress ${fmt(diagnostics.compositorPreviewSurfaceProgressP95Ms)}ms (${diagnostics.compositorPreviewSurfaceLockContentions} lock skips) | ` +
+      `status progress ${fmt(diagnostics.compositorStatusProgressP95Ms)}ms (${diagnostics.compositorStatusLockContentions} lock skips)`
+  )
   lines.push(`- Backend RSS max: ${mib(diagnostics.maxBackendRssBytes)} | ffmpeg procs ${diagnostics.maxActiveFfmpegProcesses} | ffprobe procs ${diagnostics.maxActiveFfprobeProcesses}`)
   lines.push(`- Maintenance overlap samples: ${diagnostics.maintenanceSamples} | duplicate-capture samples: ${diagnostics.duplicateCaptureSamples}`)
   lines.push('')
@@ -681,6 +693,9 @@ function printSummary(report, startupReport, diagnostics, previewTransport, base
   console.log(`Encoder min speed: ${diagnostics.minEncoderSpeed ?? 'n/a'}x | mic dropped: ${diagnostics.micDroppedFrames}`)
   console.log(
     `Screen capture: gap p95 ${diagnostics.previewScreenCaptureGapP95Ms ?? 'n/a'}ms / max ${diagnostics.previewScreenCaptureGapMaxMs ?? 'n/a'}ms | copy p95 ${diagnostics.previewScreenRowCopyP95Ms ?? 'n/a'}ms | publish p95 ${diagnostics.previewScreenPublishP95Ms ?? 'n/a'}ms`
+  )
+  console.log(
+    `Compositor outside-render: source refresh p95 ${diagnostics.compositorLiveSourceRefreshP95Ms ?? 'n/a'}ms | surface/status progress p95 ${diagnostics.compositorPreviewSurfaceProgressP95Ms ?? 'n/a'}/${diagnostics.compositorStatusProgressP95Ms ?? 'n/a'}ms`
   )
   console.log(`Baseline report: ${baselinePath}`)
   console.log('══════════════════════════════════════')

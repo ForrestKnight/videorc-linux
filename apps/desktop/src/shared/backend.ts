@@ -1157,6 +1157,16 @@ export interface DiagnosticStats {
   compositorGpuTotalP95Ms?: number
   /** P95 time spent publishing the completed compositor frame to the shared store. */
   compositorFrameStorePublishP95Ms?: number
+  /** P95 time spent refreshing cached live source handles outside the render block. */
+  compositorLiveSourceRefreshP95Ms?: number
+  /** P95 time spent updating preview-surface progress outside the render block. */
+  compositorPreviewSurfaceProgressP95Ms?: number
+  /** P95 time spent updating compositor progress outside the render block. */
+  compositorStatusProgressP95Ms?: number
+  /** Compositor ticks that skipped preview-surface progress because the lock was busy. */
+  compositorPreviewSurfaceLockContentions: number
+  /** Compositor ticks that skipped compositor progress because the lock was busy. */
+  compositorStatusLockContentions: number
   previewRepeatedFrames: number
   previewSurfaceResizeCount: number
   previewLatencyMs?: number
