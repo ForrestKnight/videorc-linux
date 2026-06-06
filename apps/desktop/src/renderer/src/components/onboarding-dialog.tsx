@@ -16,7 +16,6 @@ import { useEffect, useMemo, useState, type ReactElement } from 'react'
 import logoUrl from '@/assets/videorc-logo.png'
 import { StatusBadge, type StatusTone } from '@/components/status-badge'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -130,9 +129,24 @@ export function OnboardingDialog({
                 <DialogDescription>Choose the first-session defaults and confirm the local capture path.</DialogDescription>
               </div>
             </div>
-            <Badge variant="secondary">
-              {stepIndex + 1} / {STEPS.length}
-            </Badge>
+            <div
+              className="flex items-center gap-1.5 pt-1"
+              aria-label={`Step ${stepIndex + 1} of ${STEPS.length}`}
+            >
+              {STEPS.map((stepId, index) => (
+                <span
+                  key={stepId}
+                  className={cn(
+                    'h-1.5 rounded-full transition-all',
+                    index === stepIndex
+                      ? 'w-6 bg-primary'
+                      : index < stepIndex
+                        ? 'w-1.5 bg-primary/50'
+                        : 'w-1.5 bg-muted-foreground/30'
+                  )}
+                />
+              ))}
+            </div>
           </div>
         </DialogHeader>
 
