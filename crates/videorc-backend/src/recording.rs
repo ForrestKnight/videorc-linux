@@ -527,6 +527,19 @@ pub async fn start_session(
             },
         )
         .await;
+        if let Err(error) = await_recording_camera_cadence_ready(
+            &state,
+            &session_id,
+            params.output.video.fps,
+            startup_source_requirements,
+        )
+        .await
+        {
+            if let Some(fifo_path) = encoder_bridge_fifo.as_ref() {
+                let _ = std::fs::remove_file(fifo_path);
+            }
+            return Err(error);
+        }
         match await_recording_startup_barrier(
             &state,
             &session_id,
@@ -2765,6 +2778,10 @@ const MICROPHONE_WARMUP_TIMEOUT: Duration = Duration::from_millis(1500);
 const RECORDING_STARTUP_BARRIER_TIMEOUT: Duration = Duration::from_millis(2500);
 /// Consecutive target-resolution real-source compositor frames required before encoding.
 const RECORDING_STARTUP_BARRIER_MIN_FRAMES: u32 = 3;
+const RECORDING_CAMERA_CADENCE_READY_TIMEOUT: Duration = Duration::from_millis(1500);
+const RECORDING_CAMERA_CADENCE_READY_POLL: Duration = Duration::from_millis(25);
+const RECORDING_CAMERA_CADENCE_FRAME_INTERVAL_FACTOR: f64 = 1.75;
+const RECORDING_CAMERA_CADENCE_MAX_FRAME_AGE_MS: u64 = 250;
 const RECORDING_ENCODER_BRIDGE_SOURCE_READY_TIMEOUT: Duration = Duration::from_millis(750);
 const RECORDING_ENCODER_BRIDGE_SOURCE_READY_POLL: Duration = Duration::from_millis(25);
 
@@ -2858,6 +2875,94 @@ async fn await_recording_startup_barrier(
         &message,
     );
     bail!(message)
+}
+
+async fn await_recording_camera_cadence_ready(
+    state: &AppState,
+    session_id: &str,
+    target_fps: u32,
+    requirements: CompositorStartupSourceRequirements,
+) -> Result<()> {
+    if !requirements.require_camera_source {
+        return Ok(());
+    }
+
+    let started_at = Instant::now();
+    let threshold_ms = camera_cadence_ready_threshold_ms(target_fps);
+
+    loop {
+        let (sample_pts_gap_p95_ms, callback_gap_p95_ms, frame_age_ms) = {
+            let diagnostics = state.diagnostics.lock().await;
+            (
+                diagnostics.preview_camera_sample_pts_gap_p95_ms,
+                diagnostics.preview_camera_capture_gap_p95_ms,
+                diagnostics.preview_camera_frame_age_ms,
+            )
+        };
+
+        if camera_cadence_ready(sample_pts_gap_p95_ms, frame_age_ms, threshold_ms) {
+            let _ = emit_health_event(
+                state,
+                Some(session_id),
+                HealthLevel::Info,
+                "recording-camera-cadence-ready",
+                &format!(
+                    "Camera cadence settled before recording start: sample PTS p95 {} (threshold {:.0}ms), callback p95 {}, frame age {}.",
+                    optional_ms(sample_pts_gap_p95_ms),
+                    threshold_ms,
+                    optional_ms(callback_gap_p95_ms),
+                    optional_u64_ms(frame_age_ms)
+                ),
+            );
+            return Ok(());
+        }
+
+        if started_at.elapsed() >= RECORDING_CAMERA_CADENCE_READY_TIMEOUT {
+            let message = format!(
+                "Recording startup blocked before encoding: camera sample PTS cadence did not settle (sample PTS p95 {}, threshold {:.0}ms, callback p95 {}, frame age {}).",
+                optional_ms(sample_pts_gap_p95_ms),
+                threshold_ms,
+                optional_ms(callback_gap_p95_ms),
+                optional_u64_ms(frame_age_ms)
+            );
+            let _ = emit_health_event(
+                state,
+                Some(session_id),
+                HealthLevel::Error,
+                "recording-camera-cadence-timeout",
+                &message,
+            );
+            bail!(message);
+        }
+
+        sleep(RECORDING_CAMERA_CADENCE_READY_POLL).await;
+    }
+}
+
+fn camera_cadence_ready(
+    sample_pts_gap_p95_ms: Option<f64>,
+    frame_age_ms: Option<u64>,
+    threshold_ms: f64,
+) -> bool {
+    sample_pts_gap_p95_ms.is_some_and(|gap| gap.is_finite() && gap <= threshold_ms)
+        && frame_age_ms.is_some_and(|age| age <= RECORDING_CAMERA_CADENCE_MAX_FRAME_AGE_MS)
+}
+
+fn camera_cadence_ready_threshold_ms(target_fps: u32) -> f64 {
+    1000.0 / f64::from(target_fps.max(1)) * RECORDING_CAMERA_CADENCE_FRAME_INTERVAL_FACTOR
+}
+
+fn optional_ms(value: Option<f64>) -> String {
+    value
+        .filter(|value| value.is_finite())
+        .map(|value| format!("{value:.1}ms"))
+        .unwrap_or_else(|| "n/a".to_string())
+}
+
+fn optional_u64_ms(value: Option<u64>) -> String {
+    value
+        .map(|value| format!("{value}ms"))
+        .unwrap_or_else(|| "n/a".to_string())
 }
 
 fn recording_startup_source_requirements(scene: &Scene) -> CompositorStartupSourceRequirements {
@@ -6245,6 +6350,18 @@ mod tests {
             parse_encoder_bridge_video_output(Some(" mpeg-ts ")),
             EncoderBridgeVideoOutput::VideoToolboxH264MpegTs
         );
+    }
+
+    #[test]
+    fn camera_cadence_guard_requires_fresh_stable_sample_pts() {
+        let threshold = camera_cadence_ready_threshold_ms(30);
+
+        assert!(threshold > 58.0 && threshold < 59.0);
+        assert!(camera_cadence_ready(Some(33.3), Some(40), threshold));
+        assert!(camera_cadence_ready(Some(50.0), Some(40), threshold));
+        assert!(!camera_cadence_ready(Some(66.7), Some(40), threshold));
+        assert!(!camera_cadence_ready(Some(33.3), Some(300), threshold));
+        assert!(!camera_cadence_ready(None, Some(40), threshold));
     }
 
     #[test]
