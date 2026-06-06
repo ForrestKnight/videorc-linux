@@ -125,8 +125,11 @@ fails a "native" claim — by design.
   `cargo test -p videorc-backend video_toolbox` passed, including callback/sample-buffer
   evidence, nonzero `CMSampleBuffer` / `CMBlockBuffer` encoded byte counts, and a
   successful `CMBlockBufferCopyDataBytes` payload copy for a 64x64 retained Metal
-  target. This proves the retained target can cross the VideoToolbox boundary and expose
-  compressed payload bytes to Rust; the production recording bridge still needs to
+  target. The same probe now sets the production-shaped low-latency properties
+  `RealTime=true`, `AllowFrameReordering=false`, `ExpectedFrameRate=30`, and
+  `MaxKeyFrameInterval=60` before `prepare_to_encode_frames()`. This proves the retained
+  target can cross the VideoToolbox boundary and expose compressed payload bytes to Rust
+  through a realtime H.264 session; the production recording bridge still needs to
   replace the raw-YUV FIFO copy before
   `encoderBridgeZeroCopyFrames` can grow.
 - The real-source acceptance gate now fails GPU-required runs when

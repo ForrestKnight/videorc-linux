@@ -4,21 +4,36 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, bail, ensure};
 use block2::RcBlock;
-use objc2_core_foundation::CFRetained;
+use objc2_core_foundation::{CFBoolean, CFNumber, CFRetained, CFString, CFType};
 use objc2_core_media::{CMSampleBuffer, CMTime, kCMTimeInvalid, kCMVideoCodecType_H264};
 use objc2_core_video::{CVPixelBufferGetHeight, CVPixelBufferGetWidth};
-use objc2_video_toolbox::{VTCompressionSession, VTEncodeInfoFlags};
+use objc2_video_toolbox::{
+    VTCompressionSession, VTEncodeInfoFlags, VTSession, VTSessionSetProperty,
+    kVTCompressionPropertyKey_AllowFrameReordering, kVTCompressionPropertyKey_ExpectedFrameRate,
+    kVTCompressionPropertyKey_MaxKeyFrameInterval, kVTCompressionPropertyKey_RealTime,
+};
 
 use crate::metal_compositor::MetalCompositorTargetPixelBuffer;
 
 const NO_ERR: OSStatus = 0;
 type OSStatus = i32;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VideoToolboxRealtimePropertyStatuses {
+    pub real_time: OSStatus,
+    pub allow_frame_reordering: OSStatus,
+    pub expected_frame_rate: OSStatus,
+    pub max_key_frame_interval: OSStatus,
+    pub expected_frame_rate_value: i32,
+    pub max_key_frame_interval_value: i32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VideoToolboxH264ProbeResult {
     pub width: usize,
     pub height: usize,
     pub create_status: OSStatus,
+    pub property_statuses: VideoToolboxRealtimePropertyStatuses,
     pub prepare_status: OSStatus,
     pub encode_status: Option<OSStatus>,
     pub complete_status: Option<OSStatus>,
@@ -38,11 +53,17 @@ pub struct VideoToolboxH264ProbeResult {
 }
 
 impl VideoToolboxH264ProbeResult {
-    fn prepared(width: usize, height: usize, prepare_status: OSStatus) -> Self {
+    fn prepared(
+        width: usize,
+        height: usize,
+        property_statuses: VideoToolboxRealtimePropertyStatuses,
+        prepare_status: OSStatus,
+    ) -> Self {
         Self {
             width,
             height,
             create_status: NO_ERR,
+            property_statuses,
             prepare_status,
             encode_status: None,
             complete_status: None,
@@ -82,12 +103,30 @@ pub struct VideoToolboxH264Session {
     session: CFRetained<VTCompressionSession>,
     width: usize,
     height: usize,
+    property_statuses: VideoToolboxRealtimePropertyStatuses,
 }
 
 impl VideoToolboxH264Session {
     pub fn new(width: usize, height: usize) -> Result<Self> {
+        Self::new_realtime(width, height, 30, 60)
+    }
+
+    pub fn new_realtime(
+        width: usize,
+        height: usize,
+        expected_frame_rate: i32,
+        max_key_frame_interval: i32,
+    ) -> Result<Self> {
         ensure!(width > 0, "VideoToolbox session width must be non-zero");
         ensure!(height > 0, "VideoToolbox session height must be non-zero");
+        ensure!(
+            expected_frame_rate > 0,
+            "VideoToolbox expected frame rate must be positive"
+        );
+        ensure!(
+            max_key_frame_interval > 0,
+            "VideoToolbox max keyframe interval must be positive"
+        );
         ensure!(
             width <= i32::MAX as usize && height <= i32::MAX as usize,
             "VideoToolbox session dimensions exceed i32 range: {width}x{height}"
@@ -114,11 +153,22 @@ impl VideoToolboxH264Session {
         let raw_session =
             NonNull::new(raw_session).context("VTCompressionSessionCreate returned null")?;
         let session = unsafe { CFRetained::from_raw(raw_session) };
-        Ok(Self {
+        let mut session = Self {
             session,
             width,
             height,
-        })
+            property_statuses: VideoToolboxRealtimePropertyStatuses {
+                real_time: NO_ERR,
+                allow_frame_reordering: NO_ERR,
+                expected_frame_rate: NO_ERR,
+                max_key_frame_interval: NO_ERR,
+                expected_frame_rate_value: expected_frame_rate,
+                max_key_frame_interval_value: max_key_frame_interval,
+            },
+        };
+        session.property_statuses =
+            session.configure_realtime_low_latency(expected_frame_rate, max_key_frame_interval)?;
+        Ok(session)
     }
 
     pub fn prepare(&self) -> Result<VideoToolboxH264ProbeResult> {
@@ -133,6 +183,7 @@ impl VideoToolboxH264Session {
         Ok(VideoToolboxH264ProbeResult::prepared(
             self.width,
             self.height,
+            self.property_statuses,
             status,
         ))
     }
@@ -232,6 +283,7 @@ impl VideoToolboxH264Session {
             width,
             height,
             create_status: NO_ERR,
+            property_statuses: self.property_statuses,
             prepare_status: NO_ERR,
             encode_status: Some(encode_status),
             complete_status: Some(complete_status),
@@ -250,6 +302,59 @@ impl VideoToolboxH264Session {
                 || encode_info_flags.contains(VTEncodeInfoFlags::FrameDropped),
             iosurface_backed,
         })
+    }
+
+    fn configure_realtime_low_latency(
+        &self,
+        expected_frame_rate: i32,
+        max_key_frame_interval: i32,
+    ) -> Result<VideoToolboxRealtimePropertyStatuses> {
+        let real_time = self.set_property(
+            "RealTime",
+            unsafe { kVTCompressionPropertyKey_RealTime },
+            CFBoolean::new(true).as_ref(),
+        )?;
+        let allow_frame_reordering = self.set_property(
+            "AllowFrameReordering",
+            unsafe { kVTCompressionPropertyKey_AllowFrameReordering },
+            CFBoolean::new(false).as_ref(),
+        )?;
+        let expected_frame_rate_value = CFNumber::new_i32(expected_frame_rate);
+        let expected_frame_rate_status = self.set_property(
+            "ExpectedFrameRate",
+            unsafe { kVTCompressionPropertyKey_ExpectedFrameRate },
+            expected_frame_rate_value.as_ref(),
+        )?;
+        let max_key_frame_interval_value = CFNumber::new_i32(max_key_frame_interval);
+        let max_key_frame_interval_status = self.set_property(
+            "MaxKeyFrameInterval",
+            unsafe { kVTCompressionPropertyKey_MaxKeyFrameInterval },
+            max_key_frame_interval_value.as_ref(),
+        )?;
+
+        Ok(VideoToolboxRealtimePropertyStatuses {
+            real_time,
+            allow_frame_reordering,
+            expected_frame_rate: expected_frame_rate_status,
+            max_key_frame_interval: max_key_frame_interval_status,
+            expected_frame_rate_value: expected_frame_rate,
+            max_key_frame_interval_value: max_key_frame_interval,
+        })
+    }
+
+    fn set_property(
+        &self,
+        name: &str,
+        property_key: &CFString,
+        property_value: &CFType,
+    ) -> Result<OSStatus> {
+        let compression_session: &VTCompressionSession = &self.session;
+        let session: &VTSession = compression_session.as_ref();
+        let status = unsafe { VTSessionSetProperty(session, property_key, Some(property_value)) };
+        if status != NO_ERR {
+            bail!("VTSessionSetProperty({name}) failed with {status}");
+        }
+        Ok(status)
     }
 }
 
@@ -316,6 +421,12 @@ mod tests {
                 assert_eq!(result.width, 64);
                 assert_eq!(result.height, 64);
                 assert_eq!(result.create_status, NO_ERR);
+                assert_eq!(result.property_statuses.real_time, NO_ERR);
+                assert_eq!(result.property_statuses.allow_frame_reordering, NO_ERR);
+                assert_eq!(result.property_statuses.expected_frame_rate, NO_ERR);
+                assert_eq!(result.property_statuses.max_key_frame_interval, NO_ERR);
+                assert_eq!(result.property_statuses.expected_frame_rate_value, 30);
+                assert_eq!(result.property_statuses.max_key_frame_interval_value, 60);
                 assert_eq!(result.prepare_status, NO_ERR);
             }
             Err(error) => {
@@ -353,6 +464,10 @@ mod tests {
                 assert_eq!(result.width, 64);
                 assert_eq!(result.height, 64);
                 assert_eq!(result.create_status, NO_ERR);
+                assert_eq!(result.property_statuses.real_time, NO_ERR);
+                assert_eq!(result.property_statuses.allow_frame_reordering, NO_ERR);
+                assert_eq!(result.property_statuses.expected_frame_rate, NO_ERR);
+                assert_eq!(result.property_statuses.max_key_frame_interval, NO_ERR);
                 assert_eq!(result.prepare_status, NO_ERR);
                 assert_eq!(result.encode_status, Some(NO_ERR));
                 assert_eq!(result.complete_status, Some(NO_ERR));
