@@ -2780,7 +2780,7 @@ const RECORDING_STARTUP_BARRIER_TIMEOUT: Duration = Duration::from_millis(2500);
 const RECORDING_STARTUP_BARRIER_MIN_FRAMES: u32 = 3;
 const RECORDING_CAMERA_CADENCE_READY_TIMEOUT: Duration = Duration::from_millis(1500);
 const RECORDING_CAMERA_CADENCE_READY_POLL: Duration = Duration::from_millis(25);
-const RECORDING_CAMERA_CADENCE_FRAME_INTERVAL_FACTOR: f64 = 1.75;
+const RECORDING_CAMERA_CADENCE_FRAME_INTERVAL_FACTOR: f64 = 2.1;
 const RECORDING_CAMERA_CADENCE_MAX_FRAME_AGE_MS: u64 = 250;
 const RECORDING_ENCODER_BRIDGE_SOURCE_READY_TIMEOUT: Duration = Duration::from_millis(750);
 const RECORDING_ENCODER_BRIDGE_SOURCE_READY_POLL: Duration = Duration::from_millis(25);
@@ -6356,10 +6356,10 @@ mod tests {
     fn camera_cadence_guard_requires_fresh_stable_sample_pts() {
         let threshold = camera_cadence_ready_threshold_ms(30);
 
-        assert!(threshold > 58.0 && threshold < 59.0);
+        assert!(threshold > 69.0 && threshold < 71.0);
         assert!(camera_cadence_ready(Some(33.3), Some(40), threshold));
-        assert!(camera_cadence_ready(Some(50.0), Some(40), threshold));
-        assert!(!camera_cadence_ready(Some(66.7), Some(40), threshold));
+        assert!(camera_cadence_ready(Some(66.7), Some(40), threshold));
+        assert!(!camera_cadence_ready(Some(83.3), Some(40), threshold));
         assert!(!camera_cadence_ready(Some(33.3), Some(300), threshold));
         assert!(!camera_cadence_ready(None, Some(40), threshold));
     }
