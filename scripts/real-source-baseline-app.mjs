@@ -40,7 +40,12 @@ import { analyzeRecording, writeReports } from './lib/recording-analyzer.mjs'
 import { analyzeStartupResolution, writeStartupReports } from './lib/startup-resolution-analyzer.mjs'
 import { evaluateAcceptance } from './lib/acceptance-gate.mjs'
 import { classifyObsParityEvidence } from './lib/obs-parity-evidence.mjs'
-import { claimsNativePreview, formatTransportHonesty } from './lib/native-preview-claim.mjs'
+import {
+  claimsNativePreview,
+  formatTransportHonesty,
+  strongestPreviewBacking,
+  strongestPreviewTransport,
+} from './lib/native-preview-claim.mjs'
 
 const config = {
   recordingMs: Number(process.env.VIDEORC_BASELINE_RECORDING_MS ?? 60000),
@@ -442,10 +447,14 @@ function summarizeDiagnostics(events, snapshots, startedAt, stopRequestedAt, opt
 
   const compositorSamples = snapshots.map((s) => s.compositor).filter(Boolean)
   const surfaceSamples = snapshots.map((s) => s.surface).filter(Boolean)
-  const transports = new Set(measured.map((s) => s.previewTransport).filter(Boolean))
+  const transportSamples = measured.map((s) => s.previewTransport).filter(Boolean)
+  const backingSamples = measured.map((s) => s.previewSurfaceBacking).filter(Boolean)
+  const transports = new Set(transportSamples)
   for (const s of surfaceSamples) if (s.transport) transports.add(s.transport)
-  const surfaceBackings = new Set(measured.map((s) => s.previewSurfaceBacking).filter(Boolean))
+  for (const s of surfaceSamples) if (s.transport) transportSamples.push(s.transport)
+  const surfaceBackings = new Set(backingSamples)
   for (const s of surfaceSamples) if (s.backing) surfaceBackings.add(s.backing)
+  for (const s of surfaceSamples) if (s.backing) backingSamples.push(s.backing)
   const bottlenecks = new Set(measured.map((s) => s.bottleneck).filter(Boolean))
 
   // Transport honesty: how much HTTP image-polling happened DURING the session. A truly
@@ -491,10 +500,8 @@ function summarizeDiagnostics(events, snapshots, startedAt, stopRequestedAt, opt
     compositorBackend: measured.map((s) => s.compositorBackend).filter(Boolean).pop() ?? null,
     compositorFallbackReason: measured.map((s) => s.compositorFallbackReason).filter(Boolean).pop() ?? null,
     compositorCpuFallbackFrames: maxOf(measured.map((s) => s.compositorCpuFallbackFrames ?? 0)) ?? 0,
-    previewSurfaceBacking:
-      measured.map((s) => s.previewSurfaceBacking).filter(Boolean).pop() ??
-      surfaceSamples.map((s) => s.backing).filter(Boolean).pop() ??
-      null,
+    previewTransport: strongestPreviewTransport(transportSamples),
+    previewSurfaceBacking: strongestPreviewBacking(backingSamples),
     encoderBridgeRepeatedFrames: maxOf(measured.map((s) => s.encoderBridgeRepeatedFrames ?? 0)) ?? 0,
     encoderBridgeRepeatedFrameBursts: maxOf(measured.map((s) => s.encoderBridgeRepeatedFrameBursts ?? 0)) ?? 0,
     encoderBridgeMaxRepeatedFrameRun: maxOf(measured.map((s) => s.encoderBridgeMaxRepeatedFrameRun ?? 0)) ?? 0,
