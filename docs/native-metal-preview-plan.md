@@ -36,6 +36,9 @@ fails a "native" claim — by design.
 - Fallback/proof PNG source snapshots now keep their low default caps but accept bounded
   `maxWidth` requests; the Electron proof surface requests layer-sized snapshots to
   reduce avoidable blur while the real CAMetalLayer host is still pending.
+- The backend now has an AppKit-backed native preview host foundation that can attach a
+  `CAMetalLayer` to an `NSView`; the remaining native-host work is lifecycle, positioning,
+  frame presentation, and on-device validation.
 - `make_preview_layer()` / `MetalPreviewPresenter` / `present_texture_to_layer()` — the
   GPU-side preview present (CAMetalLayer + render-scaled texture present), compile-and-run
   tested headlessly.
