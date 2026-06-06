@@ -35,6 +35,7 @@ import { connectBackend, request } from './smoke-recording-session.mjs'
 import { analyzeRecording, writeReports } from './lib/recording-analyzer.mjs'
 import { analyzeStartupResolution, writeStartupReports } from './lib/startup-resolution-analyzer.mjs'
 import { evaluateAcceptance } from './lib/acceptance-gate.mjs'
+import { classifyObsParityEvidence } from './lib/obs-parity-evidence.mjs'
 
 const config = {
   recordingMs: Number(process.env.VIDEORC_BASELINE_RECORDING_MS ?? 60000),
@@ -179,6 +180,14 @@ async function main() {
     const startupPaths = await writeStartupReports(startupReport, {
       ffmpegPath: config.ffmpegPath,
     })
+    const claimsNative =
+      previewTransport === 'native-surface' || diagnostics.transports.includes('native-surface')
+    const ownership = classifyObsParityEvidence({
+      analyzerVerdict: report.verdict,
+      startupVerdict: startupReport.verdict,
+      diagnostics,
+      claimsNative,
+    })
     const baselinePath = writeBaselineReport(outputPath, {
       sources,
       previewTransport,
@@ -187,14 +196,13 @@ async function main() {
       report,
       startupReport,
       startupPaths,
+      ownership,
     })
 
     // Full real-source acceptance gate: final-file verdict + recording repeats +
     // encoder speed + mic drops/coverage + transport honesty, all enforced together.
     // The Electron proof surface reports metrics, but only native-surface is the real
     // CAMetalLayer path and therefore an OBS-native claim.
-    const claimsNative =
-      previewTransport === 'native-surface' || diagnostics.transports.includes('native-surface')
     const acceptance = evaluateAcceptance({
       analyzerVerdict: report.verdict,
       startupVerdict: startupReport.verdict,
@@ -204,7 +212,7 @@ async function main() {
       requireGpuCompositor: true,
       expectAudio: Boolean(sources.microphone),
     })
-    printSummary(report, startupReport, diagnostics, previewTransport, baselinePath, acceptance)
+    printSummary(report, startupReport, diagnostics, previewTransport, baselinePath, acceptance, ownership)
     return acceptance
   } finally {
     ws.close()
@@ -388,7 +396,7 @@ function summarizeDiagnostics(events, snapshots, startedAt, stopRequestedAt) {
 
 // --- Report -----------------------------------------------------------------
 
-function writeBaselineReport(outputPath, { sources, previewTransport, size, diagnostics, report, startupReport, startupPaths }) {
+function writeBaselineReport(outputPath, { sources, previewTransport, size, diagnostics, report, startupReport, startupPaths, ownership }) {
   const base = outputPath.split('/').pop().replace(/\.[^.]+$/, '')
   const reportPath = join(dirname(outputPath), `${base}.baseline.md`)
   const m = report.metrics
@@ -501,6 +509,22 @@ function writeBaselineReport(outputPath, { sources, previewTransport, size, diag
   lines.push(`- Backend RSS max: ${mib(diagnostics.maxBackendRssBytes)} | ffmpeg procs ${diagnostics.maxActiveFfmpegProcesses} | ffprobe procs ${diagnostics.maxActiveFfprobeProcesses}`)
   lines.push(`- Maintenance overlap samples: ${diagnostics.maintenanceSamples} | duplicate-capture samples: ${diagnostics.duplicateCaptureSamples}`)
   lines.push('')
+  lines.push('## Problem ownership triage')
+  lines.push('')
+  if (ownership?.length) {
+    for (const item of ownership) {
+      lines.push(`### ${item.area}`)
+      lines.push('')
+      lines.push(`- Status: ${item.status}`)
+      lines.push(`- Owner: ${item.owner}`)
+      lines.push(`- Evidence: ${item.evidence.length ? item.evidence.join('; ') : 'none'}`)
+      lines.push(`- Next step: ${item.nextStep}`)
+      lines.push('')
+    }
+  } else {
+    lines.push('- No ownership triage was produced for this run.')
+    lines.push('')
+  }
   lines.push('## Honest-metric status')
   lines.push('')
   lines.push('Now measured (trust the values above):')
@@ -520,7 +544,7 @@ function writeBaselineReport(outputPath, { sources, previewTransport, size, diag
   return reportPath
 }
 
-function printSummary(report, startupReport, diagnostics, previewTransport, baselinePath, acceptance) {
+function printSummary(report, startupReport, diagnostics, previewTransport, baselinePath, acceptance, ownership) {
   console.log('')
   console.log('════════ REAL-SOURCE BASELINE ════════')
   console.log(`Acceptance gate: ${acceptance.pass ? 'PASS' : 'FAIL'}`)
@@ -541,6 +565,14 @@ function printSummary(report, startupReport, diagnostics, previewTransport, base
   console.log(
     `Compositor backend: ${diagnostics.compositorBackend ?? 'unknown'} | CPU fallback frames ${diagnostics.compositorCpuFallbackFrames}` +
       (diagnostics.compositorFallbackReason ? ` | ${diagnostics.compositorFallbackReason}` : '')
+  )
+  const activeOwners = (ownership ?? []).filter((item) => item.status !== 'pass')
+  console.log(
+    `Problem owners: ${
+      activeOwners.length
+        ? activeOwners.map((item) => `${item.area} -> ${item.owner}`).join('; ')
+        : 'none from automated metrics'
+    }`
   )
   console.log(`Encoder min speed: ${diagnostics.minEncoderSpeed ?? 'n/a'}x | mic dropped: ${diagnostics.micDroppedFrames}`)
   console.log(`Baseline report: ${baselinePath}`)

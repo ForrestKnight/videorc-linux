@@ -21,7 +21,9 @@ whole point of the root-fix work.
 | `pnpm test:scripts` | Unit/integration tests for all of the above (must stay green). |
 
 The acceptance gate logic lives in `scripts/lib/acceptance-gate.mjs` and is unit-tested,
-so the bar itself is verifiable without hardware.
+so the bar itself is verifiable without hardware. Real-source baseline reports also
+include a problem-ownership triage that maps first-2-seconds glitches, preview lag,
+preview softness, and recording hot-path risk to the next responsible slice.
 
 ## Automated acceptance — metric gates
 
