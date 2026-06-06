@@ -108,7 +108,6 @@ export function LiveChatPanel({
   const [paused, setPaused] = useState(false)
   const [unread, setUnread] = useState(0)
   const feedRef = useRef<HTMLDivElement>(null)
-  const bottomRef = useRef<HTMLDivElement>(null)
   const previousCount = useRef(snapshot.messages.length)
 
   const enabled = useMemo(() => new Set(activePlatforms), [activePlatforms])
@@ -131,9 +130,11 @@ export function LiveChatPanel({
   }, [snapshot.messages.length, paused])
 
   // Stick to the newest message unless the user scrolled up.
+  // Stick the FEED (not the page) to its newest message. Using scrollIntoView here would
+  // scroll every scrollable ancestor — including the app's <main> — to the bottom on mount.
   useEffect(() => {
-    if (shouldAutoscroll(paused)) {
-      bottomRef.current?.scrollIntoView({ block: 'end' })
+    if (shouldAutoscroll(paused) && feedRef.current) {
+      feedRef.current.scrollTop = feedRef.current.scrollHeight
       setUnread(0)
     }
   }, [messages, paused])
@@ -149,7 +150,7 @@ export function LiveChatPanel({
   function jumpToLatest(): void {
     setPaused(false)
     setUnread(0)
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+    feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight, behavior: 'smooth' })
   }
 
   const hasProviders = snapshot.providers.length > 0
@@ -213,7 +214,6 @@ export function LiveChatPanel({
                 : 'Connect a YouTube or Twitch account to read live comments.'}
             </div>
           )}
-          <div ref={bottomRef} />
         </div>
 
         {paused && unread > 0 ? (
