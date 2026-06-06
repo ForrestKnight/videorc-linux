@@ -39,8 +39,7 @@ use crate::state::AppState;
 
 const COMPOSITOR_DIAGNOSTIC_WINDOW: Duration = Duration::from_secs(2);
 const COMPOSITOR_LIVE_SOURCE_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
-const COMPOSITOR_LIVE_SOURCE_STALE_RECOVERY_AFTER: Duration = Duration::from_millis(150);
-const COMPOSITOR_LIVE_SOURCE_MAX_TRY_LOCK_MISSES: u32 = 3;
+const COMPOSITOR_LIVE_SOURCE_STALE_RECOVERY_AFTER: Duration = Duration::from_secs(1);
 
 pub type CompositorSlot = std::sync::Arc<tokio::sync::Mutex<CompositorRuntime>>;
 pub type CompositorFrameStore =
@@ -340,13 +339,53 @@ impl CompositorLiveSources {
 }
 
 fn should_blocking_refresh_live_source<P, M>(
-    consecutive_try_lock_misses: u32,
+    _consecutive_try_lock_misses: u32,
     cached_frame: Option<&FrameHandle<P, M>>,
 ) -> bool {
-    consecutive_try_lock_misses >= COMPOSITOR_LIVE_SOURCE_MAX_TRY_LOCK_MISSES
-        || cached_frame.is_some_and(|frame| {
-            frame.captured_at.elapsed() >= COMPOSITOR_LIVE_SOURCE_STALE_RECOVERY_AFTER
+    cached_frame.is_some_and(|frame| {
+        frame.captured_at.elapsed() >= COMPOSITOR_LIVE_SOURCE_STALE_RECOVERY_AFTER
+    })
+}
+
+fn scene_needs_live_camera_frame(
+    snapshot: Option<&CompositorSceneSnapshot>,
+    active_image_source: Option<&CompositorImageSource>,
+) -> bool {
+    if active_image_source_is_cached(active_image_source) {
+        return false;
+    }
+    snapshot
+        .and_then(|snapshot| snapshot.scene.as_ref())
+        .is_some_and(|scene| {
+            scene
+                .sources
+                .iter()
+                .any(|source| source.visible && matches!(source.kind, SceneSourceKind::Camera))
         })
+}
+
+fn scene_needs_live_screen_frame(
+    snapshot: Option<&CompositorSceneSnapshot>,
+    active_image_source: Option<&CompositorImageSource>,
+) -> bool {
+    if active_image_source_is_cached(active_image_source) {
+        return false;
+    }
+    snapshot
+        .and_then(|snapshot| snapshot.scene.as_ref())
+        .is_some_and(|scene| {
+            scene.sources.iter().any(|source| {
+                source.visible
+                    && matches!(
+                        source.kind,
+                        SceneSourceKind::Screen | SceneSourceKind::Window
+                    )
+            })
+        })
+}
+
+fn active_image_source_is_cached(active_image_source: Option<&CompositorImageSource>) -> bool {
+    active_image_source.is_some_and(|source| source.rgba.is_some())
 }
 
 fn same_camera_source(
@@ -1573,12 +1612,26 @@ async fn publish_compositor_frame(
         )
     };
     let scene_snapshot_ms = scene_snapshot_started_at.elapsed().as_secs_f64() * 1000.0;
-    let camera_fetch_started_at = Instant::now();
-    let camera_frame = live_sources.latest_camera_frame();
-    let camera_frame_fetch_ms = camera_fetch_started_at.elapsed().as_secs_f64() * 1000.0;
-    let screen_fetch_started_at = Instant::now();
-    let screen_frame = live_sources.latest_screen_frame();
-    let screen_frame_fetch_ms = screen_fetch_started_at.elapsed().as_secs_f64() * 1000.0;
+    let (camera_frame, camera_frame_fetch_ms) =
+        if scene_needs_live_camera_frame(snapshot.as_ref(), active_image_source.as_ref()) {
+            let camera_fetch_started_at = Instant::now();
+            (
+                live_sources.latest_camera_frame(),
+                camera_fetch_started_at.elapsed().as_secs_f64() * 1000.0,
+            )
+        } else {
+            (None, 0.0)
+        };
+    let (screen_frame, screen_frame_fetch_ms) =
+        if scene_needs_live_screen_frame(snapshot.as_ref(), active_image_source.as_ref()) {
+            let screen_fetch_started_at = Instant::now();
+            (
+                live_sources.latest_screen_frame(),
+                screen_fetch_started_at.elapsed().as_secs_f64() * 1000.0,
+            )
+        } else {
+            (None, 0.0)
+        };
     let mut timings = CompositorPublishTimings {
         source_fetch_ms: source_fetch_started_at.elapsed().as_secs_f64() * 1000.0,
         scene_snapshot_ms,
@@ -2523,12 +2576,46 @@ fn percentile(sorted: &[f64], p: u32) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{SceneConfigParams, StreamScreenStatus, VideoPreset, VideoSettings};
+    use crate::protocol::{
+        SceneConfigParams, SourceSelection, StreamScreenStatus, VideoPreset, VideoSettings,
+    };
     use crate::storage::Database;
     use tokio::sync::broadcast;
 
     fn fp(camera: Option<u64>, screen: Option<u64>) -> SourceFrameFingerprint {
         SourceFrameFingerprint { camera, screen }
+    }
+
+    fn test_scene_snapshot(
+        layout_preset: LayoutPreset,
+        screen_id: Option<&str>,
+        camera_id: Option<&str>,
+    ) -> CompositorSceneSnapshot {
+        let mut layout = crate::protocol::default_layout_settings();
+        layout.layout_preset = layout_preset;
+        let scene = crate::scene::scene_from_capture_config(SceneConfigParams {
+            sources: SourceSelection {
+                screen_id: screen_id.map(ToString::to_string),
+                window_id: None,
+                camera_id: camera_id.map(ToString::to_string),
+                microphone_id: None,
+                test_pattern: false,
+            },
+            layout: layout.clone(),
+            video: Some(VideoSettings {
+                preset: VideoPreset::Custom,
+                width: 1920,
+                height: 1080,
+                fps: 30,
+                bitrate_kbps: 6000,
+            }),
+        });
+        CompositorSceneSnapshot {
+            revision: 1,
+            scene: Some(scene),
+            layout,
+            active_screen: None,
+        }
     }
 
     #[test]
@@ -2576,17 +2663,11 @@ mod tests {
     }
 
     #[test]
-    fn live_source_blocking_refresh_is_bounded_to_misses_or_stale_cache() {
+    fn live_source_blocking_refresh_waits_for_stale_cache_not_healthy_lock_contention() {
         assert!(!should_blocking_refresh_live_source::<
             PreviewScreenPixelFormat,
             (),
-        >(
-            COMPOSITOR_LIVE_SOURCE_MAX_TRY_LOCK_MISSES - 1, None
-        ));
-        assert!(should_blocking_refresh_live_source::<
-            PreviewScreenPixelFormat,
-            (),
-        >(COMPOSITOR_LIVE_SOURCE_MAX_TRY_LOCK_MISSES, None));
+        >(3, None));
 
         let fresh_frame = std::sync::Arc::new(crate::frame_store::StoredFrame {
             sequence: 1,
@@ -2598,6 +2679,10 @@ mod tests {
             captured_at: Instant::now(),
         });
         assert!(!should_blocking_refresh_live_source(1, Some(&fresh_frame)));
+        assert!(!should_blocking_refresh_live_source(
+            100,
+            Some(&fresh_frame)
+        ));
 
         let stale_frame = std::sync::Arc::new(crate::frame_store::StoredFrame {
             sequence: 1,
@@ -2611,6 +2696,58 @@ mod tests {
                 - Duration::from_millis(1),
         });
         assert!(should_blocking_refresh_live_source(1, Some(&stale_frame)));
+    }
+
+    #[test]
+    fn live_source_fetch_demand_tracks_visible_scene_sources() {
+        let camera_only =
+            test_scene_snapshot(LayoutPreset::CameraOnly, None, Some("camera-device"));
+        assert!(scene_needs_live_camera_frame(Some(&camera_only), None));
+        assert!(!scene_needs_live_screen_frame(Some(&camera_only), None));
+
+        let screen_only = test_scene_snapshot(LayoutPreset::ScreenOnly, Some("screen-1"), None);
+        assert!(!scene_needs_live_camera_frame(Some(&screen_only), None));
+        assert!(scene_needs_live_screen_frame(Some(&screen_only), None));
+
+        let mut hidden_sources = test_scene_snapshot(
+            LayoutPreset::ScreenCamera,
+            Some("screen-1"),
+            Some("camera-device"),
+        );
+        if let Some(scene) = hidden_sources.scene.as_mut() {
+            for source in &mut scene.sources {
+                source.visible = false;
+            }
+        }
+        assert!(!scene_needs_live_camera_frame(Some(&hidden_sources), None));
+        assert!(!scene_needs_live_screen_frame(Some(&hidden_sources), None));
+    }
+
+    #[test]
+    fn cached_active_image_source_skips_live_source_fetches() {
+        let snapshot = test_scene_snapshot(
+            LayoutPreset::ScreenCamera,
+            Some("screen-1"),
+            Some("camera-device"),
+        );
+        let active_image_source = CompositorImageSource {
+            image_path: "/tmp/cached.png".to_string(),
+            file_revision: Some("revision".to_string()),
+            width: Some(1),
+            height: Some(1),
+            rgba: Some(Arc::new(vec![255, 0, 0, 255])),
+            state: "live".to_string(),
+            message: None,
+        };
+
+        assert!(!scene_needs_live_camera_frame(
+            Some(&snapshot),
+            Some(&active_image_source)
+        ));
+        assert!(!scene_needs_live_screen_frame(
+            Some(&snapshot),
+            Some(&active_image_source)
+        ));
     }
 
     #[test]

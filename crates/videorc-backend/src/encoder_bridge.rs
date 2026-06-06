@@ -151,6 +151,21 @@ fn classify_bridge_frame(last_fed: Option<u64>, fed: Option<u64>) -> BridgeFrame
     }
 }
 
+fn compositor_frame_wait_budget(
+    video_output: EncoderBridgeVideoOutput,
+    consecutive_repeated_frames: u64,
+    frame_interval: Duration,
+) -> Duration {
+    if video_output.uses_video_toolbox() {
+        return Duration::ZERO;
+    }
+    if consecutive_repeated_frames > 0 {
+        frame_interval + frame_interval
+    } else {
+        frame_interval
+    }
+}
+
 #[derive(Debug)]
 pub struct EncoderBridgeRecordingSession {
     stop: Arc<AtomicBool>,
@@ -679,11 +694,8 @@ fn write_synthetic_recording_frames(params: SyntheticRecordingWriterParams) {
         }
         next_frame_at += frame_interval;
         sequence = sequence.saturating_add(1);
-        let wait_budget = if consecutive_repeated_frames > 0 {
-            frame_interval + frame_interval
-        } else {
-            frame_interval
-        };
+        let wait_budget =
+            compositor_frame_wait_budget(video_output, consecutive_repeated_frames, frame_interval);
         let compositor_wait_started_at = Instant::now();
         let fed = match video_output {
             EncoderBridgeVideoOutput::RawYuv420p => copy_next_compositor_frame(
@@ -1656,6 +1668,42 @@ mod tests {
         assert_eq!(
             classify_bridge_frame(None, Some(1)),
             BridgeFrameSource::Fresh
+        );
+    }
+
+    #[test]
+    fn videotoolbox_bridge_samples_latest_compositor_frame_without_waiting() {
+        let frame_interval = Duration::from_millis(33);
+
+        assert_eq!(
+            compositor_frame_wait_budget(
+                EncoderBridgeVideoOutput::VideoToolboxH264MpegTs,
+                0,
+                frame_interval
+            ),
+            Duration::ZERO
+        );
+        assert_eq!(
+            compositor_frame_wait_budget(
+                EncoderBridgeVideoOutput::VideoToolboxH264AnnexB,
+                4,
+                frame_interval
+            ),
+            Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn raw_bridge_keeps_fresh_frame_wait_budget() {
+        let frame_interval = Duration::from_millis(33);
+
+        assert_eq!(
+            compositor_frame_wait_budget(EncoderBridgeVideoOutput::RawYuv420p, 0, frame_interval),
+            frame_interval
+        );
+        assert_eq!(
+            compositor_frame_wait_budget(EncoderBridgeVideoOutput::RawYuv420p, 1, frame_interval),
+            frame_interval + frame_interval
         );
     }
 
