@@ -123,10 +123,11 @@ fails a "native" claim — by design.
   session and submits the retained IOSurface-backed compositor target through
   `VTCompressionSessionEncodeFrameWithOutputHandler`. On 2026-06-06,
   `cargo test -p videorc-backend video_toolbox` passed, including callback/sample-buffer
-  evidence and nonzero `CMSampleBuffer` / `CMBlockBuffer` encoded byte counts for a
-  64x64 retained Metal target. This proves the retained target can cross the
-  VideoToolbox boundary and expose compressed payload bytes; the production recording
-  bridge still needs to replace the raw-YUV FIFO copy before
+  evidence, nonzero `CMSampleBuffer` / `CMBlockBuffer` encoded byte counts, and a
+  successful `CMBlockBufferCopyDataBytes` payload copy for a 64x64 retained Metal
+  target. This proves the retained target can cross the VideoToolbox boundary and expose
+  compressed payload bytes to Rust; the production recording bridge still needs to
+  replace the raw-YUV FIFO copy before
   `encoderBridgeZeroCopyFrames` can grow.
 - The real-source acceptance gate now fails GPU-required runs when
   `encoderBridgeMetalTargetFrames` stays at 0, preventing a session from passing on a

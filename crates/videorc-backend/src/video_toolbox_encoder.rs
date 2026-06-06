@@ -1,3 +1,4 @@
+use std::ffi::c_void;
 use std::ptr::{self, NonNull};
 use std::sync::{Arc, Mutex};
 
@@ -28,6 +29,10 @@ pub struct VideoToolboxH264ProbeResult {
     pub sample_buffer_count: usize,
     pub sample_total_size_bytes: usize,
     pub block_buffer_data_bytes: usize,
+    pub copied_sample_count: usize,
+    pub copied_sample_bytes: usize,
+    pub copied_sample_prefix: Vec<u8>,
+    pub sample_copy_error_status: Option<OSStatus>,
     pub frame_dropped: bool,
     pub iosurface_backed: bool,
 }
@@ -48,6 +53,10 @@ impl VideoToolboxH264ProbeResult {
             sample_buffer_count: 0,
             sample_total_size_bytes: 0,
             block_buffer_data_bytes: 0,
+            copied_sample_count: 0,
+            copied_sample_bytes: 0,
+            copied_sample_prefix: Vec::new(),
+            sample_copy_error_status: None,
             frame_dropped: false,
             iosurface_backed: false,
         }
@@ -62,6 +71,10 @@ struct EncodeCallbackState {
     sample_buffer_count: usize,
     sample_total_size_bytes: usize,
     block_buffer_data_bytes: usize,
+    copied_sample_count: usize,
+    copied_sample_bytes: usize,
+    copied_sample_prefix: Vec<u8>,
+    sample_copy_error_status: Option<OSStatus>,
     frame_dropped: bool,
 }
 
@@ -164,6 +177,22 @@ impl VideoToolboxH264Session {
                         if let Some(data_buffer) = unsafe { sample_buffer.data_buffer() } {
                             state.block_buffer_data_bytes += unsafe { data_buffer.data_length() };
                         }
+                        match copy_encoded_sample_buffer_bytes(sample_buffer) {
+                            Ok(bytes) if !bytes.is_empty() => {
+                                state.copied_sample_count += 1;
+                                state.copied_sample_bytes += bytes.len();
+                                if state.copied_sample_prefix.is_empty() {
+                                    let prefix_len = bytes.len().min(16);
+                                    state
+                                        .copied_sample_prefix
+                                        .extend_from_slice(&bytes[..prefix_len]);
+                                }
+                            }
+                            Ok(_) => {}
+                            Err(status) => {
+                                state.sample_copy_error_status = Some(status);
+                            }
+                        }
                     }
                     state.frame_dropped |= info_flags.contains(VTEncodeInfoFlags::FrameDropped);
                 },
@@ -213,11 +242,36 @@ impl VideoToolboxH264Session {
             sample_buffer_count: state.sample_buffer_count,
             sample_total_size_bytes: state.sample_total_size_bytes,
             block_buffer_data_bytes: state.block_buffer_data_bytes,
+            copied_sample_count: state.copied_sample_count,
+            copied_sample_bytes: state.copied_sample_bytes,
+            copied_sample_prefix: state.copied_sample_prefix.clone(),
+            sample_copy_error_status: state.sample_copy_error_status,
             frame_dropped: state.frame_dropped
                 || encode_info_flags.contains(VTEncodeInfoFlags::FrameDropped),
             iosurface_backed,
         })
     }
+}
+
+fn copy_encoded_sample_buffer_bytes(
+    sample_buffer: &CMSampleBuffer,
+) -> std::result::Result<Vec<u8>, OSStatus> {
+    let Some(data_buffer) = (unsafe { sample_buffer.data_buffer() }) else {
+        return Ok(Vec::new());
+    };
+    let data_len = unsafe { data_buffer.data_length() };
+    if data_len == 0 {
+        return Ok(Vec::new());
+    }
+
+    let mut bytes = vec![0u8; data_len];
+    let destination = NonNull::new(bytes.as_mut_ptr().cast::<c_void>())
+        .expect("non-empty Vec must expose a non-null pointer");
+    let status = unsafe { data_buffer.copy_data_bytes(0, data_len, destination) };
+    if status != NO_ERR {
+        return Err(status);
+    }
+    Ok(bytes)
 }
 
 impl Drop for VideoToolboxH264Session {
@@ -323,6 +377,19 @@ mod tests {
                 assert!(
                     result.block_buffer_data_bytes > 0,
                     "VideoToolbox sample buffer had no accessible CMBlockBuffer bytes: {result:?}"
+                );
+                assert_eq!(result.sample_copy_error_status, None);
+                assert!(
+                    result.copied_sample_count > 0,
+                    "VideoToolbox sample bytes were not copied from CMBlockBuffer: {result:?}"
+                );
+                assert!(
+                    result.copied_sample_bytes > 0,
+                    "VideoToolbox copied sample byte count stayed at zero: {result:?}"
+                );
+                assert!(
+                    !result.copied_sample_prefix.is_empty(),
+                    "VideoToolbox copied sample prefix is empty: {result:?}"
                 );
             }
             Err(error) => {
