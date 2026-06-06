@@ -28,7 +28,9 @@ fails a "native" claim — by design.
   sources, so enabling it never changes a frame it cannot reproduce.
 - Recording startup now waits for consecutive target-resolution compositor frames that
   include every visible non-test source required by the scene, preventing a screen-only or
-  camera-only early frame from satisfying a screen+camera recording barrier.
+  camera-only early frame from satisfying a screen+camera recording barrier. The encoder
+  bridge also has a regression guard that its first tick consumes an already-ready
+  compositor frame as fresh target-resolution input instead of synthetic startup filler.
 - The Electron proof surface now coalesces compositor-status IPC updates while a paint is
   in flight, and the renderer feeds it through a latest-frame slot, so stale preview
   frames are dropped before they reach the proof window or backend present metrics.

@@ -877,8 +877,48 @@ mod tests {
 
     #[test]
     fn bridge_frame_with_advancing_or_first_sequence_is_fresh() {
-        assert_eq!(classify_bridge_frame(Some(7), Some(8)), BridgeFrameSource::Fresh);
-        assert_eq!(classify_bridge_frame(None, Some(1)), BridgeFrameSource::Fresh);
+        assert_eq!(
+            classify_bridge_frame(Some(7), Some(8)),
+            BridgeFrameSource::Fresh
+        );
+        assert_eq!(
+            classify_bridge_frame(None, Some(1)),
+            BridgeFrameSource::Fresh
+        );
+    }
+
+    #[test]
+    fn first_bridge_tick_consumes_ready_compositor_frame() {
+        let width = 64;
+        let height = 36;
+        let frame_store = Arc::new(std::sync::Mutex::new(crate::frame_store::FrameStore::new(
+            2,
+        )));
+        let expected = vec![42; raw_yuv420p_len(width, height).unwrap()];
+        {
+            let mut store = frame_store.lock().unwrap();
+            let mut buffer = store.checkout_buffer(expected.len());
+            buffer.copy_from_slice(&expected);
+            store.publish(
+                11,
+                width,
+                height,
+                crate::compositor::CompositorPixelFormat::Yuv420p,
+                Instant::now(),
+                buffer,
+            );
+        }
+
+        let mut bytes = vec![0; expected.len()];
+        let fed = copy_latest_compositor_frame(Some(&frame_store), &mut bytes)
+            .expect("ready compositor frame");
+
+        assert_eq!(fed.sequence, 11);
+        assert_eq!(
+            classify_bridge_frame(None, Some(fed.sequence)),
+            BridgeFrameSource::Fresh
+        );
+        assert_eq!(bytes, expected);
     }
 
     fn test_settings() -> EncoderBridgeSettings {
