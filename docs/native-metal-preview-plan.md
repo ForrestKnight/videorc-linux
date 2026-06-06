@@ -128,11 +128,14 @@ fails a "native" claim — by design.
   `CVPixelBuffer` and verifies that the zero-copy source import path can produce a real
   `MTLTexture` on-device.
 - The native-preview recording smoke now gates the produced MP4 with the startup-resolution
-  and final-file analyzers, plus a duration check, so transient VideoToolbox progress
-  telemetry does not mask the decoded artifact. On 2026-06-06 after the command-driven
-  proof-host changes, `pnpm smoke:recording-native-preview` passed at 1080p30 with a
-  15.10s file, startup max repeated-frame run 1, final max repeated-frame run 2, preview
-  120.09fps, p95 interval 9.3ms, and 8ms A/V skew.
+  and final-file analyzers, plus a duration check, and writes analyzer markdown/JSON
+  reports beside each MP4 before gate assertions run. On 2026-06-06 after report-writing
+  landed, `pnpm smoke:recording-native-preview` passed at 1080p30 with startup/final max
+  repeated-frame run 2, preview 120.13fps, proof-host p95 interval 9.4ms,
+  source-to-present p95/p99 10ms, compositor lag 0, `Metal targets 1`, `CPU fallback
+  frames 294 (camera frame unavailable)`, and 18ms A/V skew. FFmpeg progress/live
+  diagnostics still warned, but decoded startup/final-file gates and direct proof-host
+  measurement passed.
 - With `VIDEORC_NATIVE_PREVIEW_INCLUDE_1440=1`, the guarded
   `pnpm smoke:recording-native-preview` passed at 1440p30 and 1080p30 in one run. The
   1440p scenario produced a 15.03s decoded file, startup/final max repeated-frame run 2,

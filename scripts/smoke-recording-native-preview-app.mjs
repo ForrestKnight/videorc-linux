@@ -3,10 +3,10 @@ import { existsSync, mkdirSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
-import { analyzeRecording } from './lib/recording-analyzer.mjs'
+import { analyzeRecording, writeReports } from './lib/recording-analyzer.mjs'
 import { summarizeNativePreviewRecordingDiagnostics } from './lib/native-preview-diagnostics.mjs'
 import { createPreviewSurfaceOutputGuard } from './lib/smoke-output-guards.mjs'
-import { analyzeStartupResolution } from './lib/startup-resolution-analyzer.mjs'
+import { analyzeStartupResolution, writeStartupReports } from './lib/startup-resolution-analyzer.mjs'
 import { connectBackend, request } from './smoke-recording-session.mjs'
 
 const repoRoot = resolve(import.meta.dirname, '..')
@@ -205,6 +205,10 @@ async function runNativePreviewRecordingScenario(ws, smoke, samples, previewSurf
       expectAudio: true
     })
   ])
+  const [startupReportPaths, recordingReportPaths] = await Promise.all([
+    writeStartupReports(startupReport, { ffmpegPath }),
+    Promise.resolve(writeReports(recordingReport))
+  ])
   assertAnalyzerReportHealthy(scenario, 'startup', startupReport)
   assertAnalyzerReportHealthy(scenario, 'final-file', recordingReport)
   assertRecordingDurationHealthy(scenario, recordingReport, expectedDurationMs)
@@ -248,7 +252,7 @@ async function runNativePreviewRecordingScenario(ws, smoke, samples, previewSurf
       : '0'
 
   console.log(
-    `Native-preview recording [${scenario.label}] OK: ${outputPath} (${size} bytes), ${previewSummary}, startup repeat ${format(startupReport.metrics.maxRepeatedFrameRun, 0)}, final repeat ${format(recordingReport.metrics.maxRepeatedFrameRun, 0)}, Metal targets ${stats.maxEncoderBridgeMetalTargetFrames}, CPU fallback frames ${fallbackSummary}, min speed ${format(stats.minSpeed)}x, min FPS ${format(stats.minFps)}, A/V skew ${skew.toFixed(1)}ms, layout stress ${layoutStressUpdates} update(s), maintenance samples ${stats.maintenanceSamples}, duplicate samples ${stats.duplicateCaptureSamples}, max RSS ${formatBytes(stats.maxBackendRssBytes)}, max FFmpeg procs ${stats.maxActiveFfmpegProcesses}, max FFprobe procs ${stats.maxActiveFfprobeProcesses}`
+    `Native-preview recording [${scenario.label}] OK: ${outputPath} (${size} bytes), ${previewSummary}, startup repeat ${format(startupReport.metrics.maxRepeatedFrameRun, 0)}, final repeat ${format(recordingReport.metrics.maxRepeatedFrameRun, 0)}, Metal targets ${stats.maxEncoderBridgeMetalTargetFrames}, CPU fallback frames ${fallbackSummary}, min speed ${format(stats.minSpeed)}x, min FPS ${format(stats.minFps)}, A/V skew ${skew.toFixed(1)}ms, layout stress ${layoutStressUpdates} update(s), maintenance samples ${stats.maintenanceSamples}, duplicate samples ${stats.duplicateCaptureSamples}, max RSS ${formatBytes(stats.maxBackendRssBytes)}, max FFmpeg procs ${stats.maxActiveFfmpegProcesses}, max FFprobe procs ${stats.maxActiveFfprobeProcesses}, startup report ${startupReportPaths.mdPath}, quality report ${recordingReportPaths.mdPath}`
   )
   return surfaceDuring
 }

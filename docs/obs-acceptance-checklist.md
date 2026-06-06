@@ -14,6 +14,7 @@ whole point of the root-fix work.
 | Tool | What it does |
 |---|---|
 | `pnpm baseline:real-source [--gate]` | Real screen + camera + mic → 60s record → samples live diagnostics → runs the analyzer → writes a baseline + acceptance verdict. `--gate` makes the exit code reflect the gates. |
+| `pnpm smoke:recording-native-preview` | Native/proof preview recording smoke that writes startup and final-file analyzer reports beside each MP4, including the first-60-frame startup thumbnail sheet. |
 | `pnpm analyze:recording <file> --fps N` | Honest final-file analyzer on any recording (freeze / repeated-frame bursts / pacing / audio gaps / A/V skew). |
 | `pnpm analyze:startup <file> --width W --height H --fps N` | First-2-seconds startup analyzer (metadata + decoded frame dimensions + first-frame hashes + startup thumbnail sheet). |
 | `pnpm measure:av-sync <file>` | Lip-sync measurement against the flash+click fixture. |
