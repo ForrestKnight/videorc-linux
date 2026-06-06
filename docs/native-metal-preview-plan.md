@@ -158,9 +158,8 @@ fails a "native" claim — by design.
   `VIDEORC_ENCODER_BRIDGE_VIDEO_OUTPUT=videotoolbox-h264`. In that mode the FIFO carries
   Annex B H.264 bytes from retained Metal targets, FFmpeg declares the input as `h264`,
   maps `0:v`, uses `-c:v copy`, and applies wall-clock input timestamps so the copied
-  stream keeps recording-duration timing. On 2026-06-06,
-  `VIDEORC_ENCODER_BRIDGE_VIDEO_OUTPUT=videotoolbox-h264 pnpm
-  probe:recording-native-preview:videotoolbox` completed in report-only mode with `raw
+  stream keeps recording-duration timing. On 2026-06-06, `pnpm
+  probe:recording-native-preview:videotoolbox-output` completed in report-only mode with `raw
   copied 0`, `Metal copied 0`, `zero-copy 35`, `Metal handles 35`, `VT output 35
   (15653 bytes, 77ms max encode)`, duration 6.11s, min encoder speed 2.25x, and 11ms
   A/V skew. That run exposed the next bottleneck at the time: VideoToolbox output only
@@ -352,9 +351,9 @@ fails a "native" claim — by design.
    prefers IOSurface-backed storage and exposes a retained target `CVPixelBuffer`; the
    opt-in VideoToolbox H.264 output path feeds that handle to VideoToolbox, publishes
    retained-target-only frames when raw YUV is not needed, and keeps the raw-YUV FIFO as
-   the fallback path. Use `VIDEORC_ENCODER_BRIDGE_VIDEO_OUTPUT=videotoolbox-h264 pnpm
-   probe:recording-native-preview:videotoolbox` for report-only source-complete evidence
-   while the supported/default path and real-source gates are finished.
+   the fallback path. Use `pnpm probe:recording-native-preview:videotoolbox-output` for
+   report-only source-complete evidence while the supported/default path and real-source
+   gates are finished.
 5. **Done gate:** 1080p30 and 1440p30 real screen+camera composition under the
    compositor frame-time budget (p95 < 16ms @ 60fps preview / < 30ms @ 30fps output);
    final recording shows no repeated frames from a late compositor.
