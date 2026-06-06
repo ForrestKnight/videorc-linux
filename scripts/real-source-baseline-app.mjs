@@ -23,6 +23,7 @@
 //   VIDEORC_BASELINE_WIDTH/HEIGHT/FPS/BITRATE_KBPS   output video (default 1920x1080@30, 6000)
 //   VIDEORC_BASELINE_FALLBACK_LIVE_PREVIEW=1   deliberately launch the legacy FFmpeg MJPEG preview
 //   VIDEORC_BASELINE_NO_PREVIEW_SURFACE=1      warm sources, but do not create the proof/native preview surface
+//   VIDEORC_BASELINE_REQUIRE_MOTION=1          keep freezedetect as a hard gate for controlled-motion captures
 //   VIDEORC_SMOKE_OUTPUT_DIR        where recordings + reports land
 //   VIDEORC_BASELINE_SCREEN_ID / _CAMERA_ID / _MIC_ID   force a specific device id
 //   VIDEORC_BASELINE_NO_SCREEN / _NO_CAMERA / _NO_MIC   omit that source
@@ -55,6 +56,7 @@ const config = {
   bridgeVideoOutput: process.env.VIDEORC_ENCODER_BRIDGE_VIDEO_OUTPUT ?? 'raw-yuv420p',
   fallbackLivePreview: process.env.VIDEORC_BASELINE_FALLBACK_LIVE_PREVIEW === '1',
   noPreviewSurface: process.env.VIDEORC_BASELINE_NO_PREVIEW_SURFACE === '1',
+  requireMotion: process.env.VIDEORC_BASELINE_REQUIRE_MOTION === '1',
   outputDirectory: resolve(
     process.env.VIDEORC_SMOKE_OUTPUT_DIR ?? join(tmpdir(), `videorc-real-source-baseline-${Date.now()}`)
   ),
@@ -228,6 +230,9 @@ async function main() {
       ffprobePath: config.ffprobePath,
       intendedFps: config.fps,
       expectAudio: Boolean(sources.microphone),
+      gates: {
+        requireMotion: config.requireMotion,
+      },
     })
     const diagnostics = summarizeDiagnostics(diagnosticsEvents, snapshots, scenarioStartedAt, stopRequestedAt)
     writeReports(report)

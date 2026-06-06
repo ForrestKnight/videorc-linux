@@ -27,6 +27,7 @@ import { dirname, join } from 'node:path'
  * "Final recording gate" / "Audio gate" sections.
  */
 export const DEFAULT_GATES = Object.freeze({
+  requireMotion: true, // when false, freezedetect segments warn instead of hard-failing
   maxFreezeMs: 100, // no freeze segment above 100ms
   maxRepeatedFrameRun: 2, // no repeated-frame burst above 2 consecutive frames
   maxAudioGapMs: 20, // no audio gap above 20ms
@@ -332,12 +333,18 @@ export function evaluateGates(metrics, gates = DEFAULT_GATES) {
     failures.push('no video stream in the recording')
   }
 
-  // Freeze segments.
+  // Freeze segments. This is a hard gate only when the caller expects visible motion.
+  // Real screen/camera baselines can be intentionally static, so they should use the
+  // exact repeated-frame and pacing gates for artifact proof while keeping this as evidence.
   if (metrics.longestFreezeMs != null && metrics.longestFreezeMs > gates.maxFreezeMs) {
-    failures.push(
+    const message =
       `freeze segment ${metrics.longestFreezeMs.toFixed(0)}ms exceeds ${gates.maxFreezeMs}ms ` +
-        `(${metrics.freezeCount} segment(s))`
-    )
+      `(${metrics.freezeCount} segment(s))`
+    if (gates.requireMotion === false) {
+      warnings.push(`${message} — motion not required for this run; inspect repeated-frame and pacing gates`)
+    } else {
+      failures.push(message)
+    }
   }
 
   // Repeated-frame bursts (exact decoded-frame duplicates).

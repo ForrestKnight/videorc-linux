@@ -226,6 +226,16 @@ describe('evaluateGates', () => {
     assert.match(v.failures[0], /freeze segment 250ms/)
   })
 
+  it('warns on freeze segments when visible motion is not required', () => {
+    const v = evaluateGates(
+      { ...clean, longestFreezeMs: 250, freezeCount: 1 },
+      { ...DEFAULT_GATES, requireMotion: false }
+    )
+    assert.equal(v.pass, true)
+    assert.deepEqual(v.failures, [])
+    assert.match(v.warnings[0], /motion not required/)
+  })
+
   it('fails a repeated-frame burst over 2', () => {
     const v = evaluateGates({ ...clean, maxRepeatedFrameRun: 7, repeatedBurstCount: 1 })
     assert.equal(v.pass, false)
