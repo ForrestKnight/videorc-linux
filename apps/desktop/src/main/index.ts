@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell, type NativeImage } from 'electron'
-import { existsSync } from 'node:fs'
+import { existsSync, writeFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse as HttpResponse } from 'node:http'
 import { homedir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
@@ -30,6 +30,7 @@ let nativePreviewSurfaceWindow: BrowserWindow | null = null
 let nativePreviewSurfaceStatus: PreviewSurfaceStatus = idleNativePreviewSurfaceStatus()
 let nativePreviewSurfaceCompositorUpdateInFlight: Promise<PreviewSurfaceStatus> | null = null
 let nativePreviewSurfaceCompositorRequestSerial = 0
+let nativePreviewSurfaceMutationInFlight: Promise<PreviewSurfaceStatus> | null = null
 let backendProcess: ChildProcessWithoutNullStreams | null = null
 let backendConnection: BackendConnection | null = null
 let smokePreviewMotionServer: HttpServer | null = null
@@ -126,6 +127,10 @@ function backendPreviewFrameUrl(
 
 function fileUrlFromPath(path: string): string {
   return pathToFileURL(path).toString()
+}
+
+function nativePreviewSurfaceHtmlPath(): string {
+  return join(app.getPath('userData'), 'native-preview-surface.html')
 }
 
 function fullFrameTransform(): SceneTransform {
@@ -588,6 +593,11 @@ function nativePreviewSurfaceHtml(initialScene: PreviewSurfaceSceneState | null)
 
         window.__videorcSetCompositorStatus = applyCompositorStatus;
 
+        window.__videorcPresentNativePreviewNow = () => {
+          presentLatestCompositorStatus(performance.now());
+          return window.__videorcNativePreviewMetrics?.() ?? null;
+        };
+
         function tick(now) {
           frames += 1;
           frameTimes.push(now);
@@ -669,7 +679,7 @@ async function createNativePreviewSurface(bounds: PreviewSurfaceBounds): Promise
 
   const rect = normalizedSurfaceBounds(bounds)
   if (!nativePreviewSurfaceWindow || nativePreviewSurfaceWindow.isDestroyed()) {
-    nativePreviewSurfaceWindow = new BrowserWindow({
+    const surfaceWindow = new BrowserWindow({
       parent: mainWindow,
       frame: false,
       transparent: true,
@@ -687,16 +697,38 @@ async function createNativePreviewSurface(bounds: PreviewSurfaceBounds): Promise
         backgroundThrottling: false
       }
     })
-    nativePreviewSurfaceWindow.setIgnoreMouseEvents(true, { forward: true })
-    nativePreviewSurfaceWindow.on('closed', () => {
-      nativePreviewSurfaceWindow = null
-      nativePreviewSurfaceStatus = idleNativePreviewSurfaceStatus()
+    nativePreviewSurfaceWindow = surfaceWindow
+    surfaceWindow.setIgnoreMouseEvents(true, { forward: true })
+    surfaceWindow.on('closed', () => {
+      if (nativePreviewSurfaceWindow === surfaceWindow) {
+        nativePreviewSurfaceWindow = null
+        nativePreviewSurfaceStatus = idleNativePreviewSurfaceStatus()
+      }
     })
-    await nativePreviewSurfaceWindow.loadURL(
-      `data:text/html;charset=utf-8,${encodeURIComponent(nativePreviewSurfaceHtml(nativePreviewSurfaceScene))}`
-    )
+    try {
+      writeFileSync(nativePreviewSurfaceHtmlPath(), nativePreviewSurfaceHtml(null), 'utf8')
+      await surfaceWindow.loadFile(nativePreviewSurfaceHtmlPath())
+      if (nativePreviewSurfaceScene) {
+        await waitForNativePreviewSurfaceScript()
+        await surfaceWindow.webContents.executeJavaScript(
+          `window.__videorcSetPreviewScene?.(${jsonForInlineScript(nativePreviewSurfaceScene)})`,
+          true
+        )
+      }
+    } catch (error) {
+      if (nativePreviewSurfaceWindow === surfaceWindow) {
+        nativePreviewSurfaceWindow = null
+      }
+      if (!surfaceWindow.isDestroyed()) {
+        surfaceWindow.destroy()
+      }
+      throw error
+    }
   }
 
+  if (!nativePreviewSurfaceWindow || nativePreviewSurfaceWindow.isDestroyed()) {
+    throw new Error('Native preview surface window closed before it could be positioned.')
+  }
   nativePreviewSurfaceWindow.setBounds(rect)
   nativePreviewSurfaceWindow.showInactive()
   nativePreviewSurfaceStatus = {
@@ -774,7 +806,34 @@ async function applyNativePreviewHostCommands(commands: NativePreviewHostCommand
   return status
 }
 
+async function runNativePreviewSurfaceMutation(
+  operation: () => PreviewSurfaceStatus | Promise<PreviewSurfaceStatus>
+): Promise<PreviewSurfaceStatus> {
+  await waitForNativePreviewSurfaceMutation()
+
+  const mutation = Promise.resolve().then(operation)
+  nativePreviewSurfaceMutationInFlight = mutation
+  try {
+    return await mutation
+  } finally {
+    if (nativePreviewSurfaceMutationInFlight === mutation) {
+      nativePreviewSurfaceMutationInFlight = null
+    }
+  }
+}
+
+async function waitForNativePreviewSurfaceMutation(): Promise<void> {
+  while (nativePreviewSurfaceMutationInFlight) {
+    try {
+      await nativePreviewSurfaceMutationInFlight
+    } catch {
+      // The next queued mutation should still get a chance to reconcile the host.
+    }
+  }
+}
+
 async function updateNativePreviewSurfaceScene(params: PreviewSurfaceSceneUpdateParams): Promise<PreviewSurfaceStatus> {
+  await waitForNativePreviewSurfaceMutation()
   nativePreviewSurfaceScene = buildPreviewSurfaceScene(params)
   if (nativePreviewSurfaceWindow && !nativePreviewSurfaceWindow.isDestroyed()) {
     await waitForNativePreviewSurfaceScript()
@@ -797,6 +856,7 @@ async function updateNativePreviewSurfaceScene(params: PreviewSurfaceSceneUpdate
 }
 
 async function updateNativePreviewSurfaceCompositor(status: CompositorStatus): Promise<PreviewSurfaceStatus> {
+  await waitForNativePreviewSurfaceMutation()
   const requestSerial = ++nativePreviewSurfaceCompositorRequestSerial
   if (nativePreviewSurfaceCompositorUpdateInFlight) {
     try {
@@ -875,7 +935,7 @@ async function readNativePreviewSurfaceMetricsAfterPaint(): Promise<Record<strin
     return null
   }
   return nativePreviewSurfaceWindow.webContents.executeJavaScript(
-    `new Promise((resolve) => requestAnimationFrame(() => resolve(window.__videorcNativePreviewMetrics?.() ?? null)))`,
+    `window.__videorcPresentNativePreviewNow?.() ?? new Promise((resolve) => requestAnimationFrame(() => resolve(window.__videorcNativePreviewMetrics?.() ?? null)))`,
     true
   )
 }
@@ -1202,11 +1262,17 @@ async function runSmokePreviewMotionCommand(command: string, params: Record<stri
     if (!nativePreviewSurfaceWindow || nativePreviewSurfaceWindow.webContents.isDestroyed()) {
       throw new Error('Native preview surface is not ready for scene exercise.')
     }
-    await updateNativePreviewSurfaceCompositor(smokeCompositorStatusFromSceneParams(smokePreviewSceneParams(1, 0.1)))
+    const firstStatus = smokeCompositorStatusFromSceneParams(smokePreviewSceneParams(1, 0.1))
+    const finalStatus = smokeCompositorStatusFromSceneParams(smokePreviewSceneParams(2, 0.62))
+    const finalScene = buildPreviewSurfaceSceneFromCompositorStatus(finalStatus)
+    await updateNativePreviewSurfaceCompositor(firstStatus)
     const startedAt = performance.now()
-    await updateNativePreviewSurfaceCompositor(smokeCompositorStatusFromSceneParams(smokePreviewSceneParams(2, 0.62)))
+    const sceneScript = finalScene
+      ? `window.__videorcSetPreviewScene?.(${jsonForInlineScript(finalScene)});`
+      : ''
+    const statusScript = `window.__videorcSetCompositorStatus?.(${jsonForInlineScript(finalStatus)});`
     const result = await nativePreviewSurfaceWindow.webContents.executeJavaScript(
-      `(() => {
+      `${sceneScript}${statusScript}window.__videorcPresentNativePreviewNow?.();(() => {
         const layer = document.querySelector('[data-layer-id="source:camera"]');
         const metrics = window.__videorcNativePreviewMetrics?.() ?? {};
         return {
@@ -1633,12 +1699,14 @@ app.whenReady().then(() => {
   ipcMain.handle('oauth:open-url', (_event, authUrl: string) => openOAuthUrl(authUrl))
   ipcMain.handle('oauth:callback-redirect-uri', () => oauthCallbackRedirectUri())
   ipcMain.handle('preview-surface:mode', () => nativePreviewSurfaceProofEnabled)
-  ipcMain.handle('preview-surface:create', (_event, bounds: PreviewSurfaceBounds) => createNativePreviewSurface(bounds))
+  ipcMain.handle('preview-surface:create', (_event, bounds: PreviewSurfaceBounds) =>
+    runNativePreviewSurfaceMutation(() => createNativePreviewSurface(bounds))
+  )
   ipcMain.handle('preview-surface:update-bounds', (_event, bounds: PreviewSurfaceBounds) =>
-    updateNativePreviewSurfaceBounds(bounds)
+    runNativePreviewSurfaceMutation(() => updateNativePreviewSurfaceBounds(bounds))
   )
   ipcMain.handle('preview-surface:apply-host-commands', (_event, commands: NativePreviewHostCommand[]) =>
-    applyNativePreviewHostCommands(commands)
+    runNativePreviewSurfaceMutation(() => applyNativePreviewHostCommands(commands))
   )
   ipcMain.handle('preview-surface:update-scene', (_event, scene: PreviewSurfaceSceneUpdateParams) =>
     updateNativePreviewSurfaceScene(scene)
@@ -1646,7 +1714,9 @@ app.whenReady().then(() => {
   ipcMain.handle('preview-surface:update-compositor', (_event, status: CompositorStatus) =>
     updateNativePreviewSurfaceCompositor(status)
   )
-  ipcMain.handle('preview-surface:destroy', () => destroyNativePreviewSurface())
+  ipcMain.handle('preview-surface:destroy', () =>
+    runNativePreviewSurfaceMutation(() => destroyNativePreviewSurface())
+  )
   ipcMain.handle('preview-surface:status', () => nativePreviewSurfaceStatus)
 
   setDockIcon()

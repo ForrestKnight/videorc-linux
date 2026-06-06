@@ -66,6 +66,10 @@ fails a "native" claim — by design.
 - Electron's current proof host consumes the drained backend host-command batch for
   create/update, so the BrowserWindow proof path now follows the same lifecycle contract
   the future real `CAMetalLayer` host will implement.
+- The proof host serializes preview-surface mutations, loads its HTML shell from a
+  file-backed `userData` page instead of a large `data:` URL, and exposes an immediate
+  present hook so compositor status can update without waiting for an extra animation
+  frame.
 - A `NativePreviewPresenterRunner` now owns the AppKit overlay and a same-device Metal
   presenter on the main thread. It can apply host create/update/destroy commands and only
   returns native `CAMetalLayer` activation after `present_latest()` succeeds against the
