@@ -13,6 +13,7 @@ import type {
   CompositorStatus,
   LayoutSettings,
   NativePreviewHostCommand,
+  PreviewSurfaceCompositorUpdateParams,
   PreviewSurfaceBounds,
   PreviewSurfaceSceneLayer,
   PreviewSurfaceSceneState,
@@ -31,6 +32,7 @@ let nativePreviewSurfaceStatus: PreviewSurfaceStatus = idleNativePreviewSurfaceS
 let nativePreviewSurfaceCompositorUpdateInFlight: Promise<PreviewSurfaceStatus> | null = null
 let nativePreviewSurfaceCompositorRequestSerial = 0
 let nativePreviewSurfaceMutationInFlight: Promise<PreviewSurfaceStatus> | null = null
+let nativePreviewSurfaceFramePollingSuppressed = false
 let backendProcess: ChildProcessWithoutNullStreams | null = null
 let backendConnection: BackendConnection | null = null
 let smokePreviewMotionServer: HttpServer | null = null
@@ -115,7 +117,7 @@ function backendPreviewFrameUrl(
   path: '/preview/camera/live.png' | '/preview/screen/live.png',
   maxWidth?: number
 ): string | undefined {
-  if (!nativePreviewFramePollingEnabled || !backendConnection) {
+  if (!nativePreviewFramePollingEnabled || nativePreviewSurfaceFramePollingSuppressed || !backendConnection) {
     return undefined
   }
   const params = new URLSearchParams({ token: backendConnection.token })
@@ -230,7 +232,7 @@ function buildPreviewSurfaceScene(params: PreviewSurfaceSceneUpdateParams): Prev
     kind: source.kind,
     transform: source.transform,
     visible: source.visible,
-    frameUrl: previewLayerFrameUrl(source),
+    frameUrl: nativePreviewSurfaceFramePollingSuppressed ? undefined : previewLayerFrameUrl(source),
     fit: previewLayerFit(source, params.layout),
     mirror: source.kind === 'camera' ? params.layout.cameraMirror : false,
     shape: previewLayerShape(source, params.layout)
@@ -260,17 +262,21 @@ function buildPreviewSurfaceScene(params: PreviewSurfaceSceneUpdateParams): Prev
   }
 }
 
-function buildPreviewSurfaceSceneFromCompositorStatus(status: CompositorStatus): PreviewSurfaceSceneState | null {
+function buildPreviewSurfaceSceneFromCompositorStatus(
+  status: PreviewSurfaceCompositorUpdateParams
+): PreviewSurfaceSceneState | null {
   if (typeof status.sceneRevision !== 'number' || !status.sceneLayout) {
     return null
   }
+  const suppressFramePolling =
+    nativePreviewSurfaceFramePollingSuppressed || status.suppressFramePolling === true
   const layers: PreviewSurfaceSceneLayer[] = (status.sceneSources ?? []).map((source) => ({
     id: source.id,
     name: source.name,
     kind: source.kind,
     transform: source.transform,
     visible: source.visible,
-    frameUrl: compositorLayerFrameUrl(source),
+    frameUrl: suppressFramePolling ? undefined : compositorLayerFrameUrl(source),
     imageUrl:
       source.kind === 'screen-image' && source.state !== 'source-missing' && source.imagePath
         ? fileUrlFromPath(source.imagePath)
@@ -387,6 +393,7 @@ function nativePreviewSurfaceHtml(initialScene: PreviewSurfaceSceneState | null)
         const layers = new Map();
         const pollers = new Map();
         const sourceFrames = new Map();
+        let framePollingSuppressed = false;
         let compositorStatus = null;
         let pendingCompositorStatus = null;
         let pendingCompositorReceivedAt = 0;
@@ -442,7 +449,34 @@ function nativePreviewSurfaceHtml(initialScene: PreviewSurfaceSceneState | null)
           }
         }
 
+        function stopLayerPoller(id) {
+          const existingPoller = pollers.get(id);
+          if (existingPoller) {
+            existingPoller.cancelled = true;
+          }
+          pollers.delete(id);
+        }
+
+        function stopAllPollers() {
+          for (const id of Array.from(pollers.keys())) {
+            stopLayerPoller(id);
+          }
+        }
+
+        function setFramePollingSuppressed(suppressed) {
+          framePollingSuppressed = suppressed === true;
+          if (framePollingSuppressed) {
+            stopAllPollers();
+          }
+        }
+
         function startFramePolling(id, kind, image, url) {
+          if (framePollingSuppressed) {
+            stopLayerPoller(id);
+            image.dataset.live = '0';
+            image.removeAttribute('src');
+            return;
+          }
           const existing = pollers.get(id);
           if (existing?.url === url && existing?.image === image) {
             return;
@@ -518,6 +552,7 @@ function nativePreviewSurfaceHtml(initialScene: PreviewSurfaceSceneState | null)
           image.style.transform = layer.mirror ? 'scaleX(-1)' : 'none';
 
           if (layer.kind === 'test-pattern') {
+            stopLayerPoller(id);
             image.removeAttribute('src');
             image.dataset.live = '1';
             markLive(layer.kind, id);
@@ -525,11 +560,7 @@ function nativePreviewSurfaceHtml(initialScene: PreviewSurfaceSceneState | null)
           }
 
           if (layer.imageUrl) {
-            const existingPoller = pollers.get(id);
-            if (existingPoller) {
-              existingPoller.cancelled = true;
-            }
-            pollers.delete(id);
+            stopLayerPoller(id);
             if (image.src !== layer.imageUrl) {
               image.dataset.live = '0';
               image.onload = () => {
@@ -549,6 +580,7 @@ function nativePreviewSurfaceHtml(initialScene: PreviewSurfaceSceneState | null)
             return;
           }
 
+          stopLayerPoller(id);
           image.dataset.live = '0';
           image.removeAttribute('src');
         }
@@ -575,6 +607,7 @@ function nativePreviewSurfaceHtml(initialScene: PreviewSurfaceSceneState | null)
         }
 
         window.__videorcSetPreviewScene = applyScene;
+        window.__videorcSetFramePollingSuppressed = setFramePollingSuppressed;
 
         function applyCompositorStatus(nextStatus) {
           pendingCompositorStatus = nextStatus;
@@ -734,6 +767,13 @@ async function createNativePreviewSurfaceWindow(): Promise<void> {
 
     try {
       await loadNativePreviewSurfaceHtml(surfaceWindow)
+      if (nativePreviewSurfaceFramePollingSuppressed) {
+        await waitForNativePreviewSurfaceScript()
+        await surfaceWindow.webContents.executeJavaScript(
+          'window.__videorcSetFramePollingSuppressed?.(true)',
+          true
+        )
+      }
       if (nativePreviewSurfaceScene) {
         await waitForNativePreviewSurfaceScript()
         await surfaceWindow.webContents.executeJavaScript(
@@ -903,7 +943,9 @@ async function updateNativePreviewSurfaceScene(params: PreviewSurfaceSceneUpdate
   return nativePreviewSurfaceStatus
 }
 
-async function updateNativePreviewSurfaceCompositor(status: CompositorStatus): Promise<PreviewSurfaceStatus> {
+async function updateNativePreviewSurfaceCompositor(
+  status: PreviewSurfaceCompositorUpdateParams
+): Promise<PreviewSurfaceStatus> {
   await waitForNativePreviewSurfaceMutation()
   const requestSerial = ++nativePreviewSurfaceCompositorRequestSerial
   if (nativePreviewSurfaceCompositorUpdateInFlight) {
@@ -928,7 +970,12 @@ async function updateNativePreviewSurfaceCompositor(status: CompositorStatus): P
   }
 }
 
-async function presentNativePreviewSurfaceCompositor(status: CompositorStatus): Promise<PreviewSurfaceStatus> {
+async function presentNativePreviewSurfaceCompositor(
+  status: PreviewSurfaceCompositorUpdateParams
+): Promise<PreviewSurfaceStatus> {
+  if (status.suppressFramePolling === true && !nativePreviewSurfaceFramePollingSuppressed) {
+    await setNativePreviewSurfaceFramePollingSuppressed(true)
+  }
   const compositorScene = buildPreviewSurfaceSceneFromCompositorStatus(status)
   if (compositorScene) {
     nativePreviewSurfaceScene = compositorScene
@@ -974,6 +1021,27 @@ async function presentNativePreviewSurfaceCompositor(status: CompositorStatus): 
     intervalP99Ms,
     updatedAt: new Date().toISOString(),
     message: status.state === 'live' ? 'Electron proof preview surface is displaying compositor output.' : status.message
+  }
+  return nativePreviewSurfaceStatus
+}
+
+async function setNativePreviewSurfaceFramePollingSuppressed(
+  suppressed: boolean
+): Promise<PreviewSurfaceStatus> {
+  nativePreviewSurfaceFramePollingSuppressed = suppressed
+  if (nativePreviewSurfaceWindow && !nativePreviewSurfaceWindow.isDestroyed()) {
+    await waitForNativePreviewSurfaceScript()
+    await nativePreviewSurfaceWindow.webContents.executeJavaScript(
+      `window.__videorcSetFramePollingSuppressed?.(${suppressed ? 'true' : 'false'})`,
+      true
+    )
+  }
+  nativePreviewSurfaceStatus = {
+    ...nativePreviewSurfaceStatus,
+    updatedAt: new Date().toISOString(),
+    message: suppressed
+      ? 'Electron proof preview surface frame polling is suppressed while recording.'
+      : 'Electron proof preview surface frame polling is enabled.'
   }
   return nativePreviewSurfaceStatus
 }
@@ -1802,8 +1870,11 @@ app.whenReady().then(() => {
   ipcMain.handle('preview-surface:update-scene', (_event, scene: PreviewSurfaceSceneUpdateParams) =>
     updateNativePreviewSurfaceScene(scene)
   )
-  ipcMain.handle('preview-surface:update-compositor', (_event, status: CompositorStatus) =>
+  ipcMain.handle('preview-surface:update-compositor', (_event, status: PreviewSurfaceCompositorUpdateParams) =>
     updateNativePreviewSurfaceCompositor(status)
+  )
+  ipcMain.handle('preview-surface:set-frame-polling-suppressed', (_event, suppressed: boolean) =>
+    setNativePreviewSurfaceFramePollingSuppressed(suppressed)
   )
   ipcMain.handle('preview-surface:destroy', () =>
     runNativePreviewSurfaceMutation(() => destroyNativePreviewSurface())

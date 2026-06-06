@@ -902,6 +902,10 @@ export interface PreviewSurfaceSceneUpdateParams {
   activeScreen?: StreamScreen | null
 }
 
+export interface PreviewSurfaceCompositorUpdateParams extends CompositorStatus {
+  suppressFramePolling?: boolean
+}
+
 export interface PreviewSurfaceStatus {
   state: PreviewSurfaceState
   source: PreviewSurfaceSource
@@ -1363,7 +1367,8 @@ export interface VideorcApi {
   updateNativePreviewSurfaceBounds: (bounds: PreviewSurfaceBounds) => Promise<PreviewSurfaceStatus>
   applyNativePreviewHostCommands: (commands: NativePreviewHostCommand[]) => Promise<PreviewSurfaceStatus>
   updateNativePreviewSurfaceScene: (scene: PreviewSurfaceSceneUpdateParams) => Promise<PreviewSurfaceStatus>
-  updateNativePreviewSurfaceCompositor: (status: CompositorStatus) => Promise<PreviewSurfaceStatus>
+  updateNativePreviewSurfaceCompositor: (status: PreviewSurfaceCompositorUpdateParams) => Promise<PreviewSurfaceStatus>
+  setNativePreviewSurfaceFramePollingSuppressed: (suppressed: boolean) => Promise<PreviewSurfaceStatus>
   destroyNativePreviewSurface: () => Promise<PreviewSurfaceStatus>
   getNativePreviewSurfaceStatus: () => Promise<PreviewSurfaceStatus>
   openSystemPermissions: (pane?: SystemPermissionPane) => Promise<void>

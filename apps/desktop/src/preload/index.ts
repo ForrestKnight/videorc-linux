@@ -63,6 +63,8 @@ const api: VideorcApi = {
   applyNativePreviewHostCommands: (commands) => ipcRenderer.invoke('preview-surface:apply-host-commands', commands),
   updateNativePreviewSurfaceScene: (scene) => ipcRenderer.invoke('preview-surface:update-scene', scene),
   updateNativePreviewSurfaceCompositor: (status) => ipcRenderer.invoke('preview-surface:update-compositor', status),
+  setNativePreviewSurfaceFramePollingSuppressed: (suppressed) =>
+    ipcRenderer.invoke('preview-surface:set-frame-polling-suppressed', suppressed),
   destroyNativePreviewSurface: () => ipcRenderer.invoke('preview-surface:destroy'),
   getNativePreviewSurfaceStatus: () => ipcRenderer.invoke('preview-surface:status'),
   openSystemPermissions,

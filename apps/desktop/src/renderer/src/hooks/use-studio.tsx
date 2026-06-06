@@ -59,6 +59,7 @@ import type {
   PreviewCameraStatus,
   PreviewScreenStatus,
   PreviewSurfaceBounds,
+  PreviewSurfaceCompositorUpdateParams,
   PreviewSurfacePresentParams,
   PreviewSurfaceSceneUpdateParams,
   PreviewSurfaceStatus,
@@ -444,6 +445,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   const previewSurfaceStatusRef = useRef<PreviewSurfaceStatus>(idlePreviewSurfaceStatus())
   const previewCameraStatusRef = useRef<PreviewCameraStatus>(idlePreviewCameraStatus())
   const previewScreenStatusRef = useRef<PreviewScreenStatus>(idlePreviewScreenStatus())
+  const recordingRef = useRef<RecordingStatus>({ state: 'idle', message: 'Ready.' })
   const nativePreviewCameraKeyRef = useRef<string | null>(null)
   const nativePreviewScreenKeyRef = useRef<string | null>(null)
   const nativePreviewSurfaceSceneRevisionRef = useRef(0)
@@ -523,6 +525,20 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     setPreviewSurfaceStatus(status)
   }, [])
 
+  const applyRecordingStatus = useCallback((status: RecordingStatus) => {
+    recordingRef.current = status
+    setRecording(status)
+    if (nativePreviewSurfaceEnabled && window.videorc?.setNativePreviewSurfaceFramePollingSuppressed) {
+      const suppressFramePolling = isActiveRecordingState(status.state)
+      void window.videorc
+        .setNativePreviewSurfaceFramePollingSuppressed(suppressFramePolling)
+        .then(applyPreviewSurfaceStatus)
+        .catch((error: unknown) => {
+          console.error('Native preview frame-polling suppression failed:', error)
+        })
+    }
+  }, [applyPreviewSurfaceStatus, nativePreviewSurfaceEnabled])
+
   const queueNativePreviewCompositorPresent = useCallback((activeClient: BackendClient, status: CompositorStatus) => {
     const updateCompositor = typeof window === 'undefined' ? undefined : window.videorc?.updateNativePreviewSurfaceCompositor
     if (
@@ -544,7 +560,11 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
         while (nativePreviewCompositorPendingRef.current) {
           const nextStatus = nativePreviewCompositorPendingRef.current
           nativePreviewCompositorPendingRef.current = null
-          const surfaceStatus = await updateCompositor(nextStatus)
+          const suppressFramePolling = isActiveRecordingState(recordingRef.current.state)
+          const updateParams: PreviewSurfaceCompositorUpdateParams = suppressFramePolling
+            ? { ...nextStatus, suppressFramePolling: true }
+            : nextStatus
+          const surfaceStatus = await updateCompositor(updateParams)
           const pendingStatus = nativePreviewCompositorPendingRef.current as CompositorStatus | null
           if (
             pendingStatus &&
@@ -939,7 +959,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       nextClient.on('devices.changed', (payload) => setDeviceList(payload as DeviceList)),
       nextClient.on('recording.status', (payload) => {
         const status = payload as RecordingStatus
-        setRecording(status)
+        applyRecordingStatus(status)
         if (['idle', 'failed'].includes(status.state)) {
           setStreamTargets([])
           void refreshSessions(nextClient)
@@ -1070,7 +1090,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
         })
         setDeviceList(nextDevices)
         const nextRecording = await nextClient.request<RecordingStatus>('recording.status')
-        setRecording(nextRecording)
+        applyRecordingStatus(nextRecording)
         const nextDiagnostics = await nextClient.request<DiagnosticStats>('diagnostics.stats')
         setDiagnosticStats(nextDiagnostics)
         const nextLiveChat = await nextClient.request<LiveChatSnapshot>('liveChat.status')
@@ -1115,6 +1135,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     applyPreviewCameraStatus,
     applyPreviewScreenStatus,
     applyPreviewSurfaceStatus,
+    applyRecordingStatus,
     connection,
     nativePreviewSurfaceEnabled,
     queueNativePreviewCompositorPresent,
@@ -2250,11 +2271,10 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
           throw new Error(`Reconnect ${unhealthy.label} before starting an OAuth livestream.`)
         }
       }
-      setRecording((current) =>
-        isActiveRecordingState(current.state)
-          ? current
-          : { state: 'starting', message: 'Starting capture session.' }
-      )
+      const optimisticRecording = isActiveRecordingState(recordingRef.current.state)
+        ? recordingRef.current
+        : { state: 'starting' as const, message: 'Starting capture session.' }
+      applyRecordingStatus(optimisticRecording)
       const nextSessionParams: StartSessionParams = streamingOverride
         ? {
             ...sessionParams,
@@ -2263,7 +2283,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
           }
         : sessionParams
       const status = await client.request<RecordingStatus>('session.start', nextSessionParams)
-      setRecording(status)
+      applyRecordingStatus(status)
       await refreshSessions(client)
       await activatePreparedYouTubeBroadcasts(streamingForStart, lifecycleRunId)
     } catch (error) {
@@ -2271,16 +2291,15 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
         await completePreparedPlatformBroadcasts(streamingForStart)
       }
       reportError(error)
-      setRecording((current) =>
-        current.state === 'starting' && !current.sessionId
-          ? { state: 'idle', message: 'Ready to start a capture session.' }
-          : current
-      )
+      if (recordingRef.current.state === 'starting' && !recordingRef.current.sessionId) {
+        applyRecordingStatus({ state: 'idle', message: 'Ready to start a capture session.' })
+      }
     } finally {
       setStartRequestPending(false)
     }
   }, [
     activatePreparedYouTubeBroadcasts,
+    applyRecordingStatus,
     captureConfig.streaming,
     client,
     completePreparedPlatformBroadcasts,
@@ -2509,14 +2528,14 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       platformLifecycleRun.current += 1
       setStopRequestPending(true)
       const status = await client.request<RecordingStatus>('session.stop')
-      setRecording(status)
+      applyRecordingStatus(status)
       await completePreparedPlatformBroadcasts()
     } catch (error) {
       reportError(error)
     } finally {
       setStopRequestPending(false)
     }
-  }, [client, completePreparedPlatformBroadcasts, reportError, stopRequestPending])
+  }, [applyRecordingStatus, client, completePreparedPlatformBroadcasts, reportError, stopRequestPending])
 
   const remuxSession = useCallback(
     async (sessionId: string) => {
