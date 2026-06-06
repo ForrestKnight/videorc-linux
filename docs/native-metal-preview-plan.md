@@ -38,8 +38,9 @@ fails a "native" claim — by design.
   reduce avoidable blur while the real CAMetalLayer host is still pending.
 - The backend now has an AppKit-backed native preview host foundation that can attach a
   `CAMetalLayer` to an `NSView` inside a transparent, mouse-ignoring borderless
-  `NSWindow`; the remaining native-host work is command lifecycle, coordinate validation,
-  frame presentation, and on-device validation.
+  `NSWindow`; renderer bounds now include screen height so the host can convert Electron
+  top-left coordinates to AppKit bottom-left frames. The remaining native-host work is
+  command lifecycle, frame presentation, and on-device validation.
 - `make_preview_layer()` / `MetalPreviewPresenter` / `present_texture_to_layer()` — the
   GPU-side preview present (CAMetalLayer + render-scaled texture present), compile-and-run
   tested headlessly.

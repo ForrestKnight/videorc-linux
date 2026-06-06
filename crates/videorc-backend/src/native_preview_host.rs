@@ -7,6 +7,7 @@ pub struct NativePreviewHostBounds {
     pub width: f64,
     pub height: f64,
     pub scale_factor: f64,
+    pub screen_height: Option<f64>,
 }
 
 impl NativePreviewHostBounds {
@@ -18,6 +19,7 @@ impl NativePreviewHostBounds {
             width: bounds.width.max(1.0),
             height: bounds.height.max(1.0),
             scale_factor: bounds.scale_factor.max(1.0),
+            screen_height: bounds.screen_height,
         }
     }
 
@@ -29,7 +31,12 @@ impl NativePreviewHostBounds {
     }
 
     pub fn appkit_frame(self) -> (f64, f64, f64, f64) {
-        (self.screen_x, self.screen_y, self.width, self.height)
+        let appkit_y = self
+            .screen_height
+            .filter(|screen_height| screen_height.is_finite())
+            .map(|screen_height| screen_height - self.screen_y - self.height)
+            .unwrap_or(self.screen_y);
+        (self.screen_x, appkit_y, self.width, self.height)
     }
 }
 
@@ -184,6 +191,7 @@ mod tests {
             width: 0.0,
             height: 450.0,
             scale_factor: 2.0,
+            screen_height: Some(1000.0),
         };
 
         let host_bounds = NativePreviewHostBounds::from_surface_bounds(&bounds);
@@ -191,6 +199,20 @@ mod tests {
         assert_eq!(host_bounds.width, 1.0);
         assert_eq!(host_bounds.height, 450.0);
         assert_eq!(host_bounds.drawable_size(), (2.0, 900.0));
-        assert_eq!(host_bounds.appkit_frame(), (10.0, 20.0, 1.0, 450.0));
+        assert_eq!(host_bounds.appkit_frame(), (10.0, 530.0, 1.0, 450.0));
+    }
+
+    #[test]
+    fn host_bounds_fall_back_to_reported_y_without_screen_height() {
+        let host_bounds = NativePreviewHostBounds {
+            screen_x: 10.0,
+            screen_y: 20.0,
+            width: 640.0,
+            height: 360.0,
+            scale_factor: 1.0,
+            screen_height: None,
+        };
+
+        assert_eq!(host_bounds.appkit_frame(), (10.0, 20.0, 640.0, 360.0));
     }
 }

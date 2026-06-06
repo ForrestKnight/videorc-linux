@@ -251,7 +251,8 @@ export function PreviewStage({
           screenY: window.screenY + rect.top,
           width: rect.width,
           height: rect.height,
-          scaleFactor: window.devicePixelRatio || 1
+          scaleFactor: window.devicePixelRatio || 1,
+          screenHeight: window.screen.height
         }
         if (nativeSurfaceLive && !boundsChanged(lastNativeBoundsRef.current, bounds)) {
           return
@@ -638,7 +639,8 @@ function boundsChanged(previous: PreviewSurfaceBounds | null, next: PreviewSurfa
     Math.abs(previous.screenY - next.screenY) >= 1 ||
     Math.abs(previous.width - next.width) >= 1 ||
     Math.abs(previous.height - next.height) >= 1 ||
-    Math.abs(previous.scaleFactor - next.scaleFactor) >= 0.01
+    Math.abs(previous.scaleFactor - next.scaleFactor) >= 0.01 ||
+    Math.abs((previous.screenHeight ?? 0) - (next.screenHeight ?? 0)) >= 1
   )
 }
 

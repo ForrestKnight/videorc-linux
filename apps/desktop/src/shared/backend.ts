@@ -794,6 +794,7 @@ export interface PreviewSurfaceBounds {
   width: number
   height: number
   scaleFactor: number
+  screenHeight?: number
 }
 
 export type PreviewSurfaceState = 'unavailable' | 'starting' | 'live' | 'stopped' | 'failed'
