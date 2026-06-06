@@ -133,7 +133,8 @@ pub fn composite_sources(
     background: [f64; 4],
     sources: &[GpuSource<'_>],
 ) -> Option<Vec<u8>> {
-    MetalSceneCompositor::new()?.compose_bgra(out_width, out_height, background, sources)
+    let mut compositor = MetalSceneCompositor::new()?;
+    compositor.compose_bgra(out_width, out_height, background, sources)
 }
 
 /// A persisted GPU compositor: device, command queue, render pipeline, and sampler built
@@ -145,7 +146,17 @@ pub struct MetalSceneCompositor {
     queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
     pipeline: Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
     sampler: Retained<ProtocolObject<dyn MTLSamplerState>>,
+    target: Option<CachedTargetTexture>,
+    target_width: usize,
+    target_height: usize,
 }
+
+struct CachedTargetTexture(Retained<MetalTexture>);
+
+// SAFETY: The cached render target is owned by one compositor instance and is only used
+// sequentially by the compositor loop. Metal resources are valid across threads; this
+// wrapper only allows Tokio to move the owning task between worker threads.
+unsafe impl Send for CachedTargetTexture {}
 
 impl MetalSceneCompositor {
     /// Build the compositor, or `None` when no Metal device / shader compile is available.
@@ -159,26 +170,25 @@ impl MetalSceneCompositor {
             queue,
             pipeline,
             sampler,
+            target: None,
+            target_width: 0,
+            target_height: 0,
         })
     }
 
     /// Composite `sources` over `background` into an offscreen BGRA8 target and read back.
     pub fn compose_bgra(
-        &self,
+        &mut self,
         out_width: usize,
         out_height: usize,
         background: [f64; 4],
         sources: &[GpuSource<'_>],
     ) -> Option<Vec<u8>> {
-        let target = make_texture(
-            &self.device,
-            out_width,
-            out_height,
-            MTLTextureUsage::RenderTarget | MTLTextureUsage::ShaderRead,
-        )?;
+        self.ensure_target_texture(out_width, out_height)?;
+        let target = self.target.as_ref()?;
         let command_buffer = self.queue.commandBuffer()?;
         let encoder = {
-            let pass = clear_pass(&target, background);
+            let pass = clear_pass(&target.0, background);
             command_buffer.renderCommandEncoderWithDescriptor(&pass)?
         };
         encoder.setRenderPipelineState(&self.pipeline);
@@ -212,13 +222,13 @@ impl MetalSceneCompositor {
         encoder.endEncoding();
         command_buffer.commit();
         command_buffer.waitUntilCompleted();
-        Some(read_texture_bgra(&target, out_width, out_height))
+        Some(read_texture_bgra(&target.0, out_width, out_height))
     }
 
     /// Composite over a TV-black (Y=16) background and convert to planar YUV420P, matching
     /// the CPU compositor's output format/coefficients so the encoder pipeline is unchanged.
     pub fn compose_yuv420p(
-        &self,
+        &mut self,
         out_width: usize,
         out_height: usize,
         sources: &[GpuSource<'_>],
@@ -226,6 +236,28 @@ impl MetalSceneCompositor {
         let background = [16.0 / 255.0, 16.0 / 255.0, 16.0 / 255.0, 1.0];
         let bgra = self.compose_bgra(out_width, out_height, background, sources)?;
         Some(bgra_to_yuv420p(&bgra, out_width, out_height))
+    }
+
+    fn ensure_target_texture(&mut self, width: usize, height: usize) -> Option<()> {
+        if self.target.is_some() && self.target_width == width && self.target_height == height {
+            return Some(());
+        }
+        self.target = Some(CachedTargetTexture(make_texture(
+            &self.device,
+            width,
+            height,
+            MTLTextureUsage::RenderTarget | MTLTextureUsage::ShaderRead,
+        )?));
+        self.target_width = width;
+        self.target_height = height;
+        Some(())
+    }
+
+    #[cfg(test)]
+    fn cached_target_size(&self) -> Option<(usize, usize)> {
+        self.target
+            .as_ref()
+            .map(|_| (self.target_width, self.target_height))
     }
 }
 
@@ -339,7 +371,8 @@ pub fn present_texture_to_layer(
 /// Build a `CVMetalTextureCache` for zero-copy import of capture `CVPixelBuffer`s.
 pub fn make_texture_cache(device: &MetalDevice) -> Option<CFRetained<CVMetalTextureCache>> {
     let mut cache: *mut CVMetalTextureCache = std::ptr::null_mut();
-    let ret = unsafe { CVMetalTextureCache::create(None, None, device, None, NonNull::new(&mut cache)?) };
+    let ret =
+        unsafe { CVMetalTextureCache::create(None, None, device, None, NonNull::new(&mut cache)?) };
     if ret != 0 {
         return None;
     }
@@ -411,7 +444,9 @@ fn clear_pass(texture: &MetalTexture, rgba: [f64; 4]) -> Retained<MTLRenderPassD
     pass
 }
 
-fn build_pipeline(device: &MetalDevice) -> Option<Retained<ProtocolObject<dyn MTLRenderPipelineState>>> {
+fn build_pipeline(
+    device: &MetalDevice,
+) -> Option<Retained<ProtocolObject<dyn MTLRenderPipelineState>>> {
     let source = NSString::from_str(SHADER_SOURCE);
     let library = device
         .newLibraryWithSource_options_error(&source, None)
@@ -425,7 +460,9 @@ fn build_pipeline(device: &MetalDevice) -> Option<Retained<ProtocolObject<dyn MT
     let attachment = unsafe { descriptor.colorAttachments().objectAtIndexedSubscript(0) };
     attachment.setPixelFormat(MTLPixelFormat::BGRA8Unorm);
 
-    device.newRenderPipelineStateWithDescriptor_error(&descriptor).ok()
+    device
+        .newRenderPipelineStateWithDescriptor_error(&descriptor)
+        .ok()
 }
 
 fn build_sampler(device: &MetalDevice) -> Option<Retained<ProtocolObject<dyn MTLSamplerState>>> {
@@ -436,7 +473,12 @@ fn build_sampler(device: &MetalDevice) -> Option<Retained<ProtocolObject<dyn MTL
 }
 
 fn upload_texture(device: &MetalDevice, source: &GpuSource<'_>) -> Option<Retained<MetalTexture>> {
-    let texture = make_texture(device, source.width, source.height, MTLTextureUsage::ShaderRead)?;
+    let texture = make_texture(
+        device,
+        source.width,
+        source.height,
+        MTLTextureUsage::ShaderRead,
+    )?;
     let region = MTLRegion {
         origin: MTLOrigin { x: 0, y: 0, z: 0 },
         size: MTLSize {
@@ -535,7 +577,7 @@ mod tests {
 
     #[test]
     fn metal_scene_compositor_composes_a_full_frame_source_or_skips() {
-        let Some(compositor) = MetalSceneCompositor::new() else {
+        let Some(mut compositor) = MetalSceneCompositor::new() else {
             eprintln!("skipping: no Metal device available in this environment");
             return;
         };
@@ -556,7 +598,31 @@ mod tests {
         assert!(yuv[16..20].iter().all(|&u| u == 85), "U plane red");
     }
 
-    fn full_frame(bgra: &[u8], w: usize, h: usize, mirror: bool, circle: bool, crop: [f32; 4]) -> GpuSource<'_> {
+    #[test]
+    fn metal_scene_compositor_reuses_same_size_target_or_skips() {
+        let Some(mut compositor) = MetalSceneCompositor::new() else {
+            eprintln!("skipping: no Metal device available in this environment");
+            return;
+        };
+        let src = vec![255u8; 8 * 8 * 4];
+        let sources = [full_frame(&src, 8, 8, false, false, [0.0; 4])];
+
+        compositor.compose_yuv420p(16, 16, &sources).unwrap();
+        assert_eq!(compositor.cached_target_size(), Some((16, 16)));
+        compositor.compose_yuv420p(16, 16, &sources).unwrap();
+        assert_eq!(compositor.cached_target_size(), Some((16, 16)));
+        compositor.compose_yuv420p(32, 16, &sources).unwrap();
+        assert_eq!(compositor.cached_target_size(), Some((32, 16)));
+    }
+
+    fn full_frame(
+        bgra: &[u8],
+        w: usize,
+        h: usize,
+        mirror: bool,
+        circle: bool,
+        crop: [f32; 4],
+    ) -> GpuSource<'_> {
         GpuSource {
             bgra,
             width: w,
@@ -579,7 +645,11 @@ mod tests {
         // Black background; the circle mask drops the corners so the background shows.
         let px = composite_sources(out, out, [0.0, 0.0, 0.0, 1.0], &sources).unwrap();
         assert_eq!(pixel(&px, out, 4, 4), [0, 255, 0, 255], "center is green");
-        assert_eq!(pixel(&px, out, 0, 0), [0, 0, 0, 255], "corner masked to background");
+        assert_eq!(
+            pixel(&px, out, 0, 0),
+            [0, 0, 0, 255],
+            "corner masked to background"
+        );
     }
 
     #[test]
@@ -588,11 +658,21 @@ mod tests {
             return;
         }
         // 2×2 source: column 0 red, column 1 blue (BGRA).
-        let src = [0u8, 0, 255, 255, 255, 0, 0, 255, 0, 0, 255, 255, 255, 0, 0, 255];
+        let src = [
+            0u8, 0, 255, 255, 255, 0, 0, 255, 0, 0, 255, 255, 255, 0, 0, 255,
+        ];
         let sources = [full_frame(&src, 2, 2, true, false, [0.0; 4])];
         let px = composite_sources(4, 4, [0.0, 0.0, 0.0, 1.0], &sources).unwrap();
-        assert_eq!(pixel(&px, 4, 0, 0), [255, 0, 0, 255], "mirrored left is blue");
-        assert_eq!(pixel(&px, 4, 3, 0), [0, 0, 255, 255], "mirrored right is red");
+        assert_eq!(
+            pixel(&px, 4, 0, 0),
+            [255, 0, 0, 255],
+            "mirrored left is blue"
+        );
+        assert_eq!(
+            pixel(&px, 4, 3, 0),
+            [0, 0, 255, 255],
+            "mirrored right is red"
+        );
     }
 
     #[test]
@@ -604,19 +684,27 @@ mod tests {
         let mut src = Vec::new();
         for _row in 0..2 {
             for col in 0..4 {
-                src.extend(if col < 2 { [0, 0, 255, 255] } else { [255, 0, 0, 255] });
+                src.extend(if col < 2 {
+                    [0, 0, 255, 255]
+                } else {
+                    [255, 0, 0, 255]
+                });
             }
         }
         // Crop off the right 50% → only the red half is sampled, stretched to the frame.
         let sources = [full_frame(&src, 4, 2, false, false, [0.0, 0.0, 0.5, 0.0])];
         let px = composite_sources(4, 4, [0.0, 0.0, 0.0, 1.0], &sources).unwrap();
         assert_eq!(pixel(&px, 4, 0, 0), [0, 0, 255, 255], "left red");
-        assert_eq!(pixel(&px, 4, 3, 0), [0, 0, 255, 255], "right still red after crop");
+        assert_eq!(
+            pixel(&px, 4, 3, 0),
+            [0, 0, 255, 255],
+            "right still red after crop"
+        );
     }
 
     #[test]
     fn gpu_composites_1080p_screen_plus_camera_or_skips() {
-        let Some(compositor) = MetalSceneCompositor::new() else {
+        let Some(mut compositor) = MetalSceneCompositor::new() else {
             return;
         };
         // A 1080p screen fill + a 320×180 camera in the corner — the common scene at the
@@ -624,8 +712,24 @@ mod tests {
         let screen = vec![200u8; 1920 * 1080 * 4];
         let camera = vec![100u8; 320 * 180 * 4];
         let sources = [
-            GpuSource { bgra: &screen, width: 1920, height: 1080, dest: [0.0, 0.0, 1.0, 1.0], crop: [0.0; 4], mirror: false, circle: false },
-            GpuSource { bgra: &camera, width: 320, height: 180, dest: [0.7, 0.7, 0.28, 0.28], crop: [0.0; 4], mirror: true, circle: false },
+            GpuSource {
+                bgra: &screen,
+                width: 1920,
+                height: 1080,
+                dest: [0.0, 0.0, 1.0, 1.0],
+                crop: [0.0; 4],
+                mirror: false,
+                circle: false,
+            },
+            GpuSource {
+                bgra: &camera,
+                width: 320,
+                height: 180,
+                dest: [0.7, 0.7, 0.28, 0.28],
+                crop: [0.0; 4],
+                mirror: true,
+                circle: false,
+            },
         ];
         let yuv = compositor.compose_yuv420p(1920, 1080, &sources).unwrap();
         assert_eq!(yuv.len(), 1920 * 1080 + 2 * (960 * 540));
@@ -633,7 +737,7 @@ mod tests {
 
     #[test]
     fn zero_copy_import_path_runs_against_the_texture_cache_or_skips() {
-        use objc2_core_video::{kCVPixelFormatType_32BGRA, CVPixelBufferCreate};
+        use objc2_core_video::{CVPixelBufferCreate, kCVPixelFormatType_32BGRA};
         let Some(device) = MTLCreateSystemDefaultDevice() else {
             return;
         };
@@ -645,7 +749,14 @@ mod tests {
         let (w, h) = (16usize, 16usize);
         let mut pb: *mut CVPixelBuffer = std::ptr::null_mut();
         let ret = unsafe {
-            CVPixelBufferCreate(None, w, h, kCVPixelFormatType_32BGRA, None, NonNull::new(&mut pb).unwrap())
+            CVPixelBufferCreate(
+                None,
+                w,
+                h,
+                kCVPixelFormatType_32BGRA,
+                None,
+                NonNull::new(&mut pb).unwrap(),
+            )
         };
         if ret != 0 || pb.is_null() {
             return;
@@ -659,7 +770,9 @@ mod tests {
                 assert_eq!(texture.width(), w);
                 assert_eq!(texture.height(), h);
             }
-            None => eprintln!("note: synthetic buffer lacks IOSurface backing; import returned None"),
+            None => {
+                eprintln!("note: synthetic buffer lacks IOSurface backing; import returned None")
+            }
         }
     }
 
@@ -708,7 +821,15 @@ mod tests {
         assert_eq!(pixels.len(), out * out * 4);
 
         // Left half stays background blue; right half is the green source.
-        assert_eq!(pixel(&pixels, out, 1, 4), [255, 0, 0, 255], "left should be blue");
-        assert_eq!(pixel(&pixels, out, 6, 4), [0, 255, 0, 255], "right should be green");
+        assert_eq!(
+            pixel(&pixels, out, 1, 4),
+            [255, 0, 0, 255],
+            "left should be blue"
+        );
+        assert_eq!(
+            pixel(&pixels, out, 6, 4),
+            [0, 255, 0, 255],
+            "right should be green"
+        );
     }
 }

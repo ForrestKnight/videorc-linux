@@ -462,7 +462,7 @@ async fn run_synthetic_compositor_loop(
     let (width, height) = compositor_dimensions(&state).await;
     // Persisted GPU compositor (Some only on macOS when not disabled and a GPU exists);
     // built once and reused per frame. Held across the loop's awaits (it is Send).
-    let gpu_compositor = new_gpu_compositor();
+    let mut gpu_compositor = new_gpu_compositor();
 
     let mut frames_rendered = 0_u64;
     let mut frames_in_window = 0_u64;
@@ -497,7 +497,7 @@ async fn run_synthetic_compositor_loop(
                 frames_rendered = frames_rendered.saturating_add(1);
                 frames_in_window = frames_in_window.saturating_add(1);
                 let published =
-                    publish_compositor_frame(&state, frames_rendered, width, height, gpu_compositor.as_ref())
+                    publish_compositor_frame(&state, frames_rendered, width, height, gpu_compositor.as_mut())
                         .await;
                 let fallback_frame_age_ms = published.fallback_frame_age_ms;
                 if published.compositor_backend == CompositorBackend::CpuFallback {
@@ -685,7 +685,7 @@ fn new_gpu_compositor() -> Option<GpuCompositor> {
 /// GPU path cannot match.
 #[cfg(target_os = "macos")]
 fn try_gpu_compose(
-    gpu: Option<&GpuCompositor>,
+    gpu: Option<&mut GpuCompositor>,
     inputs: &CompositorRenderInputs<'_>,
 ) -> Result<Vec<u8>, &'static str> {
     let gpu = gpu.ok_or_else(|| {
@@ -824,7 +824,7 @@ fn rgba_to_bgra_bytes(rgba: &[u8]) -> Vec<u8> {
 }
 #[cfg(not(target_os = "macos"))]
 fn try_gpu_compose(
-    _gpu: Option<&GpuCompositor>,
+    _gpu: Option<&mut GpuCompositor>,
     _inputs: &CompositorRenderInputs<'_>,
 ) -> Result<Vec<u8>, &'static str> {
     Err("Metal compositor unavailable on this OS")
@@ -835,7 +835,7 @@ async fn publish_compositor_frame(
     sequence: u64,
     width: u32,
     height: u32,
-    gpu: Option<&GpuCompositor>,
+    gpu: Option<&mut GpuCompositor>,
 ) -> CompositorPublishResult {
     let (frame_store, snapshot, active_image_source) = {
         let compositor = state.compositor.lock().await;
