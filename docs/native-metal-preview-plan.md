@@ -36,6 +36,9 @@ fails a "native" claim — by design.
 - The Electron proof surface now coalesces compositor-status IPC updates while a paint is
   in flight, and the renderer feeds it through a latest-frame slot, so stale preview
   frames are dropped before they reach the proof window or backend present metrics.
+- The backend preview-surface present endpoint now rejects stale presented-frame updates
+  and keeps preview drop counts monotonic, so a late proof/native host response cannot
+  rewind currentness diagnostics after a newer compositor frame has been recorded.
 - Preview present diagnostics now carry source-to-present p50/p95/p99 latency and the
   latest presented compositor frame lag, and the acceptance gate fails native previews
   above the OBS-parity latency/currentness budget.

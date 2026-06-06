@@ -212,6 +212,9 @@ pub async fn update_preview_surface_present(
 ) -> PreviewSurfaceStatus {
     let status = {
         let mut slot = state.preview_surface.lock().await;
+        if is_stale_present_update(&slot.status, &params) {
+            return slot.status.clone();
+        }
         let mut next = slot.status.clone();
         if let Some(transport) = params.transport {
             next.transport = transport;
@@ -224,7 +227,7 @@ pub async fn update_preview_surface_present(
             next.frames_rendered = next.frames_rendered.max(frame_id);
         }
         next.compositor_frame_lag = params.compositor_frame_lag;
-        next.dropped_frames = params.dropped_frames;
+        next.dropped_frames = next.dropped_frames.max(params.dropped_frames);
         next.input_to_present_latency_ms = params.input_to_present_latency_ms;
         next.input_to_present_latency_p50_ms = params.input_to_present_latency_p50_ms;
         next.input_to_present_latency_p95_ms = params.input_to_present_latency_p95_ms;
@@ -261,6 +264,16 @@ pub async fn update_preview_surface_present(
     );
     state.emit_event("preview.surface.status", status.clone());
     status
+}
+
+fn is_stale_present_update(
+    current: &PreviewSurfaceStatus,
+    params: &PreviewSurfacePresentParams,
+) -> bool {
+    matches!(
+        (current.presented_frame_id, params.presented_frame_id),
+        (Some(current_frame), Some(next_frame)) if next_frame < current_frame
+    )
 }
 
 pub async fn register_preview_surface_resize(state: &AppState) {
@@ -561,6 +574,139 @@ mod tests {
         assert_eq!(diagnostics.preview_dropped_frames, 3);
         assert_eq!(diagnostics.preview_render_frame_time_p95_ms, Some(19.0));
         assert_eq!(diagnostics.preview_render_frame_time_p99_ms, Some(24.0));
+    }
+
+    #[tokio::test]
+    async fn stale_present_update_does_not_rewind_surface_metrics() {
+        let state = test_state();
+        create_preview_surface(
+            state.clone(),
+            PreviewSurfaceCreateParams {
+                bounds: bounds(800.0, 450.0),
+                target_fps: 60,
+                source: PreviewSurfaceSource::Synthetic,
+            },
+        )
+        .await;
+        update_preview_surface_present(
+            &state,
+            PreviewSurfacePresentParams {
+                transport: Some(PreviewTransport::NativeSurface),
+                backing: Some(PreviewSurfaceBacking::CaMetalLayer),
+                presented_frame_id: Some(42),
+                compositor_frame_lag: Some(1),
+                dropped_frames: 3,
+                input_to_present_latency_ms: Some(37),
+                input_to_present_latency_p50_ms: Some(31),
+                input_to_present_latency_p95_ms: Some(48),
+                input_to_present_latency_p99_ms: Some(73),
+                present_fps: Some(58.5),
+                interval_p95_ms: Some(19.0),
+                interval_p99_ms: Some(24.0),
+            },
+        )
+        .await;
+
+        let stale = update_preview_surface_present(
+            &state,
+            PreviewSurfacePresentParams {
+                transport: Some(PreviewTransport::ElectronProofSurface),
+                backing: Some(PreviewSurfaceBacking::ElectronBrowserWindow),
+                presented_frame_id: Some(40),
+                compositor_frame_lag: Some(9),
+                dropped_frames: 1,
+                input_to_present_latency_ms: Some(120),
+                input_to_present_latency_p50_ms: Some(110),
+                input_to_present_latency_p95_ms: Some(130),
+                input_to_present_latency_p99_ms: Some(150),
+                present_fps: Some(12.0),
+                interval_p95_ms: Some(80.0),
+                interval_p99_ms: Some(100.0),
+            },
+        )
+        .await;
+
+        assert_eq!(stale.transport, PreviewTransport::NativeSurface);
+        assert_eq!(stale.backing, PreviewSurfaceBacking::CaMetalLayer);
+        assert_eq!(stale.presented_frame_id, Some(42));
+        assert_eq!(stale.compositor_frame_lag, Some(1));
+        assert_eq!(stale.dropped_frames, 3);
+        assert_eq!(stale.input_to_present_latency_ms, Some(37));
+        assert_eq!(stale.input_to_present_latency_p95_ms, Some(48));
+        assert_eq!(stale.present_fps, Some(58.5));
+
+        let diagnostics = state.diagnostics.lock().await;
+        assert_eq!(
+            diagnostics.preview_surface_backing,
+            PreviewSurfaceBacking::CaMetalLayer
+        );
+        assert_eq!(diagnostics.preview_compositor_frame_lag, Some(1));
+        assert_eq!(diagnostics.preview_dropped_frames, 3);
+        assert_eq!(diagnostics.preview_input_to_present_latency_ms, Some(37));
+        assert_eq!(
+            diagnostics.preview_input_to_present_latency_p95_ms,
+            Some(48)
+        );
+    }
+
+    #[tokio::test]
+    async fn fresh_present_update_keeps_preview_drop_count_monotonic() {
+        let state = test_state();
+        create_preview_surface(
+            state.clone(),
+            PreviewSurfaceCreateParams {
+                bounds: bounds(800.0, 450.0),
+                target_fps: 60,
+                source: PreviewSurfaceSource::Synthetic,
+            },
+        )
+        .await;
+        update_preview_surface_present(
+            &state,
+            PreviewSurfacePresentParams {
+                transport: Some(PreviewTransport::ElectronProofSurface),
+                backing: Some(PreviewSurfaceBacking::ElectronBrowserWindow),
+                presented_frame_id: Some(42),
+                compositor_frame_lag: Some(1),
+                dropped_frames: 7,
+                input_to_present_latency_ms: Some(37),
+                input_to_present_latency_p50_ms: Some(31),
+                input_to_present_latency_p95_ms: Some(48),
+                input_to_present_latency_p99_ms: Some(73),
+                present_fps: Some(58.5),
+                interval_p95_ms: Some(19.0),
+                interval_p99_ms: Some(24.0),
+            },
+        )
+        .await;
+
+        let status = update_preview_surface_present(
+            &state,
+            PreviewSurfacePresentParams {
+                transport: Some(PreviewTransport::ElectronProofSurface),
+                backing: Some(PreviewSurfaceBacking::ElectronBrowserWindow),
+                presented_frame_id: Some(43),
+                compositor_frame_lag: Some(0),
+                dropped_frames: 2,
+                input_to_present_latency_ms: Some(20),
+                input_to_present_latency_p50_ms: Some(18),
+                input_to_present_latency_p95_ms: Some(24),
+                input_to_present_latency_p99_ms: Some(30),
+                present_fps: Some(60.0),
+                interval_p95_ms: Some(17.0),
+                interval_p99_ms: Some(18.0),
+            },
+        )
+        .await;
+
+        assert_eq!(status.presented_frame_id, Some(43));
+        assert_eq!(status.compositor_frame_lag, Some(0));
+        assert_eq!(status.dropped_frames, 7);
+        assert_eq!(status.input_to_present_latency_ms, Some(20));
+
+        let diagnostics = state.diagnostics.lock().await;
+        assert_eq!(diagnostics.preview_dropped_frames, 7);
+        assert_eq!(diagnostics.preview_input_to_present_latency_ms, Some(20));
     }
 
     #[tokio::test]
