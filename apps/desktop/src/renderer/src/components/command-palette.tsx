@@ -1,4 +1,4 @@
-import { Desktop, Moon, Stop, Sun, VideoCamera } from '@phosphor-icons/react'
+import { Desktop, Gauge, Moon, Stop, Sun, VideoCamera } from '@phosphor-icons/react'
 import { useTheme } from 'next-themes'
 import type { ReactElement } from 'react'
 
@@ -52,6 +52,10 @@ export function CommandPalette({
               {tab.label}
             </CommandItem>
           ))}
+          <CommandItem value="Go to Diagnostics" onSelect={() => run(() => setActive('diagnostics'))}>
+            <Gauge className="size-4" />
+            Diagnostics
+          </CommandItem>
         </CommandGroup>
 
         <CommandSeparator />

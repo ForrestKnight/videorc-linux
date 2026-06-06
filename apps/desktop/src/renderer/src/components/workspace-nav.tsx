@@ -1,6 +1,5 @@
 import {
   FilmReel,
-  Gauge,
   GearSix,
   Sparkle,
   VideoCamera,
@@ -36,8 +35,7 @@ export const WORKSPACE_TABS: WorkspaceTabMeta[] = [
   { id: 'studio', label: 'Studio', icon: VideoCamera, group: 'primary' },
   { id: 'library', label: 'Library', icon: FilmReel, group: 'primary' },
   { id: 'ai', label: 'AI', icon: Sparkle, group: 'primary' },
-  { id: 'settings', label: 'Settings', icon: GearSix, group: 'system' },
-  { id: 'diagnostics', label: 'Diagnostics', icon: Gauge, group: 'system' }
+  { id: 'settings', label: 'Settings', icon: GearSix, group: 'system' }
 ]
 
 export const WORKSPACE_GROUPS: { id: WorkspaceTabGroup; label?: string }[] = [
