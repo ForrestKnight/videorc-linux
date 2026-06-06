@@ -37,6 +37,10 @@ pub struct GoLiveDestinationPreflight {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account_label: Option<String>,
     pub message: String,
+    /// Live-chat readiness, independent of stream `ready` (e.g. X stays false even when the
+    /// stream itself is ready). Drives the Go Live confirmation's separate chat-readiness line.
+    pub chat_ready: bool,
+    pub chat_message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -197,6 +201,8 @@ fn destination_preflight(
         }
     }
 
+    let chat =
+        crate::live_chat::chat_capability(target.platform, account_for_target(target, accounts));
     GoLiveDestinationPreflight {
         target_id: target.id.clone(),
         platform: target.platform,
@@ -208,6 +214,8 @@ fn destination_preflight(
         account_id,
         account_label,
         message,
+        chat_ready: chat.chat_read_available,
+        chat_message: chat.message,
     }
 }
 
@@ -344,6 +352,15 @@ mod tests {
                 .iter()
                 .any(|issue| issue.platform == Some(StreamPlatform::X))
         );
+        // Chat readiness is reported independently of stream `ready`: X is never chat-capable.
+        assert!(!x.chat_ready);
+        assert!(x.chat_message.to_lowercase().contains("x comments"));
+        let youtube = preflight
+            .destinations
+            .iter()
+            .find(|destination| destination.platform == StreamPlatform::Youtube)
+            .unwrap();
+        assert!(!youtube.chat_message.is_empty());
     }
 
     #[test]

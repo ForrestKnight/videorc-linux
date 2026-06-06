@@ -786,6 +786,96 @@ fn youtube_account_credentials(
         .context("No connected YouTube OAuth account is available.")
 }
 
+/// Build the YouTube chat connector config for an enabled OAuth destination (slice 8).
+fn youtube_chat_config(
+    state: &AppState,
+    target: &crate::streaming::StreamTargetSettings,
+) -> Result<youtube_chat::YouTubeChatConfig> {
+    let credential = youtube_account_credentials(state, target.account_id.as_deref())?;
+    let access_ref = credential
+        .token_secret_ref
+        .as_deref()
+        .context("No YouTube access token is stored.")?;
+    let access_token = secrets::get_secret(access_ref)?;
+    Ok(youtube_chat::YouTubeChatConfig {
+        access_token,
+        live_chat_id: None,
+        broadcast_id: target.platform_broadcast_id.clone(),
+        target_id: Some(target.id.clone()),
+        api_base_url: None,
+    })
+}
+
+/// Build the Twitch chat connector config for an enabled OAuth destination (slice 8).
+fn twitch_chat_config(
+    state: &AppState,
+    target: &crate::streaming::StreamTargetSettings,
+) -> Result<twitch_chat::TwitchChatConfig> {
+    let credential = twitch_account_credentials(state, target.account_id.as_deref())?;
+    let access_ref = credential
+        .token_secret_ref
+        .as_deref()
+        .context("No Twitch access token is stored.")?;
+    let access_token = secrets::get_secret(access_ref)?;
+    let client_id = oauth::provider_client_id(StreamPlatform::Twitch)?;
+    Ok(twitch_chat::TwitchChatConfig {
+        access_token,
+        client_id,
+        broadcaster_user_id: credential.account.account_id.clone(),
+        user_id: credential.account.account_id.clone(),
+        target_id: Some(target.id.clone()),
+        eventsub_ws_url: None,
+        api_base_url: None,
+    })
+}
+
+/// Start live chat for a freshly-started session: spawn a connector per enabled OAuth
+/// destination whose token resolves. Chat failures are logged, never propagated — a chat
+/// problem must not fail the stream (slice 8). One destination's failure leaves others alone.
+async fn spawn_session_live_chat(
+    state: &AppState,
+    session_id: &str,
+    streaming: &crate::streaming::StreamingSettings,
+) {
+    use std::collections::HashSet;
+    let enabled: HashSet<&str> = streaming
+        .enabled_target_ids
+        .iter()
+        .map(String::as_str)
+        .collect();
+    let mut params = live_chat::LiveChatStartParams {
+        session_id: session_id.to_string(),
+        fake: None,
+        youtube: None,
+        twitch: None,
+    };
+    for target in &streaming.targets {
+        if !enabled.contains(target.id.as_str())
+            || target.auth_mode != crate::streaming::StreamAuthMode::Oauth
+        {
+            continue;
+        }
+        match target.platform {
+            StreamPlatform::Youtube => match youtube_chat_config(state, target) {
+                Ok(config) => params.youtube = Some(config),
+                Err(error) => {
+                    state.emit_log("warn", format!("YouTube live chat unavailable: {error}"))
+                }
+            },
+            StreamPlatform::Twitch => match twitch_chat_config(state, target) {
+                Ok(config) => params.twitch = Some(config),
+                Err(error) => {
+                    state.emit_log("warn", format!("Twitch live chat unavailable: {error}"))
+                }
+            },
+            _ => {}
+        }
+    }
+    if params.youtube.is_some() || params.twitch.is_some() {
+        live_chat::start_live_chat(state, params).await;
+    }
+}
+
 fn store_manual_stream_key(
     params: StoreManualStreamKeyParams,
 ) -> Result<StoreManualStreamKeyResult> {
@@ -1398,23 +1488,38 @@ async fn handle_text_message(state: &AppState, text: &str) -> ServerResponse {
         }
         "session.start" => {
             match serde_json::from_value::<protocol::StartSessionParams>(command.params) {
-                Ok(params) => match start_session(state.clone(), params).await {
-                    Ok(status) => ServerResponse::ok(command.id, status),
-                    Err(error) => {
-                        ServerResponse::error(command.id, "session-start-failed", error.to_string())
+                Ok(params) => {
+                    let streaming = params.streaming.clone();
+                    match start_session(state.clone(), params).await {
+                        Ok(status) => {
+                            if let Some(streaming) = streaming.as_ref()
+                                && let Some(session_id) = status.session_id.as_deref()
+                            {
+                                spawn_session_live_chat(state, session_id, streaming).await;
+                            }
+                            ServerResponse::ok(command.id, status)
+                        }
+                        Err(error) => ServerResponse::error(
+                            command.id,
+                            "session-start-failed",
+                            error.to_string(),
+                        ),
                     }
-                },
+                }
                 Err(error) => {
                     ServerResponse::error(command.id, "invalid-params", error.to_string())
                 }
             }
         }
-        "session.stop" => match stop_recording(state.clone()).await {
-            Ok(status) => ServerResponse::ok(command.id, status),
-            Err(error) => {
-                ServerResponse::error(command.id, "session-stop-failed", error.to_string())
+        "session.stop" => {
+            live_chat::stop_live_chat(state).await;
+            match stop_recording(state.clone()).await {
+                Ok(status) => ServerResponse::ok(command.id, status),
+                Err(error) => {
+                    ServerResponse::error(command.id, "session-stop-failed", error.to_string())
+                }
             }
-        },
+        }
         "sessions.list" => match state.database.list_sessions(20) {
             Ok(sessions) => ServerResponse::ok(command.id, sessions),
             Err(error) => {
