@@ -3089,6 +3089,9 @@ fn parse_encoder_bridge_video_output(setting: Option<&str>) -> EncoderBridgeVide
         "videotoolbox-h264" | "h264" | "annex-b" | "annexb" => {
             EncoderBridgeVideoOutput::VideoToolboxH264AnnexB
         }
+        "videotoolbox-h264-mpegts" | "h264-mpegts" | "mpegts" | "mpeg-ts" => {
+            EncoderBridgeVideoOutput::VideoToolboxH264MpegTs
+        }
         _ => EncoderBridgeVideoOutput::RawYuv420p,
     }
 }
@@ -3176,7 +3179,8 @@ fn bridge_compositor_ffmpeg_args(
                 "[v_main]".to_string(),
             ]);
         }
-        EncoderBridgeVideoOutput::VideoToolboxH264AnnexB => {
+        EncoderBridgeVideoOutput::VideoToolboxH264AnnexB
+        | EncoderBridgeVideoOutput::VideoToolboxH264MpegTs => {
             args.extend(["-map".to_string(), "0:v".to_string()]);
         }
     }
@@ -3214,7 +3218,8 @@ fn bridge_compositor_ffmpeg_args(
                 "+global_header".to_string(),
             ]);
         }
-        EncoderBridgeVideoOutput::VideoToolboxH264AnnexB => {
+        EncoderBridgeVideoOutput::VideoToolboxH264AnnexB
+        | EncoderBridgeVideoOutput::VideoToolboxH264MpegTs => {
             args.extend(["-c:v".to_string(), "copy".to_string()]);
         }
     }
@@ -3295,6 +3300,14 @@ fn append_bridge_recording_input_args(
                 "h264".to_string(),
                 "-framerate".to_string(),
                 video.fps.to_string(),
+                "-i".to_string(),
+                fifo_path.display().to_string(),
+            ]);
+        }
+        EncoderBridgeVideoOutput::VideoToolboxH264MpegTs => {
+            args.extend([
+                "-f".to_string(),
+                "mpegts".to_string(),
                 "-i".to_string(),
                 fifo_path.display().to_string(),
             ]);
@@ -5896,6 +5909,63 @@ mod tests {
     }
 
     #[test]
+    fn bridge_recording_args_can_copy_timestamped_videotoolbox_h264_mpegts_fifo() {
+        let params = base_params(true, false);
+        let fifo_path = Path::new("/tmp/videorc-bridge-input.ts");
+        let args = bridge_recording_ffmpeg_args(
+            &CaptureInputs {
+                video: VideoInput::TestPattern,
+                camera_index: None,
+                microphone: None,
+            },
+            &params,
+            Some(Path::new("/tmp/videorc-bridge-test.mkv")),
+            fifo_path,
+            EncoderBridgeVideoOutput::VideoToolboxH264MpegTs,
+        )
+        .unwrap();
+
+        assert_eq!(
+            ffmpeg_inputs(&args),
+            vec![
+                fifo_path.display().to_string(),
+                "sine=frequency=880:sample_rate=48000".to_string()
+            ]
+        );
+        assert_eq!(
+            input_arg_value(&args, &fifo_path.display().to_string(), "-f"),
+            Some("mpegts")
+        );
+        assert!(!input_has_arg(
+            &args,
+            &fifo_path.display().to_string(),
+            "-use_wallclock_as_timestamps"
+        ));
+        assert!(!input_has_arg(
+            &args,
+            &fifo_path.display().to_string(),
+            "-framerate"
+        ));
+        assert!(!input_has_arg(
+            &args,
+            &fifo_path.display().to_string(),
+            "-pix_fmt"
+        ));
+        assert_eq!(arg_value(&args, "-c:v"), Some("copy"));
+        assert_eq!(arg_value(&args, "-c:a"), Some("pcm_s16le"));
+        assert!(
+            args.windows(2)
+                .any(|pair| pair[0] == "-map" && pair[1] == "0:v")
+        );
+        assert!(args.iter().any(|arg| arg == "1:a?"));
+        assert!(args.iter().any(|arg| arg == "-shortest"));
+        assert!(arg_value(&args, "-filter_complex").is_none());
+        assert!(arg_value(&args, "-allow_sw").is_none());
+        assert!(arg_value(&args, "-realtime").is_none());
+        assert!(arg_value(&args, "-prio_speed").is_none());
+    }
+
+    #[test]
     fn bridge_stream_only_args_use_raw_yuv_video_and_flv_output() {
         let params = base_params(false, true);
         let fifo_path = Path::new("/tmp/videorc-bridge-stream.yuv");
@@ -6074,6 +6144,14 @@ mod tests {
         assert_eq!(
             parse_encoder_bridge_video_output(Some(" annex-b ")),
             EncoderBridgeVideoOutput::VideoToolboxH264AnnexB
+        );
+        assert_eq!(
+            parse_encoder_bridge_video_output(Some("videotoolbox-h264-mpegts")),
+            EncoderBridgeVideoOutput::VideoToolboxH264MpegTs
+        );
+        assert_eq!(
+            parse_encoder_bridge_video_output(Some(" mpeg-ts ")),
+            EncoderBridgeVideoOutput::VideoToolboxH264MpegTs
         );
     }
 

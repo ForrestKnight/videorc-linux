@@ -25,6 +25,7 @@ use crate::diagnostics::{
     apply_runtime_diagnostics_snapshot, starting_diagnostics,
 };
 use crate::ffmpeg::resolve_ffmpeg_path;
+use crate::mpeg_ts::{MpegTsH264Writer, timing_to_90khz};
 use crate::protocol::{EncoderBridgeSyntheticParams, EncoderBridgeSyntheticResult};
 use crate::state::AppState;
 #[cfg(target_os = "macos")]
@@ -40,11 +41,15 @@ const VIDEOTOOLBOX_PROBE_ENV: &str = "VIDEORC_ENCODER_BRIDGE_VIDEOTOOLBOX_PROBE"
 pub enum EncoderBridgeVideoOutput {
     RawYuv420p,
     VideoToolboxH264AnnexB,
+    VideoToolboxH264MpegTs,
 }
 
 impl EncoderBridgeVideoOutput {
     const fn uses_video_toolbox(self) -> bool {
-        matches!(self, Self::VideoToolboxH264AnnexB)
+        matches!(
+            self,
+            Self::VideoToolboxH264AnnexB | Self::VideoToolboxH264MpegTs
+        )
     }
 }
 
@@ -661,6 +666,8 @@ fn write_synthetic_recording_frames(params: SyntheticRecordingWriterParams) {
         target_fps,
         bitrate_kbps,
     );
+    #[cfg(target_os = "macos")]
+    let mut h264_pipe_writer = VideoToolboxH264PipeWriter::for_output(video_output);
     let mut last_fed_sequence: Option<u64> = None;
     let mut consecutive_repeated_frames = 0_u64;
 
@@ -685,7 +692,8 @@ fn write_synthetic_recording_frames(params: SyntheticRecordingWriterParams) {
                 last_fed_sequence,
                 wait_budget,
             ),
-            EncoderBridgeVideoOutput::VideoToolboxH264AnnexB => {
+            EncoderBridgeVideoOutput::VideoToolboxH264AnnexB
+            | EncoderBridgeVideoOutput::VideoToolboxH264MpegTs => {
                 next_compositor_frame(frame_store.as_ref(), last_fed_sequence, wait_budget)
             }
         };
@@ -696,10 +704,7 @@ fn write_synthetic_recording_frames(params: SyntheticRecordingWriterParams) {
             BridgeFrameSource::SyntheticFallback => {
                 synthetic_fallback_frames = synthetic_fallback_frames.saturating_add(1);
                 consecutive_repeated_frames = 0;
-                if matches!(
-                    video_output,
-                    EncoderBridgeVideoOutput::VideoToolboxH264AnnexB
-                ) {
+                if video_output.uses_video_toolbox() {
                     emit_encoder_bridge_diagnostics_from_thread(
                         &diagnostics_tx,
                         session_id.clone(),
@@ -779,10 +784,7 @@ fn write_synthetic_recording_frames(params: SyntheticRecordingWriterParams) {
             }
         }
 
-        queue_depth = if matches!(
-            video_output,
-            EncoderBridgeVideoOutput::VideoToolboxH264AnnexB
-        ) {
+        queue_depth = if video_output.uses_video_toolbox() {
             pending_video_toolbox_output_frames
         } else {
             1
@@ -798,7 +800,8 @@ fn write_synthetic_recording_frames(params: SyntheticRecordingWriterParams) {
                     metal_target_handle_frames = metal_target_handle_frames.saturating_add(1);
                 }
             }),
-            EncoderBridgeVideoOutput::VideoToolboxH264AnnexB => {
+            EncoderBridgeVideoOutput::VideoToolboxH264AnnexB
+            | EncoderBridgeVideoOutput::VideoToolboxH264MpegTs => {
                 #[cfg(target_os = "macos")]
                 {
                     match fed.as_ref() {
@@ -891,19 +894,19 @@ fn write_synthetic_recording_frames(params: SyntheticRecordingWriterParams) {
             break;
         }
         #[cfg(target_os = "macos")]
-        if matches!(
-            video_output,
-            EncoderBridgeVideoOutput::VideoToolboxH264AnnexB
-        ) && let Err(error) = drain_video_toolbox_output_frames(
-            &mut video_toolbox_probe,
-            &mut fifo,
-            &mut pending_video_toolbox_output_frames,
-            &mut zero_copy_frames,
-            &mut video_toolbox_output_frames,
-            &mut video_toolbox_output_bytes,
-            &mut video_toolbox_probe_errors,
-            &mut video_toolbox_fifo_write_times_ms,
-        ) {
+        if video_output.uses_video_toolbox()
+            && let Err(error) = drain_video_toolbox_output_frames(
+                &mut video_toolbox_probe,
+                &mut fifo,
+                &mut h264_pipe_writer,
+                &mut pending_video_toolbox_output_frames,
+                &mut zero_copy_frames,
+                &mut video_toolbox_output_frames,
+                &mut video_toolbox_output_bytes,
+                &mut video_toolbox_probe_errors,
+                &mut video_toolbox_fifo_write_times_ms,
+            )
+        {
             emit_encoder_bridge_diagnostics_from_thread(
                 &diagnostics_tx,
                 session_id.clone(),
@@ -938,10 +941,7 @@ fn write_synthetic_recording_frames(params: SyntheticRecordingWriterParams) {
             );
             break;
         }
-        queue_depth = if matches!(
-            video_output,
-            EncoderBridgeVideoOutput::VideoToolboxH264AnnexB
-        ) {
+        queue_depth = if video_output.uses_video_toolbox() {
             pending_video_toolbox_output_frames
         } else {
             0
@@ -990,10 +990,7 @@ fn write_synthetic_recording_frames(params: SyntheticRecordingWriterParams) {
     }
 
     #[cfg(target_os = "macos")]
-    if matches!(
-        video_output,
-        EncoderBridgeVideoOutput::VideoToolboxH264AnnexB
-    ) {
+    if video_output.uses_video_toolbox() {
         if video_toolbox_probe.complete_pending().is_err() {
             video_toolbox_probe_errors = video_toolbox_probe_errors.saturating_add(1);
         }
@@ -1004,6 +1001,7 @@ fn write_synthetic_recording_frames(params: SyntheticRecordingWriterParams) {
             if drain_video_toolbox_output_frames(
                 &mut video_toolbox_probe,
                 &mut fifo,
+                &mut h264_pipe_writer,
                 &mut pending_video_toolbox_output_frames,
                 &mut zero_copy_frames,
                 &mut video_toolbox_output_frames,
@@ -1229,10 +1227,52 @@ impl EncoderBridgeVideoToolboxProbe {
 }
 
 #[cfg(target_os = "macos")]
+enum VideoToolboxH264PipeWriter {
+    AnnexB,
+    MpegTs(MpegTsH264Writer),
+}
+
+#[cfg(target_os = "macos")]
+impl VideoToolboxH264PipeWriter {
+    fn for_output(video_output: EncoderBridgeVideoOutput) -> Self {
+        match video_output {
+            EncoderBridgeVideoOutput::VideoToolboxH264MpegTs => {
+                Self::MpegTs(MpegTsH264Writer::new())
+            }
+            EncoderBridgeVideoOutput::RawYuv420p
+            | EncoderBridgeVideoOutput::VideoToolboxH264AnnexB => Self::AnnexB,
+        }
+    }
+
+    fn write_frame(
+        &mut self,
+        fifo: &mut File,
+        frame: &VideoToolboxH264AnnexBFrame,
+    ) -> io::Result<()> {
+        match self {
+            Self::AnnexB => fifo.write_all(&frame.bytes),
+            Self::MpegTs(writer) => {
+                let pts_90khz = timing_to_90khz(
+                    frame.timing.presentation_time_value,
+                    frame.timing.presentation_time_scale,
+                )
+                .ok_or_else(|| {
+                    io::Error::other("VideoToolbox frame timing cannot be mapped to MPEG-TS PTS")
+                })?;
+                writer
+                    .write_h264_access_unit(fifo, pts_90khz, &frame.bytes)
+                    .map(|_| ())
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
 #[allow(clippy::too_many_arguments)]
 fn drain_video_toolbox_output_frames(
     video_toolbox: &mut EncoderBridgeVideoToolboxProbe,
     fifo: &mut File,
+    h264_pipe_writer: &mut VideoToolboxH264PipeWriter,
     pending_video_toolbox_output_frames: &mut u64,
     zero_copy_frames: &mut u64,
     video_toolbox_output_frames: &mut u64,
@@ -1248,7 +1288,7 @@ fn drain_video_toolbox_output_frames(
             Ok(frame) => {
                 let encoded_bytes = frame.bytes.len() as u64;
                 let write_started_at = Instant::now();
-                fifo.write_all(&frame.bytes)?;
+                h264_pipe_writer.write_frame(fifo, &frame)?;
                 video_toolbox_fifo_write_times_ms
                     .push(write_started_at.elapsed().as_secs_f64() * 1000.0);
                 *zero_copy_frames = zero_copy_frames.saturating_add(1);

@@ -22,6 +22,9 @@ describe('normalizeEncoderBridgeVideoOutput', () => {
     assert.equal(normalizeEncoderBridgeVideoOutput('h264'), 'videotoolbox-h264')
     assert.equal(normalizeEncoderBridgeVideoOutput('annex-b'), 'videotoolbox-h264')
     assert.equal(normalizeEncoderBridgeVideoOutput('annexb'), 'videotoolbox-h264')
+    assert.equal(normalizeEncoderBridgeVideoOutput('videotoolbox-h264-mpegts'), 'videotoolbox-h264')
+    assert.equal(normalizeEncoderBridgeVideoOutput('h264-mpegts'), 'videotoolbox-h264')
+    assert.equal(normalizeEncoderBridgeVideoOutput('mpeg-ts'), 'videotoolbox-h264')
   })
 
   it('defaults unknown values to the raw-YUV path', () => {

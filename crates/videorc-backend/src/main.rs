@@ -15,6 +15,7 @@ mod live_pipeline;
 mod live_render;
 mod live_scene;
 mod metal_compositor;
+mod mpeg_ts;
 mod native_preview_host;
 mod oauth;
 mod pipeline;

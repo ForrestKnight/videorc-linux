@@ -1,4 +1,13 @@
-const VIDEO_TOOLBOX_OUTPUT_ALIASES = new Set(['videotoolbox-h264', 'h264', 'annex-b', 'annexb'])
+const VIDEO_TOOLBOX_OUTPUT_ALIASES = new Set([
+  'videotoolbox-h264',
+  'h264',
+  'annex-b',
+  'annexb',
+  'videotoolbox-h264-mpegts',
+  'h264-mpegts',
+  'mpegts',
+  'mpeg-ts'
+])
 
 export function normalizeEncoderBridgeVideoOutput(value) {
   const normalized = String(value ?? 'raw-yuv420p')
