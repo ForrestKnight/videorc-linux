@@ -13,8 +13,8 @@ importers:
       '@fontsource-variable/geist':
         specifier: ^5.2.9
         version: 5.2.9
-      '@fontsource-variable/oxanium':
-        specifier: ^5.2.8
+      '@fontsource-variable/geist-mono':
+        specifier: ^5.2.6
         version: 5.2.8
       '@phosphor-icons/react':
         specifier: ^2.1.10
@@ -552,11 +552,11 @@ packages:
   '@floating-ui/utils@0.2.11':
     resolution: {integrity: sha512-RiB/yIh78pcIxl6lLMG0CgBXAZ2Y0eVHqMPYugu+9U0AeT6YBeiJpf7lbdJNIugFP5SIjwNRgo4DhR1Qxi26Gg==}
 
+  '@fontsource-variable/geist-mono@5.2.8':
+    resolution: {integrity: sha512-KI5bj+hkkRiHttYHmccotUZ80ZuZyai+RwI1d7UId0clkx/jXxlo8qYK8j54WzmpBjtMoEMPyllV7faDcj+6RA==}
+
   '@fontsource-variable/geist@5.2.9':
     resolution: {integrity: sha512-TP+QSBG3wxKGPE33CbMy/L0Nu3qvJ6Fy81Yc4LnQ95xH+i+cfEp8fyU8/kfV14YwszxIFPhnoMTbjL71waVpyQ==}
-
-  '@fontsource-variable/oxanium@5.2.8':
-    resolution: {integrity: sha512-W3HWxRLXVB6yox3dgm1DIGOp98pz8KglwiM6/2BsMopvZrg98mXI9citFWz2pUX0FOOLwf8fmHxX+KrIn+6BoA==}
 
   '@isaacs/fs-minipass@4.0.1':
     resolution: {integrity: sha512-wgm9Ehl2jpeqP3zw/7mo3kRHFp5MEDhqAdwy1fTGkHAwnkGOVsgpvQhL8B5n1qlb01jV3n/bI0ZfZp5lWA1k4w==}
@@ -3422,9 +3422,9 @@ snapshots:
 
   '@floating-ui/utils@0.2.11': {}
 
-  '@fontsource-variable/geist@5.2.9': {}
+  '@fontsource-variable/geist-mono@5.2.8': {}
 
-  '@fontsource-variable/oxanium@5.2.8': {}
+  '@fontsource-variable/geist@5.2.9': {}
 
   '@isaacs/fs-minipass@4.0.1':
     dependencies:
