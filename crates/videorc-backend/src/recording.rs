@@ -631,6 +631,7 @@ pub async fn start_session(
             bridge_fifo_path,
             encoder_bridge_frame_store.clone(),
             encoder_bridge_video_output,
+            Some(params.output.video.bitrate_kbps),
         )?)
     } else {
         None

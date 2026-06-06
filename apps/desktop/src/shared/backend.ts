@@ -1101,6 +1101,14 @@ export interface DiagnosticStats {
   encoderBridgeVideoToolboxOutputBytes: number
   /** Max inline VideoToolbox encode latency observed by the bridge writer. */
   encoderBridgeVideoToolboxOutputEncodeMs?: number
+  /** P95 wait for the bridge writer to receive a compositor frame. */
+  encoderBridgeCompositorWaitP95Ms?: number
+  /** P95 time spent submitting retained targets into VideoToolbox. */
+  encoderBridgeVideoToolboxSubmitP95Ms?: number
+  /** P95 time spent writing completed VideoToolbox H.264 access units into FFmpeg. */
+  encoderBridgeVideoToolboxFifoWriteP95Ms?: number
+  /** P95 end-to-end bridge writer loop time. */
+  encoderBridgeWriterLoopP95Ms?: number
   encoderBridgeError?: string
   /** Which encoder the active session requested — proves hardware vs software encode. */
   encodeBackend?: EncodeBackend

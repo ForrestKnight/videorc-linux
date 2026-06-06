@@ -96,6 +96,10 @@ pub fn idle_diagnostics() -> DiagnosticStats {
         encoder_bridge_video_toolbox_output_frames: 0,
         encoder_bridge_video_toolbox_output_bytes: 0,
         encoder_bridge_video_toolbox_output_encode_ms: None,
+        encoder_bridge_compositor_wait_p95_ms: None,
+        encoder_bridge_video_toolbox_submit_p95_ms: None,
+        encoder_bridge_video_toolbox_fifo_write_p95_ms: None,
+        encoder_bridge_writer_loop_p95_ms: None,
         encoder_bridge_error: None,
         encode_backend: None,
         compositor_backend: None,
@@ -378,6 +382,10 @@ pub struct EncoderBridgeDiagnosticSnapshot {
     pub video_toolbox_output_frames: u64,
     pub video_toolbox_output_bytes: u64,
     pub video_toolbox_output_encode_ms: Option<u64>,
+    pub compositor_wait_p95_ms: Option<f64>,
+    pub video_toolbox_submit_p95_ms: Option<f64>,
+    pub video_toolbox_fifo_write_p95_ms: Option<f64>,
+    pub writer_loop_p95_ms: Option<f64>,
     pub error: Option<String>,
 }
 
@@ -403,6 +411,10 @@ pub fn apply_encoder_bridge_stats(
     stats.encoder_bridge_video_toolbox_output_frames = bridge.video_toolbox_output_frames;
     stats.encoder_bridge_video_toolbox_output_bytes = bridge.video_toolbox_output_bytes;
     stats.encoder_bridge_video_toolbox_output_encode_ms = bridge.video_toolbox_output_encode_ms;
+    stats.encoder_bridge_compositor_wait_p95_ms = bridge.compositor_wait_p95_ms;
+    stats.encoder_bridge_video_toolbox_submit_p95_ms = bridge.video_toolbox_submit_p95_ms;
+    stats.encoder_bridge_video_toolbox_fifo_write_p95_ms = bridge.video_toolbox_fifo_write_p95_ms;
+    stats.encoder_bridge_writer_loop_p95_ms = bridge.writer_loop_p95_ms;
     stats.encoder_bridge_error = bridge.error;
     stats.capture_fps = stats.encoder_bridge_input_fps;
     stats.dropped_frames = bridge.dropped_frames;
@@ -1166,6 +1178,10 @@ mod tests {
                 video_toolbox_output_frames: 0,
                 video_toolbox_output_bytes: 0,
                 video_toolbox_output_encode_ms: None,
+                compositor_wait_p95_ms: None,
+                video_toolbox_submit_p95_ms: None,
+                video_toolbox_fifo_write_p95_ms: None,
+                writer_loop_p95_ms: None,
                 error: None,
             },
             30,
@@ -1198,6 +1214,10 @@ mod tests {
                 video_toolbox_output_frames: 10,
                 video_toolbox_output_bytes: 8192,
                 video_toolbox_output_encode_ms: Some(43),
+                compositor_wait_p95_ms: Some(5.0),
+                video_toolbox_submit_p95_ms: Some(2.0),
+                video_toolbox_fifo_write_p95_ms: Some(3.0),
+                writer_loop_p95_ms: Some(12.0),
                 error: None,
             },
             30,

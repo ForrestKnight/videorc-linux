@@ -1,6 +1,6 @@
 use std::ffi::{c_int, c_void};
 use std::ptr::{self, NonNull};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 
 use anyhow::{Context, Result, bail, ensure};
 use block2::RcBlock;
@@ -12,8 +12,11 @@ use objc2_core_media::{
 use objc2_core_video::{CVPixelBufferGetHeight, CVPixelBufferGetWidth};
 use objc2_video_toolbox::{
     VTCompressionSession, VTEncodeInfoFlags, VTSession, VTSessionSetProperty,
-    kVTCompressionPropertyKey_AllowFrameReordering, kVTCompressionPropertyKey_ExpectedFrameRate,
-    kVTCompressionPropertyKey_MaxKeyFrameInterval, kVTCompressionPropertyKey_RealTime,
+    kVTCompressionPropertyKey_AllowFrameReordering, kVTCompressionPropertyKey_AverageBitRate,
+    kVTCompressionPropertyKey_ExpectedFrameRate, kVTCompressionPropertyKey_MaxFrameDelayCount,
+    kVTCompressionPropertyKey_MaxKeyFrameInterval,
+    kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality,
+    kVTCompressionPropertyKey_RealTime,
 };
 
 use crate::metal_compositor::MetalCompositorTargetPixelBuffer;
@@ -27,8 +30,13 @@ pub struct VideoToolboxRealtimePropertyStatuses {
     pub allow_frame_reordering: OSStatus,
     pub expected_frame_rate: OSStatus,
     pub max_key_frame_interval: OSStatus,
+    pub average_bit_rate: Option<OSStatus>,
+    pub prioritize_encoding_speed: OSStatus,
+    pub max_frame_delay_count: OSStatus,
     pub expected_frame_rate_value: i32,
     pub max_key_frame_interval_value: i32,
+    pub average_bit_rate_value: Option<i64>,
+    pub max_frame_delay_count_value: i32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,6 +125,12 @@ pub struct VideoToolboxH264AnnexBFrame {
     pub bytes: Vec<u8>,
     pub nal_types: Vec<u8>,
     pub is_idr: bool,
+}
+
+#[derive(Debug)]
+pub struct VideoToolboxH264AsyncAnnexBFrame {
+    pub frame_index: u64,
+    pub result: std::result::Result<VideoToolboxH264AnnexBFrame, String>,
 }
 
 impl VideoToolboxH264ProbeResult {
@@ -224,6 +238,42 @@ impl VideoToolboxH264Session {
         expected_frame_rate: i32,
         max_key_frame_interval: i32,
     ) -> Result<Self> {
+        Self::new_realtime_configured(
+            width,
+            height,
+            expected_frame_rate,
+            max_key_frame_interval,
+            None,
+        )
+    }
+
+    pub fn new_realtime_with_bitrate(
+        width: usize,
+        height: usize,
+        expected_frame_rate: i32,
+        max_key_frame_interval: i32,
+        average_bit_rate_bps: i64,
+    ) -> Result<Self> {
+        ensure!(
+            average_bit_rate_bps > 0,
+            "VideoToolbox average bit rate must be positive"
+        );
+        Self::new_realtime_configured(
+            width,
+            height,
+            expected_frame_rate,
+            max_key_frame_interval,
+            Some(average_bit_rate_bps),
+        )
+    }
+
+    fn new_realtime_configured(
+        width: usize,
+        height: usize,
+        expected_frame_rate: i32,
+        max_key_frame_interval: i32,
+        average_bit_rate_bps: Option<i64>,
+    ) -> Result<Self> {
         ensure!(width > 0, "VideoToolbox session width must be non-zero");
         ensure!(height > 0, "VideoToolbox session height must be non-zero");
         ensure!(
@@ -269,12 +319,20 @@ impl VideoToolboxH264Session {
                 allow_frame_reordering: NO_ERR,
                 expected_frame_rate: NO_ERR,
                 max_key_frame_interval: NO_ERR,
+                average_bit_rate: None,
+                prioritize_encoding_speed: NO_ERR,
+                max_frame_delay_count: NO_ERR,
                 expected_frame_rate_value: expected_frame_rate,
                 max_key_frame_interval_value: max_key_frame_interval,
+                average_bit_rate_value: average_bit_rate_bps,
+                max_frame_delay_count_value: 1,
             },
         };
-        session.property_statuses =
-            session.configure_realtime_low_latency(expected_frame_rate, max_key_frame_interval)?;
+        session.property_statuses = session.configure_realtime_low_latency(
+            expected_frame_rate,
+            max_key_frame_interval,
+            average_bit_rate_bps,
+        )?;
         Ok(session)
     }
 
@@ -507,10 +565,92 @@ impl VideoToolboxH264Session {
             .context("VideoToolbox retained-target encode returned no Annex B frame")
     }
 
+    pub fn submit_retained_target_annex_b_with_timing(
+        &self,
+        target: Arc<MetalCompositorTargetPixelBuffer>,
+        timing: VideoToolboxFrameTiming,
+        frame_index: u64,
+        sender: mpsc::Sender<VideoToolboxH264AsyncAnnexBFrame>,
+    ) -> Result<()> {
+        let pixel_buffer = target.pixel_buffer();
+        let width = CVPixelBufferGetWidth(pixel_buffer);
+        let height = CVPixelBufferGetHeight(pixel_buffer);
+        ensure!(
+            width == self.width && height == self.height,
+            "target dimensions {width}x{height} do not match VideoToolbox session {}x{}",
+            self.width,
+            self.height
+        );
+        ensure!(
+            target.has_iosurface(),
+            "retained Metal target is not IOSurface-backed"
+        );
+
+        let presentation_time = unsafe {
+            CMTime::new(
+                timing.presentation_time_value,
+                timing.presentation_time_scale,
+            )
+        };
+        let duration = unsafe { CMTime::new(timing.duration_value, timing.duration_time_scale) };
+        let retained_target = target.clone();
+        let output_handler: RcBlock<dyn Fn(OSStatus, VTEncodeInfoFlags, *mut CMSampleBuffer)> =
+            RcBlock::new(
+                move |status: OSStatus,
+                      info_flags: VTEncodeInfoFlags,
+                      sample_buffer: *mut CMSampleBuffer| {
+                    let _retained_target = &retained_target;
+                    let result = async_annex_b_result_from_callback(
+                        status,
+                        info_flags,
+                        sample_buffer,
+                        timing,
+                    );
+                    let _ = sender.send(VideoToolboxH264AsyncAnnexBFrame {
+                        frame_index,
+                        result,
+                    });
+                },
+            );
+
+        let mut encode_info_flags = VTEncodeInfoFlags::empty();
+        let encode_status = unsafe {
+            self.session.encode_frame_with_output_handler(
+                pixel_buffer,
+                presentation_time,
+                duration,
+                None,
+                &mut encode_info_flags,
+                RcBlock::as_ptr(&output_handler),
+            )
+        };
+        if encode_status != NO_ERR {
+            bail!(
+                "VTCompressionSessionEncodeFrameWithOutputHandler(H.264 {}x{}) failed with {encode_status}",
+                self.width,
+                self.height
+            );
+        }
+        Ok(())
+    }
+
+    pub fn complete_pending_frames(&self) -> Result<()> {
+        let complete_status = unsafe { self.session.complete_frames(kCMTimeInvalid) };
+        if complete_status != NO_ERR {
+            bail!(
+                "VTCompressionSessionCompleteFrames(H.264 {}x{}) failed with {complete_status}",
+                self.width,
+                self.height
+            );
+        }
+        Ok(())
+    }
+
     fn configure_realtime_low_latency(
         &self,
         expected_frame_rate: i32,
         max_key_frame_interval: i32,
+        average_bit_rate_bps: Option<i64>,
     ) -> Result<VideoToolboxRealtimePropertyStatuses> {
         let real_time = self.set_property(
             "RealTime",
@@ -534,14 +674,35 @@ impl VideoToolboxH264Session {
             unsafe { kVTCompressionPropertyKey_MaxKeyFrameInterval },
             max_key_frame_interval_value.as_ref(),
         )?;
+        let average_bit_rate = average_bit_rate_bps.map(|bit_rate| {
+            let average_bit_rate_value = CFNumber::new_i64(bit_rate);
+            self.set_property_status(
+                unsafe { kVTCompressionPropertyKey_AverageBitRate },
+                average_bit_rate_value.as_ref(),
+            )
+        });
+        let prioritize_encoding_speed = self.set_property_status(
+            unsafe { kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality },
+            CFBoolean::new(true).as_ref(),
+        );
+        let max_frame_delay_count_value = 1;
+        let max_frame_delay_count = self.set_property_status(
+            unsafe { kVTCompressionPropertyKey_MaxFrameDelayCount },
+            CFNumber::new_i32(max_frame_delay_count_value).as_ref(),
+        );
 
         Ok(VideoToolboxRealtimePropertyStatuses {
             real_time,
             allow_frame_reordering,
             expected_frame_rate: expected_frame_rate_status,
             max_key_frame_interval: max_key_frame_interval_status,
+            average_bit_rate,
+            prioritize_encoding_speed,
+            max_frame_delay_count,
             expected_frame_rate_value: expected_frame_rate,
             max_key_frame_interval_value: max_key_frame_interval,
+            average_bit_rate_value: average_bit_rate_bps,
+            max_frame_delay_count_value,
         })
     }
 
@@ -558,6 +719,12 @@ impl VideoToolboxH264Session {
             bail!("VTSessionSetProperty({name}) failed with {status}");
         }
         Ok(status)
+    }
+
+    fn set_property_status(&self, property_key: &CFString, property_value: &CFType) -> OSStatus {
+        let compression_session: &VTCompressionSession = &self.session;
+        let session: &VTSession = compression_session.as_ref();
+        unsafe { VTSessionSetProperty(session, property_key, Some(property_value)) }
     }
 }
 
@@ -580,6 +747,50 @@ fn copy_encoded_sample_buffer_bytes(
         return Err(status);
     }
     Ok(bytes)
+}
+
+fn async_annex_b_result_from_callback(
+    status: OSStatus,
+    info_flags: VTEncodeInfoFlags,
+    sample_buffer: *mut CMSampleBuffer,
+    timing: VideoToolboxFrameTiming,
+) -> std::result::Result<VideoToolboxH264AnnexBFrame, String> {
+    if status != NO_ERR {
+        return Err(format!("VideoToolbox encode callback failed with {status}"));
+    }
+    if info_flags.contains(VTEncodeInfoFlags::FrameDropped) {
+        return Err("VideoToolbox dropped the encoded frame".to_string());
+    }
+    if sample_buffer.is_null() {
+        return Err("VideoToolbox encode callback returned no sample buffer".to_string());
+    }
+    let sample_buffer = unsafe { &*sample_buffer };
+    annex_b_frame_from_sample_buffer(sample_buffer, timing)
+        .map_err(|error| format!("VideoToolbox sample conversion failed: {error}"))
+}
+
+fn annex_b_frame_from_sample_buffer(
+    sample_buffer: &CMSampleBuffer,
+    timing: VideoToolboxFrameTiming,
+) -> std::result::Result<VideoToolboxH264AnnexBFrame, String> {
+    let parameter_sets = copy_h264_parameter_sets(sample_buffer)
+        .map_err(|status| format!("copy H.264 parameter sets failed with {status}"))?;
+    let header_len = parameter_sets
+        .nal_unit_header_length
+        .and_then(|length| usize::try_from(length).ok())
+        .ok_or_else(|| "missing H.264 NAL unit length header".to_string())?;
+    let sample = copy_encoded_sample_buffer_bytes(sample_buffer)
+        .map_err(|status| format!("copy H.264 sample bytes failed with {status}"))?;
+    let bytes =
+        h264_avcc_sample_to_annex_b(&parameter_sets.parameter_sets, &sample, header_len, true)
+            .ok_or_else(|| "empty or invalid Annex B sample".to_string())?;
+    let nal_types = annex_b_nal_types(&bytes);
+    Ok(VideoToolboxH264AnnexBFrame {
+        timing,
+        is_idr: nal_types.contains(&5),
+        bytes,
+        nal_types,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

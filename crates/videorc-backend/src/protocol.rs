@@ -844,6 +844,18 @@ pub struct DiagnosticStats {
     /// Max inline VideoToolbox encode latency observed by the bridge writer.
     #[serde(default)]
     pub encoder_bridge_video_toolbox_output_encode_ms: Option<u64>,
+    /// P95 time the bridge writer spent waiting for a fresh compositor frame.
+    #[serde(default)]
+    pub encoder_bridge_compositor_wait_p95_ms: Option<f64>,
+    /// P95 time the bridge writer spent submitting a retained target to VideoToolbox.
+    #[serde(default)]
+    pub encoder_bridge_video_toolbox_submit_p95_ms: Option<f64>,
+    /// P95 time the bridge writer spent writing encoded H.264 bytes into FFmpeg.
+    #[serde(default)]
+    pub encoder_bridge_video_toolbox_fifo_write_p95_ms: Option<f64>,
+    /// P95 wall time for one bridge writer loop tick.
+    #[serde(default)]
+    pub encoder_bridge_writer_loop_p95_ms: Option<f64>,
     pub encoder_bridge_error: Option<String>,
     /// Which encoder the active session actually requested — proves hardware vs software
     /// encode (previously unrecorded).
