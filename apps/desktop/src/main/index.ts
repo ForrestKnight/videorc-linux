@@ -542,7 +542,13 @@ function nativePreviewSurfaceHtml(initialScene: PreviewSurfaceSceneState | null)
         function applyCompositorStatus(nextStatus) {
           pendingCompositorStatus = nextStatus;
           pendingCompositorReceivedAt = performance.now();
-          compositorFrames = Math.max(compositorFrames, Number(nextStatus?.framesRendered ?? 0));
+          const frame = Number(nextStatus?.framesRendered ?? 0);
+          if (compositorFrames > 0 && frame > 0 && frame < compositorFrames) {
+            compositorFrames = 0;
+            presentedCompositorFrame = 0;
+            skippedCompositorFrames = 0;
+          }
+          compositorFrames = Math.max(compositorFrames, frame);
         }
 
         function presentLatestCompositorStatus(now) {
@@ -556,7 +562,7 @@ function nativePreviewSurfaceHtml(initialScene: PreviewSurfaceSceneState | null)
           if (nextStatus?.state === 'live') {
             document.body.classList.add('surface-live');
             const frame = Number(nextStatus.framesRendered ?? 0);
-            if (frame > presentedCompositorFrame + 1) {
+            if (presentedCompositorFrame > 0 && frame > presentedCompositorFrame + 1) {
               skippedCompositorFrames += frame - presentedCompositorFrame - 1;
             }
             presentedCompositorFrame = Math.max(presentedCompositorFrame, frame);
