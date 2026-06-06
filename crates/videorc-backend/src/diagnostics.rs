@@ -101,6 +101,7 @@ pub fn idle_diagnostics() -> DiagnosticStats {
         preview_input_to_present_latency_p50_ms: None,
         preview_input_to_present_latency_p95_ms: None,
         preview_input_to_present_latency_p99_ms: None,
+        preview_compositor_frame_lag: None,
         preview_render_frame_time_p50_ms: None,
         preview_render_frame_time_p95_ms: None,
         preview_render_frame_time_p99_ms: None,
@@ -822,6 +823,7 @@ mod tests {
         assert_eq!(stats.compositor_backend, None);
         assert_eq!(stats.compositor_fallback_reason, None);
         assert_eq!(stats.compositor_cpu_fallback_frames, 0);
+        assert_eq!(stats.preview_compositor_frame_lag, None);
         assert_eq!(stats.preview_camera_frame_age_ms, None);
         assert_eq!(stats.preview_camera_source_fps, None);
         assert_eq!(stats.preview_camera_dropped_frames, 0);

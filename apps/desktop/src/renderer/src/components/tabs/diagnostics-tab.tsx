@@ -123,6 +123,7 @@ export function DiagnosticsTab(): ReactElement {
             <DiagnosticMetric label="Preview age" value={formatMs(diagnosticStats.previewFrameAgeMs)} />
             <DiagnosticMetric label="Input to present" value={formatMs(diagnosticStats.previewInputToPresentLatencyMs)} />
             <DiagnosticMetric label="Render p95" value={formatMs(diagnosticStats.previewRenderFrameTimeP95Ms)} />
+            <DiagnosticMetric label="Preview lag" value={formatFrameLag(diagnosticStats.previewCompositorFrameLag)} />
             <DiagnosticMetric label="Preview drops" value={diagnosticStats.previewDroppedFrames.toString()} />
             <DiagnosticMetric label="Camera age" value={formatMs(diagnosticStats.previewCameraFrameAgeMs ?? previewCameraStatus.frameAgeMs)} />
             <DiagnosticMetric label="Screen age" value={formatMs(diagnosticStats.previewScreenFrameAgeMs ?? previewScreenStatus.frameAgeMs)} />
@@ -623,6 +624,8 @@ function previewDiagnosisCopy({
   if (
     diagnosticStats.previewDroppedFrames > 0 ||
     diagnosticStats.previewRepeatedFrames > targetFps ||
+    (typeof diagnosticStats.previewCompositorFrameLag === 'number' &&
+      diagnosticStats.previewCompositorFrameLag > 2) ||
     (typeof diagnosticStats.previewInputToPresentLatencyP95Ms === 'number' &&
       diagnosticStats.previewInputToPresentLatencyP95Ms > 50) ||
     (typeof diagnosticStats.previewInputToPresentLatencyMs === 'number' &&
@@ -684,6 +687,10 @@ function formatFfmpegWork(stats: DiagnosticStats): string {
 
 function formatMs(value?: number): string {
   return typeof value === 'number' ? `${value.toFixed(0)} ms` : '-- ms'
+}
+
+function formatFrameLag(value?: number): string {
+  return typeof value === 'number' ? `${value.toFixed(0)} frames` : '-- frames'
 }
 
 function formatBytes(value?: number): string {

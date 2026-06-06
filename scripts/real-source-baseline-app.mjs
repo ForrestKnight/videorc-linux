@@ -358,8 +358,13 @@ function summarizeDiagnostics(events, snapshots, startedAt, stopRequestedAt) {
     previewDroppedFrames: maxOf(measured.map((s) => s.previewDroppedFrames ?? 0)) ?? 0,
     minPreviewPresentFps: minOf(collect('previewPresentFps')),
     previewInputToPresentLatencyMs: maxOf(collect('previewInputToPresentLatencyMs')),
+    previewInputToPresentLatencyP95Ms: maxOf(collect('previewInputToPresentLatencyP95Ms')),
+    previewInputToPresentLatencyP99Ms: maxOf(collect('previewInputToPresentLatencyP99Ms')),
     previewIntervalP95Ms: maxOf(collect('previewRenderFrameTimeP95Ms')),
-    previewCompositorFrameLag: maxOf(surfaceSamples.map((s) => num(s.compositorFrameLag)).filter((v) => v !== null)),
+    previewCompositorFrameLag: maxOf([
+      ...collect('previewCompositorFrameLag'),
+      ...surfaceSamples.map((s) => num(s.compositorFrameLag)).filter((v) => v !== null),
+    ]),
     previewCameraFrameAgeMs: maxOf(collect('previewCameraFrameAgeMs')),
     previewScreenFrameAgeMs: maxOf(collect('previewScreenFrameAgeMs')),
     compositorRepeatedFrames: maxOf(compositorSamples.map((s) => s.repeatedFrames ?? 0)) ?? 0,
@@ -485,7 +490,8 @@ function writeBaselineReport(outputPath, { sources, previewTransport, size, diag
     `- Mic: captured ${diagnostics.micCapturedFrames ?? 'n/a'} | dropped ${diagnostics.micDroppedFrames} | min capture coverage ${fmt(diagnostics.minMicCaptureCoverage, 2)} (1.0 = no gaps)`
   )
   lines.push(
-    `- Preview present: min fps ${fmt(diagnostics.minPreviewPresentFps, 1)} | source-to-present max ${fmt(diagnostics.previewInputToPresentLatencyMs, 0)}ms | interval p95 max ${fmt(diagnostics.previewIntervalP95Ms)}ms`
+    `- Preview present: min fps ${fmt(diagnostics.minPreviewPresentFps, 1)} | source-to-present max ${fmt(diagnostics.previewInputToPresentLatencyMs, 0)}ms ` +
+      `(p95 ${fmt(diagnostics.previewInputToPresentLatencyP95Ms, 0)}ms / p99 ${fmt(diagnostics.previewInputToPresentLatencyP99Ms, 0)}ms) | interval p95 max ${fmt(diagnostics.previewIntervalP95Ms)}ms`
   )
   lines.push(`- Preview frame lag/dropped frames: ${fmt(diagnostics.previewCompositorFrameLag, 0)} / ${diagnostics.previewDroppedFrames}`)
   lines.push(`- Preview repeated frames: ${diagnostics.previewRepeatedFrames}`)

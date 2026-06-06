@@ -1108,6 +1108,7 @@ export interface DiagnosticStats {
   previewInputToPresentLatencyP50Ms?: number
   previewInputToPresentLatencyP95Ms?: number
   previewInputToPresentLatencyP99Ms?: number
+  previewCompositorFrameLag?: number
   previewRenderFrameTimeP50Ms?: number
   previewRenderFrameTimeP95Ms?: number
   previewRenderFrameTimeP99Ms?: number

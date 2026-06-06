@@ -185,6 +185,7 @@ pub async fn update_preview_surface_present(
         next.preview_input_to_present_latency_p50_ms = status.input_to_present_latency_p50_ms;
         next.preview_input_to_present_latency_p95_ms = status.input_to_present_latency_p95_ms;
         next.preview_input_to_present_latency_p99_ms = status.input_to_present_latency_p99_ms;
+        next.preview_compositor_frame_lag = status.compositor_frame_lag;
         next.preview_dropped_frames = status.dropped_frames;
         next.preview_frame_age_ms = status.input_to_present_latency_ms;
         next.preview_render_frame_time_p95_ms = status.interval_p95_ms;
@@ -399,6 +400,7 @@ mod tests {
             diagnostics.preview_input_to_present_latency_p99_ms,
             Some(73)
         );
+        assert_eq!(diagnostics.preview_compositor_frame_lag, Some(1));
         assert_eq!(diagnostics.preview_dropped_frames, 3);
         assert_eq!(diagnostics.preview_render_frame_time_p95_ms, Some(19.0));
         assert_eq!(diagnostics.preview_render_frame_time_p99_ms, Some(24.0));

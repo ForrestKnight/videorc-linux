@@ -835,6 +835,11 @@ pub struct DiagnosticStats {
     pub preview_input_to_present_latency_p50_ms: Option<u64>,
     pub preview_input_to_present_latency_p95_ms: Option<u64>,
     pub preview_input_to_present_latency_p99_ms: Option<u64>,
+    /// Difference between the newest compositor frame observed by the preview host and
+    /// the compositor frame most recently presented. OBS-style preview may skip frames,
+    /// but should not trail the compositor by more than a couple frames.
+    #[serde(default)]
+    pub preview_compositor_frame_lag: Option<u64>,
     pub preview_render_frame_time_p50_ms: Option<f64>,
     pub preview_render_frame_time_p95_ms: Option<f64>,
     pub preview_render_frame_time_p99_ms: Option<f64>,
