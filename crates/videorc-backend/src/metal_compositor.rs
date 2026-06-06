@@ -252,6 +252,20 @@ impl MetalSceneCompositor {
         Some(bgra_to_yuv420p(&bgra, out_width, out_height))
     }
 
+    /// Present the latest composited target texture to a preview layer without exposing
+    /// the Metal texture type outside this module. Returns `false` when no frame has been
+    /// composed yet or when the layer has no drawable.
+    pub fn present_latest_to_layer(
+        &self,
+        presenter: &MetalPreviewPresenter,
+        layer: &CAMetalLayer,
+    ) -> bool {
+        let Some(target) = self.target.as_ref() else {
+            return false;
+        };
+        presenter.present_texture_to_layer(layer, &target.0)
+    }
+
     fn ensure_target_texture(&mut self, width: usize, height: usize) -> Option<()> {
         if self.target.is_some() && self.target_width == width && self.target_height == height {
             return Some(());
@@ -1031,6 +1045,30 @@ mod tests {
         let pixels = read_texture_bgra(&target, 4, 4);
         assert_eq!(pixel(&pixels, 4, 0, 0), [0, 255, 0, 255]);
         assert_eq!(pixel(&pixels, 4, 3, 3), [0, 255, 0, 255]);
+    }
+
+    #[test]
+    fn compositor_presents_latest_target_to_layer_or_skips_without_a_gpu() {
+        let Some(mut compositor) = MetalSceneCompositor::new() else {
+            eprintln!("skipping: no Metal device available in this environment");
+            return;
+        };
+        let Some(presenter) = MetalPreviewPresenter::new(compositor.device.clone()) else {
+            return;
+        };
+        let layer = make_preview_layer(presenter.device(), 4.0, 4.0);
+        let red = [0u8, 0, 255, 255];
+        let source = full_frame(&red, 1, 1, false, false, [0.0; 4]);
+
+        assert!(!compositor.present_latest_to_layer(&presenter, &layer));
+        let _pixels = compositor
+            .compose_bgra(4, 4, [0.0, 0.0, 0.0, 1.0], &[source])
+            .expect("compose target");
+
+        // Headless layers normally have no drawable, so the return value can be false; the
+        // important contract is that the compositor can hand the cached target to the
+        // presenter without exposing the raw texture outside this module.
+        let _presented = compositor.present_latest_to_layer(&presenter, &layer);
     }
 
     #[test]

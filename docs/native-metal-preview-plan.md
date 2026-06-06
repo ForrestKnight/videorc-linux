@@ -47,6 +47,9 @@ fails a "native" claim — by design.
 - Rust preview-surface create/update/destroy now records native-host lifecycle intent through
   a dedicated host seam. The seam returns no activation yet, so the app still reports the
   Electron proof backing until the main-thread presenter runner is wired.
+- `MetalSceneCompositor` can now hand its latest cached target texture directly to the
+  preview presenter, so the native runtime can present the compositor output without first
+  exposing raw Metal texture types across modules or reading pixels back for preview.
 - `make_preview_layer()` / `MetalPreviewPresenter` / `present_texture_to_layer()` — the
   GPU-side preview present (CAMetalLayer + render-scaled texture present), compile-and-run
   tested headlessly.
