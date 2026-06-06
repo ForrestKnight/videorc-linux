@@ -144,7 +144,7 @@ async function main() {
       previewTransport = status?.transport ?? previewTransport
     })
 
-    await sleep(1500) // let the native capturers produce a few real frames
+    await waitForPreviewSourceReadiness(ws, sources)
 
     const scenarioStartedAt = Date.now()
     const started = await request(ws, config.timeoutMs, 'session.start', sessionParams(sourceSelection))
@@ -262,6 +262,38 @@ function reportSelection(sources, warnings) {
   console.log(describe('camera', sources.camera))
   console.log(describe('microphone', sources.microphone))
   for (const warning of warnings) console.log(`  device warning: ${warning}`)
+}
+
+async function waitForPreviewSourceReadiness(ws, sources) {
+  const deadline = Date.now() + Math.min(config.timeoutMs, 15_000)
+  let lastCamera = null
+  let lastScreen = null
+  while (Date.now() < deadline) {
+    ;[lastCamera, lastScreen] = await Promise.all([
+      sources.camera ? requestSafe(ws, 'preview.camera.status') : Promise.resolve(null),
+      sources.screen ? requestSafe(ws, 'preview.screen.status') : Promise.resolve(null),
+    ])
+    if (previewSourceReady(lastCamera) && previewSourceReady(lastScreen)) {
+      console.log(
+        `Preview sources ready: camera ${describePreviewReadiness(lastCamera)}, screen ${describePreviewReadiness(lastScreen)}`
+      )
+      return
+    }
+    await sleep(250)
+  }
+  throw new Error(
+    `Timed out waiting for preview sources before recording: camera ${describePreviewReadiness(lastCamera)}, screen ${describePreviewReadiness(lastScreen)}`
+  )
+}
+
+function previewSourceReady(status) {
+  if (!status) return true
+  return status.state === 'live' && (status.framesCaptured ?? 0) > 0 && (status.frameAgeMs ?? Infinity) <= 2_000
+}
+
+function describePreviewReadiness(status) {
+  if (!status) return 'not selected'
+  return `${status.state ?? 'unknown'} frames=${status.framesCaptured ?? 0} age=${status.frameAgeMs ?? 'n/a'}ms`
 }
 
 // --- Diagnostics sampling ---------------------------------------------------

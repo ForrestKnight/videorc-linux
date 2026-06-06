@@ -349,6 +349,17 @@ fails a "native" claim — by design.
   and VideoToolbox-output frame counts. This makes the next real-source run actionable
   against the strict zero-copy gate instead of only saying that native preview parity
   failed.
+- The real-source baseline now waits for selected preview camera/screen sources to report
+  live, fresh captured frames before starting recording, so the bridge selector is not
+  racing source startup. A short 2026-06-06 `pnpm
+  baseline:real-source:videotoolbox-output` run reached source readiness (`camera live
+  frames=26 age=32ms`, `screen live frames=69 age=1579ms`) and then entered protected
+  bridge startup, but timed out before encoding with `waiting for compositor frame`. A
+  post-timeout backend query showed the real-source compositor was on Metal with 0 CPU
+  fallback frames, but rendering at only 0.389fps with frame-time p95 around 2570ms. The
+  next real-source slice is therefore reducing live source upload/compose cost (for
+  example CVMetalTextureCache/native source import), not simply extending the startup
+  barrier timeout.
 
 ## What remains (on-device only)
 
