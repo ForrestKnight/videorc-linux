@@ -1020,9 +1020,10 @@ fn try_gpu_compose(
                 });
             }
             SceneSourceKind::TestPattern => {
+                let pattern = synthetic_test_pattern_bgra(inputs.sequence);
                 let (dest, crop) = gpu_source_placement(
-                    1,
-                    1,
+                    pattern.width as u32,
+                    pattern.height as u32,
                     rect,
                     false,
                     SourceCrop::none(),
@@ -1031,11 +1032,9 @@ fn try_gpu_compose(
                 )
                 .ok_or("test-pattern source placement failed")?;
                 prepared_sources.push(PreparedGpuSource {
-                    pixels: PreparedGpuSourcePixels::Owned(synthetic_test_pattern_bgra(
-                        inputs.sequence,
-                    )),
-                    width: 1,
-                    height: 1,
+                    pixels: PreparedGpuSourcePixels::Owned(pattern.bytes),
+                    width: pattern.width,
+                    height: pattern.height,
                     dest,
                     crop,
                     mirror: false,
@@ -1079,10 +1078,66 @@ fn compose_gpu_sources(
     }
 }
 
-#[cfg(target_os = "macos")]
-fn synthetic_test_pattern_bgra(sequence: u64) -> Vec<u8> {
-    let value = 48_u8.saturating_add((sequence % 96) as u8);
-    vec![value, value, value, 255]
+const SYNTHETIC_TEST_PATTERN_WIDTH: usize = 64;
+const SYNTHETIC_TEST_PATTERN_HEIGHT: usize = 64;
+
+struct SyntheticTestPatternBgra {
+    bytes: Vec<u8>,
+    width: usize,
+    height: usize,
+}
+
+fn synthetic_test_pattern_bgra(sequence: u64) -> SyntheticTestPatternBgra {
+    let width = SYNTHETIC_TEST_PATTERN_WIDTH;
+    let height = SYNTHETIC_TEST_PATTERN_HEIGHT;
+    let mut bytes = vec![0; width * height * 4];
+    let phase = (sequence % width as u64) as usize;
+    let marker_x = ((sequence.saturating_mul(3)) % width as u64) as usize;
+    let marker_y = ((sequence.saturating_mul(5)) % height as u64) as usize;
+    let marker_radius = 6_usize;
+
+    let horizontal_y = ((sequence.saturating_mul(2)) % height as u64) as usize;
+    let base = 44_u8.saturating_add(((sequence % 12) as u8).saturating_mul(12));
+    for y in 0..height {
+        for x in 0..width {
+            let mut r = base;
+            let mut g = base.saturating_add(18);
+            let mut b = base.saturating_add(36);
+            let vertical_distance = circular_distance(x, phase, width);
+            let horizontal_distance = circular_distance(y, horizontal_y, height);
+            if vertical_distance <= 3 {
+                r = 235;
+                g = 235;
+                b = 235;
+            }
+            if horizontal_distance <= 2 {
+                r = 220;
+                g = 92;
+                b = 180;
+            }
+            if x.abs_diff(marker_x) <= marker_radius && y.abs_diff(marker_y) <= marker_radius {
+                r = 255;
+                g = 245;
+                b = 80;
+            }
+            let offset = (y * width + x) * 4;
+            bytes[offset] = b;
+            bytes[offset + 1] = g;
+            bytes[offset + 2] = r;
+            bytes[offset + 3] = 255;
+        }
+    }
+
+    SyntheticTestPatternBgra {
+        bytes,
+        width,
+        height,
+    }
+}
+
+fn circular_distance(a: usize, b: usize, span: usize) -> usize {
+    let direct = a.abs_diff(b);
+    direct.min(span.saturating_sub(direct))
 }
 
 #[cfg(target_os = "macos")]
@@ -1661,34 +1716,26 @@ fn render_synthetic_source_rect(
     rect: PixelRect,
     bytes: &mut [u8],
 ) {
-    let canvas_width = canvas_width.max(1) as usize;
-    let canvas_height = canvas_height.max(1) as usize;
-    let y_len = canvas_width * canvas_height;
-    let uv_width = canvas_width.div_ceil(2);
-    let uv_height = canvas_height.div_ceil(2);
-    let u_start = y_len;
-    let v_start = y_len + uv_width * uv_height;
-    let left = rect.x as usize;
-    let top = rect.y as usize;
-    let right = rect.x.saturating_add(rect.width).min(canvas_width as u32) as usize;
-    let bottom = rect.y.saturating_add(rect.height).min(canvas_height as u32) as usize;
-
-    for y in top..bottom {
-        let row_start = y * canvas_width + left;
-        let row_end = y * canvas_width + right;
-        bytes[row_start..row_end].fill(48_u8.saturating_add((sequence % 96) as u8));
-    }
-
-    let uv_left = left / 2;
-    let uv_top = top / 2;
-    let uv_right = right.div_ceil(2).min(uv_width);
-    let uv_bottom = bottom.div_ceil(2).min(uv_height);
-    for y in uv_top..uv_bottom {
-        let row_start = y * uv_width + uv_left;
-        let row_end = y * uv_width + uv_right;
-        bytes[u_start + row_start..u_start + row_end].fill(128);
-        bytes[v_start + row_start..v_start + row_end].fill(128);
-    }
+    let pattern = synthetic_test_pattern_bgra(sequence);
+    let source = RgbaSource {
+        bytes: &pattern.bytes,
+        width: pattern.width as u32,
+        height: pattern.height as u32,
+        format: SourcePixelFormat::Bgra,
+    };
+    let _ = blit_rgba_to_yuv420p(
+        &source,
+        bytes,
+        canvas_width,
+        canvas_height,
+        rect,
+        SourceRenderOptions {
+            crop: SourceCrop::none(),
+            contain: false,
+            mirror_x: false,
+            circle_mask: false,
+        },
+    );
 }
 
 fn blit_rgba_to_yuv420p(
@@ -2311,6 +2358,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn synthetic_test_pattern_bgra_has_spatial_and_temporal_motion() {
+        let first = synthetic_test_pattern_bgra(7);
+        let next = synthetic_test_pattern_bgra(8);
+
+        assert_eq!(first.width, SYNTHETIC_TEST_PATTERN_WIDTH);
+        assert_eq!(first.height, SYNTHETIC_TEST_PATTERN_HEIGHT);
+        assert_eq!(first.bytes.len(), first.width * first.height * 4);
+        assert_ne!(first.bytes, next.bytes);
+        assert!(
+            first
+                .bytes
+                .chunks_exact(4)
+                .zip(first.bytes.chunks_exact(4).skip(1))
+                .any(|(left, right)| left != right),
+            "pattern should have spatial contrast"
+        );
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn metal_compose_supports_test_pattern_source() {
@@ -2357,9 +2423,27 @@ mod tests {
             true,
         )
         .expect("test pattern should render on Metal");
+        let next_output = try_gpu_compose(
+            Some(&mut gpu),
+            &CompositorRenderInputs {
+                sequence: 8,
+                width: 8,
+                height: 4,
+                snapshot: Some(&snapshot),
+                active_image_source: None,
+                camera_frame: None,
+                screen_frame: None,
+            },
+            true,
+        )
+        .expect("test pattern should render consecutive Metal frames");
 
         assert_eq!(output.yuv.len(), raw_yuv420p_len(8, 4));
-        assert_eq!(output.yuv[0], 48 + 7);
+        assert!(
+            output.yuv[..32].windows(2).any(|pair| pair[0] != pair[1]),
+            "test pattern should carry spatial contrast after Metal rendering"
+        );
+        assert_ne!(output.yuv, next_output.yuv);
         assert_eq!(
             output.pixel_format.has_metal_iosurface_target(),
             gpu.latest_target_pixel_buffer()

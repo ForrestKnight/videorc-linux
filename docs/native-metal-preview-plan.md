@@ -188,6 +188,16 @@ fails a "native" claim — by design.
   `zero-copy 121`, `VT output 121`) while report-only final-file analysis exposed one
   remaining pacing defect: final max repeated-frame run 3. Startup stayed clean with
   first-2-second max repeated-frame run 2 and no preview-sized frames.
+- The source-complete `test-pattern` scene source now renders a shared animated BGRA tile
+  on both CPU and Metal instead of a single gray texel. The tile keeps the stress scene
+  compressible but gives the final-file analyzer obvious decoded motion, so H.264
+  quantization no longer looks like an exact repeated-frame burst. On 2026-06-06, the
+  calibrated source-complete H.264-output probe produced startup/final max repeated-frame
+  run 1, `raw copied 0`, `Metal copied 0`, `zero-copy 120`, `VT output 120 (145111
+  bytes, 85ms max encode)`, `CPU fallback frames 0`, preview 120.72fps, source-to-present
+  p95/p99 1ms, 17ms A/V skew, and passing decoded startup/final-file gates. Live
+  diagnostics still warned on min FPS / compositor-present FPS, but the direct proof-host
+  measurement and decoded artifact passed.
 - The real-source acceptance gate now fails GPU-required runs when
   `encoderBridgeMetalTargetFrames` stays at 0, preventing a session from passing on a
   generic Metal compositor label while the recording bridge never saw an IOSurface-backed
