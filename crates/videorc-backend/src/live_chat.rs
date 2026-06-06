@@ -248,7 +248,7 @@ pub fn chat_capability(
             required_scope: None,
             account_id: account.map(|account| account.account_id.clone()),
             account_label: account.map(|account| account.account_label.clone()),
-            message: "X comments require native X API access.".to_string(),
+            message: crate::x_chat::x_chat_message(account.is_some()).to_string(),
         },
         StreamPlatform::Custom => ChatCapability {
             platform,

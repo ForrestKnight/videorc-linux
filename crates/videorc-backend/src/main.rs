@@ -34,6 +34,7 @@ mod storage;
 mod streaming;
 mod twitch;
 mod twitch_chat;
+mod x_chat;
 mod x_live;
 mod youtube;
 mod youtube_chat;
@@ -1448,6 +1449,18 @@ async fn handle_text_message(state: &AppState, text: &str) -> ServerResponse {
         "liveChat.stop" => ServerResponse::ok(command.id, live_chat::stop_live_chat(state).await),
         "liveChat.clearLocal" => {
             ServerResponse::ok(command.id, live_chat::clear_local_live_chat(state).await)
+        }
+        "liveChat.xCommentsReadiness" => {
+            let has_x_account = state
+                .database
+                .list_platform_accounts()
+                .map(|accounts| {
+                    accounts
+                        .iter()
+                        .any(|account| account.platform == crate::streaming::StreamPlatform::X)
+                })
+                .unwrap_or(false);
+            ServerResponse::ok(command.id, x_chat::x_chat_readiness(has_x_account))
         }
         "platformAccounts.oauth.start" => {
             match serde_json::from_value::<OAuthStartParams>(command.params) {
