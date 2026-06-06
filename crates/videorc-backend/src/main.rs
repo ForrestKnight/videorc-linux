@@ -36,6 +36,8 @@ mod storage;
 mod streaming;
 mod twitch;
 mod twitch_chat;
+#[cfg(target_os = "macos")]
+mod video_toolbox_encoder;
 mod x_chat;
 mod x_live;
 mod youtube;

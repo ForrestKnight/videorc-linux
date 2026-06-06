@@ -119,6 +119,13 @@ fails a "native" claim — by design.
   from `encoderBridgeRawVideoCopiedFrames`, `encoderBridgeMetalTargetCopiedFrames`, and
   `encoderBridgeZeroCopyFrames`, so smokes can prove when a Metal target is still copied
   versus truly encoded zero-copy.
+- A macOS-only `video_toolbox_encoder` probe now creates/prepares a VideoToolbox H.264
+  session and submits the retained IOSurface-backed compositor target through
+  `VTCompressionSessionEncodeFrameWithOutputHandler`. On 2026-06-06,
+  `cargo test -p videorc-backend video_toolbox` passed, including callback/sample-buffer
+  evidence for a 64x64 retained Metal target. This proves the retained target can cross
+  the VideoToolbox boundary; the production recording bridge still needs to replace the
+  raw-YUV FIFO copy before `encoderBridgeZeroCopyFrames` can grow.
 - The real-source acceptance gate now fails GPU-required runs when
   `encoderBridgeMetalTargetFrames` stays at 0, preventing a session from passing on a
   generic Metal compositor label while the recording bridge never saw an IOSurface-backed
@@ -271,10 +278,11 @@ fails a "native" claim — by design.
    `VIDEORC_METAL_COMPOSITOR=0|false|off|no` as the CPU fallback escape hatch.
 4. **Export to the encoder with the lowest copy available.** The compositor target now
    prefers IOSurface-backed storage and exposes a retained target `CVPixelBuffer`; feed
-   that handle to `h264_videotoolbox` (the bridge already uses VideoToolbox — Phase 4),
-   avoiding the YUV420P CPU readback the FIFO bridge does today. Until that adoption
-   lands, `encoderBridgeMetalTargetFrames` separates "Metal target was available" from
-   the current "YUV bytes were still copied into the FIFO" behavior.
+   that handle to the production VideoToolbox recording path, avoiding the YUV420P CPU
+   readback the FIFO bridge does today. A focused probe already verifies VideoToolbox can
+   accept the retained IOSurface target; until bridge adoption lands,
+   `encoderBridgeMetalTargetFrames` separates "Metal target was available" from the
+   current "YUV bytes were still copied into the FIFO" behavior.
 5. **Done gate:** 1080p30 and 1440p30 real screen+camera composition under the
    compositor frame-time budget (p95 < 16ms @ 60fps preview / < 30ms @ 30fps output);
    final recording shows no repeated frames from a late compositor.
