@@ -482,6 +482,14 @@ function summarizeDiagnostics(events, snapshots, startedAt, stopRequestedAt) {
       maxOf(measured.map((s) => s.compositorPreviewSurfaceLockContentions ?? 0)) ?? 0,
     compositorStatusLockContentions:
       maxOf(measured.map((s) => s.compositorStatusLockContentions ?? 0)) ?? 0,
+    compositorCameraSourceTryLockMisses:
+      maxOf(measured.map((s) => s.compositorCameraSourceTryLockMisses ?? 0)) ?? 0,
+    compositorScreenSourceTryLockMisses:
+      maxOf(measured.map((s) => s.compositorScreenSourceTryLockMisses ?? 0)) ?? 0,
+    compositorCameraSourceBlockingRefreshes:
+      maxOf(measured.map((s) => s.compositorCameraSourceBlockingRefreshes ?? 0)) ?? 0,
+    compositorScreenSourceBlockingRefreshes:
+      maxOf(measured.map((s) => s.compositorScreenSourceBlockingRefreshes ?? 0)) ?? 0,
     maxBackendRssBytes: maxOf(rss),
     maxActiveFfmpegProcesses: maxOf(ffmpegProcs) ?? 0,
     maxActiveFfprobeProcesses: maxOf(ffprobeProcs) ?? 0,
@@ -632,6 +640,10 @@ function writeBaselineReport(outputPath, { sources, previewTransport, size, diag
       `surface progress ${fmt(diagnostics.compositorPreviewSurfaceProgressP95Ms)}ms (${diagnostics.compositorPreviewSurfaceLockContentions} lock skips) | ` +
       `status progress ${fmt(diagnostics.compositorStatusProgressP95Ms)}ms (${diagnostics.compositorStatusLockContentions} lock skips)`
   )
+  lines.push(
+    `- Compositor source freshness: camera try-lock misses ${diagnostics.compositorCameraSourceTryLockMisses} / blocking refreshes ${diagnostics.compositorCameraSourceBlockingRefreshes} | ` +
+      `screen try-lock misses ${diagnostics.compositorScreenSourceTryLockMisses} / blocking refreshes ${diagnostics.compositorScreenSourceBlockingRefreshes}`
+  )
   lines.push(`- Backend RSS max: ${mib(diagnostics.maxBackendRssBytes)} | ffmpeg procs ${diagnostics.maxActiveFfmpegProcesses} | ffprobe procs ${diagnostics.maxActiveFfprobeProcesses}`)
   lines.push(`- Maintenance overlap samples: ${diagnostics.maintenanceSamples} | duplicate-capture samples: ${diagnostics.duplicateCaptureSamples}`)
   lines.push('')
@@ -713,6 +725,10 @@ function printSummary(report, startupReport, diagnostics, previewTransport, base
   )
   console.log(
     `Compositor outside-render: source refresh p95 ${diagnostics.compositorLiveSourceRefreshP95Ms ?? 'n/a'}ms | surface/status progress p95 ${diagnostics.compositorPreviewSurfaceProgressP95Ms ?? 'n/a'}/${diagnostics.compositorStatusProgressP95Ms ?? 'n/a'}ms`
+  )
+  console.log(
+    `Compositor source freshness: camera misses ${diagnostics.compositorCameraSourceTryLockMisses ?? 'n/a'} / refreshes ${diagnostics.compositorCameraSourceBlockingRefreshes ?? 'n/a'} | ` +
+      `screen misses ${diagnostics.compositorScreenSourceTryLockMisses ?? 'n/a'} / refreshes ${diagnostics.compositorScreenSourceBlockingRefreshes ?? 'n/a'}`
   )
   console.log(`Baseline report: ${baselinePath}`)
   console.log('══════════════════════════════════════')

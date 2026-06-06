@@ -13,7 +13,8 @@ use uuid::Uuid;
 use crate::color::rgb_to_yuv_full_range_bt601 as rgb_to_yuv;
 use crate::compositor_synthetic::SyntheticMovingSource;
 use crate::diagnostics::{
-    CompositorOutsideRenderTimingStats, apply_active_scene_revision,
+    CompositorLiveSourceFetchStats, CompositorOutsideRenderTimingStats,
+    apply_active_scene_revision, apply_compositor_live_source_fetch_stats,
     apply_compositor_outside_render_timing_stats, apply_compositor_stats,
     apply_compositor_timing_stats, apply_runtime_diagnostics_snapshot,
 };
@@ -38,6 +39,8 @@ use crate::state::AppState;
 
 const COMPOSITOR_DIAGNOSTIC_WINDOW: Duration = Duration::from_secs(2);
 const COMPOSITOR_LIVE_SOURCE_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
+const COMPOSITOR_LIVE_SOURCE_STALE_RECOVERY_AFTER: Duration = Duration::from_millis(150);
+const COMPOSITOR_LIVE_SOURCE_MAX_TRY_LOCK_MISSES: u32 = 3;
 
 pub type CompositorSlot = std::sync::Arc<tokio::sync::Mutex<CompositorRuntime>>;
 pub type CompositorFrameStore =
@@ -204,6 +207,31 @@ struct CompositorLiveSources {
     screen: Option<PreviewScreenFrameSource>,
     last_camera_frame: Option<(FrameHandle<PreviewCameraPixelFormat>, LayoutSettings)>,
     last_screen_frame: Option<FrameHandle<PreviewScreenPixelFormat>>,
+    camera_fetch: LiveSourceFetchState,
+    screen_fetch: LiveSourceFetchState,
+}
+
+#[derive(Debug, Clone, Default)]
+struct LiveSourceFetchState {
+    consecutive_try_lock_misses: u32,
+    try_lock_misses: u64,
+    blocking_refreshes: u64,
+}
+
+impl LiveSourceFetchState {
+    fn record_fresh_lock(&mut self) {
+        self.consecutive_try_lock_misses = 0;
+    }
+
+    fn record_try_lock_miss(&mut self) {
+        self.consecutive_try_lock_misses = self.consecutive_try_lock_misses.saturating_add(1);
+        self.try_lock_misses = self.try_lock_misses.saturating_add(1);
+    }
+
+    fn record_blocking_refresh(&mut self) {
+        self.consecutive_try_lock_misses = 0;
+        self.blocking_refreshes = self.blocking_refreshes.saturating_add(1);
+    }
 }
 
 impl CompositorLiveSources {
@@ -218,54 +246,107 @@ impl CompositorLiveSources {
         );
         if !same_camera_source(self.camera.as_ref(), camera.as_ref()) {
             self.last_camera_frame = None;
+            self.camera_fetch = LiveSourceFetchState::default();
         }
         if !same_screen_source(self.screen.as_ref(), screen.as_ref()) {
             self.last_screen_frame = None;
+            self.screen_fetch = LiveSourceFetchState::default();
         }
         self.camera = camera;
         self.screen = screen;
         self
     }
 
+    fn fetch_stats(&self) -> CompositorLiveSourceFetchStats {
+        CompositorLiveSourceFetchStats {
+            camera_try_lock_misses: self.camera_fetch.try_lock_misses,
+            screen_try_lock_misses: self.screen_fetch.try_lock_misses,
+            camera_blocking_refreshes: self.camera_fetch.blocking_refreshes,
+            screen_blocking_refreshes: self.screen_fetch.blocking_refreshes,
+        }
+    }
+
     fn latest_camera_frame(
         &mut self,
     ) -> Option<(FrameHandle<PreviewCameraPixelFormat>, LayoutSettings)> {
+        let Some(source) = self.camera.clone() else {
+            return self.last_camera_frame.clone();
+        };
         if self.last_camera_frame.is_none() {
-            if let Some(frame) = self
-                .camera
-                .as_ref()
-                .and_then(PreviewCameraFrameSource::latest_frame_blocking)
-            {
+            if let Some(frame) = source.latest_frame_blocking() {
                 self.last_camera_frame = Some(frame);
             }
-        } else if let Some(frame) = self
-            .camera
-            .as_ref()
-            .and_then(PreviewCameraFrameSource::try_latest_frame)
-        {
-            self.last_camera_frame = Some(frame);
+            return self.last_camera_frame.clone();
+        }
+
+        match source.try_latest_frame_result() {
+            Ok(frame) => {
+                self.camera_fetch.record_fresh_lock();
+                if let Some(frame) = frame {
+                    self.last_camera_frame = Some(frame);
+                }
+            }
+            Err(()) => {
+                self.camera_fetch.record_try_lock_miss();
+                if should_blocking_refresh_live_source(
+                    self.camera_fetch.consecutive_try_lock_misses,
+                    self.last_camera_frame
+                        .as_ref()
+                        .map(|(frame, _layout)| frame),
+                ) {
+                    if let Some(frame) = source.latest_frame_blocking() {
+                        self.last_camera_frame = Some(frame);
+                    }
+                    self.camera_fetch.record_blocking_refresh();
+                }
+            }
         }
         self.last_camera_frame.clone()
     }
 
     fn latest_screen_frame(&mut self) -> Option<FrameHandle<PreviewScreenPixelFormat>> {
+        let Some(source) = self.screen.clone() else {
+            return self.last_screen_frame.clone();
+        };
         if self.last_screen_frame.is_none() {
-            if let Some(frame) = self
-                .screen
-                .as_ref()
-                .and_then(PreviewScreenFrameSource::latest_frame_blocking)
-            {
+            if let Some(frame) = source.latest_frame_blocking() {
                 self.last_screen_frame = Some(frame);
             }
-        } else if let Some(frame) = self
-            .screen
-            .as_ref()
-            .and_then(PreviewScreenFrameSource::try_latest_frame)
-        {
-            self.last_screen_frame = Some(frame);
+            return self.last_screen_frame.clone();
+        }
+
+        match source.try_latest_frame_result() {
+            Ok(frame) => {
+                self.screen_fetch.record_fresh_lock();
+                if let Some(frame) = frame {
+                    self.last_screen_frame = Some(frame);
+                }
+            }
+            Err(()) => {
+                self.screen_fetch.record_try_lock_miss();
+                if should_blocking_refresh_live_source(
+                    self.screen_fetch.consecutive_try_lock_misses,
+                    self.last_screen_frame.as_ref(),
+                ) {
+                    if let Some(frame) = source.latest_frame_blocking() {
+                        self.last_screen_frame = Some(frame);
+                    }
+                    self.screen_fetch.record_blocking_refresh();
+                }
+            }
         }
         self.last_screen_frame.clone()
     }
+}
+
+fn should_blocking_refresh_live_source<P, M>(
+    consecutive_try_lock_misses: u32,
+    cached_frame: Option<&FrameHandle<P, M>>,
+) -> bool {
+    consecutive_try_lock_misses >= COMPOSITOR_LIVE_SOURCE_MAX_TRY_LOCK_MISSES
+        || cached_frame.is_some_and(|frame| {
+            frame.captured_at.elapsed() >= COMPOSITOR_LIVE_SOURCE_STALE_RECOVERY_AFTER
+        })
 }
 
 fn same_camera_source(
@@ -908,6 +989,8 @@ async fn run_synthetic_compositor_loop(
                                 compositor_status_lock_contentions,
                             },
                         );
+                        let next =
+                            apply_compositor_live_source_fetch_stats(next, live_sources.fetch_stats());
                         *diagnostics = next.clone();
                         next
                     };
@@ -2490,6 +2573,44 @@ mod tests {
         ));
         let prev = fp(Some(1), Some(9));
         assert!(!is_repeated_compositor_frame(Some(prev), fp(None, Some(9))));
+    }
+
+    #[test]
+    fn live_source_blocking_refresh_is_bounded_to_misses_or_stale_cache() {
+        assert!(!should_blocking_refresh_live_source::<
+            PreviewScreenPixelFormat,
+            (),
+        >(
+            COMPOSITOR_LIVE_SOURCE_MAX_TRY_LOCK_MISSES - 1, None
+        ));
+        assert!(should_blocking_refresh_live_source::<
+            PreviewScreenPixelFormat,
+            (),
+        >(COMPOSITOR_LIVE_SOURCE_MAX_TRY_LOCK_MISSES, None));
+
+        let fresh_frame = std::sync::Arc::new(crate::frame_store::StoredFrame {
+            sequence: 1,
+            width: 1,
+            height: 1,
+            pixel_format: PreviewScreenPixelFormat::Bgra8,
+            metadata: (),
+            bytes: vec![0, 0, 0, 255],
+            captured_at: Instant::now(),
+        });
+        assert!(!should_blocking_refresh_live_source(1, Some(&fresh_frame)));
+
+        let stale_frame = std::sync::Arc::new(crate::frame_store::StoredFrame {
+            sequence: 1,
+            width: 1,
+            height: 1,
+            pixel_format: PreviewScreenPixelFormat::Bgra8,
+            metadata: (),
+            bytes: vec![0, 0, 0, 255],
+            captured_at: Instant::now()
+                - COMPOSITOR_LIVE_SOURCE_STALE_RECOVERY_AFTER
+                - Duration::from_millis(1),
+        });
+        assert!(should_blocking_refresh_live_source(1, Some(&stale_frame)));
     }
 
     #[test]

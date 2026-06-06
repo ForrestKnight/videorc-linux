@@ -134,6 +134,10 @@ pub fn idle_diagnostics() -> DiagnosticStats {
         compositor_status_progress_p95_ms: None,
         compositor_preview_surface_lock_contentions: 0,
         compositor_status_lock_contentions: 0,
+        compositor_camera_source_try_lock_misses: 0,
+        compositor_screen_source_try_lock_misses: 0,
+        compositor_camera_source_blocking_refreshes: 0,
+        compositor_screen_source_blocking_refreshes: 0,
         preview_repeated_frames: 0,
         preview_surface_resize_count: 0,
         preview_latency_ms: None,
@@ -689,6 +693,26 @@ pub fn apply_compositor_outside_render_timing_stats(
     stats.compositor_status_progress_p95_ms = timings.compositor_status_progress_p95_ms;
     stats.compositor_preview_surface_lock_contentions = timings.preview_surface_lock_contentions;
     stats.compositor_status_lock_contentions = timings.compositor_status_lock_contentions;
+    stats.updated_at = Utc::now().to_rfc3339();
+    stats
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CompositorLiveSourceFetchStats {
+    pub camera_try_lock_misses: u64,
+    pub screen_try_lock_misses: u64,
+    pub camera_blocking_refreshes: u64,
+    pub screen_blocking_refreshes: u64,
+}
+
+pub fn apply_compositor_live_source_fetch_stats(
+    mut stats: DiagnosticStats,
+    fetch: CompositorLiveSourceFetchStats,
+) -> DiagnosticStats {
+    stats.compositor_camera_source_try_lock_misses = fetch.camera_try_lock_misses;
+    stats.compositor_screen_source_try_lock_misses = fetch.screen_try_lock_misses;
+    stats.compositor_camera_source_blocking_refreshes = fetch.camera_blocking_refreshes;
+    stats.compositor_screen_source_blocking_refreshes = fetch.screen_blocking_refreshes;
     stats.updated_at = Utc::now().to_rfc3339();
     stats
 }

@@ -947,6 +947,23 @@ pub struct DiagnosticStats {
     /// lock was busy.
     #[serde(default)]
     pub compositor_status_lock_contentions: u64,
+    /// Cumulative compositor ticks where the non-blocking camera source frame lock was
+    /// busy, so the compositor reused the cached camera frame for that tick.
+    #[serde(default)]
+    pub compositor_camera_source_try_lock_misses: u64,
+    /// Cumulative compositor ticks where the non-blocking screen/window source frame
+    /// lock was busy, so the compositor reused the cached screen/window frame for that
+    /// tick.
+    #[serde(default)]
+    pub compositor_screen_source_try_lock_misses: u64,
+    /// Cumulative bounded blocking camera source refreshes after repeated try-lock
+    /// misses or a visibly stale cached camera frame.
+    #[serde(default)]
+    pub compositor_camera_source_blocking_refreshes: u64,
+    /// Cumulative bounded blocking screen/window source refreshes after repeated
+    /// try-lock misses or a visibly stale cached screen/window frame.
+    #[serde(default)]
+    pub compositor_screen_source_blocking_refreshes: u64,
     pub preview_repeated_frames: u64,
     pub preview_surface_resize_count: u64,
     pub preview_latency_ms: Option<u64>,

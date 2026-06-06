@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex as StdMutex, mpsc as std_mpsc};
+use std::sync::{Arc, Mutex as StdMutex, TryLockError, mpsc as std_mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -74,8 +74,14 @@ impl PreviewScreenFrameSource {
         self.source_key.as_ref()
     }
 
-    pub fn try_latest_frame(&self) -> Option<FrameHandle<PreviewScreenPixelFormat>> {
-        self.shared.try_lock().ok()?.frame_store.latest()
+    pub fn try_latest_frame_result(
+        &self,
+    ) -> Result<Option<FrameHandle<PreviewScreenPixelFormat>>, ()> {
+        match self.shared.try_lock() {
+            Ok(guard) => Ok(guard.frame_store.latest()),
+            Err(TryLockError::WouldBlock) => Err(()),
+            Err(TryLockError::Poisoned(poisoned)) => Ok(poisoned.into_inner().frame_store.latest()),
+        }
     }
 
     pub fn latest_frame_blocking(&self) -> Option<FrameHandle<PreviewScreenPixelFormat>> {

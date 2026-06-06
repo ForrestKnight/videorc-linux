@@ -1175,6 +1175,14 @@ export interface DiagnosticStats {
   compositorPreviewSurfaceLockContentions: number
   /** Compositor ticks that skipped compositor progress because the lock was busy. */
   compositorStatusLockContentions: number
+  /** Compositor ticks where camera source try-lock was busy and the cached camera frame was reused. */
+  compositorCameraSourceTryLockMisses: number
+  /** Compositor ticks where screen/window source try-lock was busy and the cached screen/window frame was reused. */
+  compositorScreenSourceTryLockMisses: number
+  /** Bounded blocking camera refreshes after repeated misses or visibly stale cached camera frames. */
+  compositorCameraSourceBlockingRefreshes: number
+  /** Bounded blocking screen/window refreshes after repeated misses or visibly stale cached screen/window frames. */
+  compositorScreenSourceBlockingRefreshes: number
   previewRepeatedFrames: number
   previewSurfaceResizeCount: number
   previewLatencyMs?: number
