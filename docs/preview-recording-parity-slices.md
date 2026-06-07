@@ -20,7 +20,7 @@ the remaining work.
 | 4 | Studio health badge + degraded indicator | ✅ done | deterministic (vitest + typecheck + build) |
 | 5 | Developer-only synthetic camera source (selectable) | ✅ done | deterministic (cargo test + typecheck) |
 | 6 | ProgramFrame contract + parity check | ✅ done | deterministic (test:scripts) |
-| 7 | Visual/timing parity fixtures (hardening) | ⬜ todo | deterministic (test:scripts) |
+| 7 | Visual/timing parity fixtures | ✅ done | deterministic (test:scripts) |
 | 8 | Real-camera product acceptance (closes plan) | ⬜ todo | real-camera by-eye (user) |
 
 Legend: ✅ done · ⏳ in progress / blocked · ⬜ todo.
@@ -106,6 +106,25 @@ user-facing surface without touching that tuned block logic:
 Verified: `cargo test -p videorc-backend preflight` (3 new pass), `cargo clippy -D warnings`,
 desktop `vitest` (40 pass), `typecheck`, `build`. Operator check: start with a covered
 camera lens or a disconnected source → start blocks, no file, report appears in Diagnostics.
+
+## Slice 7 — Visual/timing parity fixtures ✅
+
+`scripts/lib/visual-parity.mjs` builds on the slice-5 synthetic source (whose frames carry a
+decodable frame-number strip) to provide the deterministic core of the parity fixtures:
+
+- `decodeSyntheticFrameNumber` — JS mirror of the Rust strip decoder, so a fixture can read the
+  frame number back from an extracted recording frame.
+- `evaluateFrameSequenceParity` — **timing parity**: the recorded frame-number sequence must be
+  monotonic and continuous (gaps = dropped frames, repeats = freezes, backward jumps = out of
+  order), wrapping cleanly at 2^16.
+- `compareFramesWithinTolerance` — **visual parity**: a preview screenshot and the decoded
+  recording frame from the same program-frame window must match within a mean/max abs-diff
+  tolerance that absorbs H.264/scaling noise.
+
+The pure functions are the verifiable core (13 tests, `pnpm test:scripts` → 130 pass). The
+remaining visual stimuli (text grid, color bars, cursor/hand motion, clap) and the
+screenshot-vs-decoded extraction are **operator/on-device** steps — they need the running app
+and a real present — and fold into the Slice 8 acceptance pass.
 
 ## Slice 6 — ProgramFrame contract + preview↔recording parity check ✅
 
