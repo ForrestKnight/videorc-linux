@@ -3,23 +3,28 @@ import {
   ChatCircle,
   CheckCircle,
   FolderOpen,
+  type Icon,
   ImageSquare,
   Layout,
   Monitor,
-  Play,
   Record,
   SpeakerHigh,
   SpeakerSlash,
   StopCircle,
   WarningCircle
 } from '@phosphor-icons/react'
-import type { ReactElement } from 'react'
+import { useEffect, useState, type ReactElement } from 'react'
 
 import { BlockingBanner } from '@/components/blocking-banner'
 import { LiveChatPanel } from '@/components/live-chat-panel'
-import { InspectorSection } from '@/components/inspector'
 import { PreviewStage } from '@/components/preview-stage'
-import { StatusBadge, type StatusTone } from '@/components/status-badge'
+import { StatusBadge } from '@/components/status-badge'
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger
+} from '@/components/ui/accordion'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -38,17 +43,7 @@ import { Switch } from '@/components/ui/switch'
 import { useWorkspaceNav } from '@/components/workspace-nav'
 import { useStudio } from '@/hooks/use-studio'
 import type { GoLiveDestinationPreflight, StreamPlatform, StreamScreen } from '@/lib/backend'
-import { startButtonLabel, startButtonPendingLabel } from '@/lib/capture'
 import { cn } from '@/lib/utils'
-
-const STATE_TONE: Record<string, StatusTone> = {
-  idle: 'neutral',
-  starting: 'warn',
-  recording: 'error',
-  streaming: 'good',
-  stopping: 'warn',
-  failed: 'error'
-}
 
 export function StudioTab(): ReactElement {
   const studio = useStudio()
@@ -112,8 +107,34 @@ export function StudioTab(): ReactElement {
   const audioSummary =
     recording.audioTracks?.map((track) => track.label).join(' + ') ?? (selectedMicrophone ? 'Microphone' : 'None')
   const pipelineSummary = recording.pipeline ? pipelineStatusLabel(recording.pipeline.finalization) : 'Ready'
-  const startLabel = startButtonLabel(captureConfig.recordEnabled, captureConfig.streamEnabled)
-  const startPendingLabel = startButtonPendingLabel(captureConfig.streamEnabled)
+
+  // Two-button start: set the intended mode, then start on the next render so startSession
+  // sees the updated streamEnabled (record vs go-live) instead of a stale closure value.
+  const [pendingStart, setPendingStart] = useState(false)
+  useEffect(() => {
+    if (!pendingStart) {
+      return
+    }
+    setPendingStart(false)
+    void startSession()
+  }, [pendingStart, startSession])
+
+  const handleRecord = (): void => {
+    setCaptureConfig((current) => ({ ...current, recordEnabled: true, streamEnabled: false }))
+    setPendingStart(true)
+  }
+  const handleLiveStream = (): void => {
+    setCaptureConfig((current) => ({ ...current, streamEnabled: true }))
+    setPendingStart(true)
+  }
+
+  const stopLabel = stopRequestPending
+    ? 'Stopping…'
+    : recording.state === 'stopping'
+      ? 'Force stop'
+      : recording.state === 'streaming'
+        ? 'End livestream'
+        : 'Stop recording'
 
   return (
     <div className="flex flex-col gap-4">
@@ -139,111 +160,99 @@ export function StudioTab(): ReactElement {
         />
       ) : null}
 
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
-        <PreviewStage
-          activeScreen={activeScreen}
-          layout={captureConfig.layout}
-          onOpenPermissions={openPreviewPermissions}
-          onRevealPermissionTarget={revealPermissionTarget}
-          onRetry={refreshPreview}
-          onPreviewSurfaceResize={registerPreviewSurfaceResize}
-          onNativePreviewSurfaceBounds={syncNativePreviewSurfaceBounds}
-          previewCameraStatus={previewCameraStatus}
-          previewLiveStatus={previewLiveStatus}
-          previewScreenStatus={previewScreenStatus}
-          previewSurfaceStatus={previewSurfaceStatus}
-          nativePreviewSurfaceEnabled={nativePreviewSurfaceEnabled}
-          previewLoading={previewLoading}
-          previewUrl={previewUrl}
-          runtimeInfo={runtimeInfo}
-          scene={scene}
-          sceneEditMode={sceneEditMode}
-          selectedSceneSourceId={selectedSceneSourceId}
-          onSelectSceneSource={setSelectedSceneSourceId}
-        />
+      {/* Big preview on top */}
+      <PreviewStage
+        activeScreen={activeScreen}
+        layout={captureConfig.layout}
+        onOpenPermissions={openPreviewPermissions}
+        onRevealPermissionTarget={revealPermissionTarget}
+        onRetry={refreshPreview}
+        onPreviewSurfaceResize={registerPreviewSurfaceResize}
+        onNativePreviewSurfaceBounds={syncNativePreviewSurfaceBounds}
+        previewCameraStatus={previewCameraStatus}
+        previewLiveStatus={previewLiveStatus}
+        previewScreenStatus={previewScreenStatus}
+        previewSurfaceStatus={previewSurfaceStatus}
+        nativePreviewSurfaceEnabled={nativePreviewSurfaceEnabled}
+        previewLoading={previewLoading}
+        previewUrl={previewUrl}
+        runtimeInfo={runtimeInfo}
+        scene={scene}
+        sceneEditMode={sceneEditMode}
+        selectedSceneSourceId={selectedSceneSourceId}
+        onSelectSceneSource={setSelectedSceneSourceId}
+      />
 
-        <div className="flex flex-col gap-4">
-          <InspectorSection icon={Record} title="Session">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5">
-                <span
-                  className={cn(
-                    'size-2.5 shrink-0 rounded-full',
-                    recording.state === 'recording' && 'bg-destructive',
-                    recording.state === 'streaming' && 'bg-success',
-                    (recording.state === 'starting' || recording.state === 'stopping') && 'bg-warning',
-                    recording.state === 'failed' && 'bg-destructive',
-                    recording.state === 'idle' && 'bg-muted-foreground/40',
-                    active && 'animate-pulse'
-                  )}
-                />
-                <div className="flex flex-col">
-                  <span className="text-sm font-semibold capitalize">{recording.state}</span>
-                  <span className="text-xs text-muted-foreground">{recording.message ?? 'Idle'}</span>
-                </div>
-              </div>
-              <time className="font-heading text-2xl font-semibold tabular-nums">{elapsed}</time>
+      {/* Action bar: status + the two primary buttons + output */}
+      <div className="flex flex-col gap-3 rounded-2xl border bg-card p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <span
+              className={cn(
+                'size-2.5 shrink-0 rounded-full',
+                recording.state === 'recording' && 'bg-destructive',
+                recording.state === 'streaming' && 'bg-success',
+                (recording.state === 'starting' || recording.state === 'stopping') && 'bg-warning',
+                recording.state === 'failed' && 'bg-destructive',
+                recording.state === 'idle' && 'bg-muted-foreground/40',
+                active && 'animate-pulse'
+              )}
+            />
+            <div className="flex flex-col">
+              <span className="text-sm font-semibold capitalize">{recording.state}</span>
+              <span className="text-xs text-muted-foreground">{recording.message ?? 'Idle'}</span>
             </div>
+          </div>
+          <time className="font-heading text-2xl font-semibold tabular-nums">{elapsed}</time>
+        </div>
 
-            <div className="flex gap-2">
-              <Button
-                className="flex-1"
-                disabled={!canStart}
-                size="lg"
-                title={startBlockedReason ?? startLabel}
-                onClick={startSession}
-              >
-                <Play data-icon="inline-start" weight="fill" />
-                {startRequestPending ? startPendingLabel : startLabel}
-              </Button>
-              <Button
-                className="flex-1"
-                disabled={!canStop}
-                size="lg"
-                variant="destructive"
-                onClick={stopSession}
-              >
-                <StopCircle data-icon="inline-start" weight="fill" />
-                {stopRequestPending ? 'Stopping…' : recording.state === 'stopping' ? 'Force stop' : 'Stop'}
-              </Button>
-            </div>
+        {active ? (
+          <Button size="lg" variant="destructive" disabled={!canStop} onClick={stopSession}>
+            <StopCircle data-icon="inline-start" weight="fill" />
+            {stopLabel}
+          </Button>
+        ) : (
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <Button
+              size="lg"
+              disabled={!canStart || startRequestPending}
+              title={startBlockedReason ?? 'Record to a file'}
+              onClick={handleRecord}
+            >
+              <Record data-icon="inline-start" weight="fill" />
+              {startRequestPending ? 'Starting…' : 'Record'}
+            </Button>
+            <Button
+              size="lg"
+              variant="outline"
+              disabled={wsStatus !== 'connected' || startRequestPending}
+              onClick={handleLiveStream}
+            >
+              <Broadcast data-icon="inline-start" weight="fill" />
+              Live Stream
+            </Button>
+          </div>
+        )}
 
-            <div className="flex items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-              <FolderOpen className="size-4 shrink-0" weight="duotone" />
-              <span className="truncate">
-                {recording.outputPath ?? recording.streamUrl ?? 'Output appears after session start.'}
-              </span>
-            </div>
+        <div className="flex items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+          <FolderOpen className="size-4 shrink-0" weight="duotone" />
+          <span className="truncate">
+            {recording.outputPath ?? recording.streamUrl ?? 'Output appears after session start.'}
+          </span>
+        </div>
+      </div>
 
-            <Separator />
-
-            <div className="flex flex-col gap-3">
-              <Field orientation="horizontal">
-                <FieldContent>
-                  <FieldLabel htmlFor="studio-edit-mode">Edit transforms</FieldLabel>
-                </FieldContent>
-                <Switch checked={sceneEditMode} id="studio-edit-mode" onCheckedChange={setSceneEditMode} />
-              </Field>
-              <Field orientation="horizontal">
-                <FieldContent>
-                  <FieldLabel htmlFor="studio-record">Record MKV</FieldLabel>
-                </FieldContent>
-                <Switch
-                  checked={captureConfig.recordEnabled}
-                  id="studio-record"
-                  onCheckedChange={(checked) =>
-                    setCaptureConfig((current) => ({ ...current, recordEnabled: checked }))
-                  }
-                />
-              </Field>
-            </div>
-          </InspectorSection>
-
-          <InspectorSection
-            icon={Monitor}
-            title="Source"
-            summary={selectedCaptureDevice?.name ?? selectedCamera?.name ?? 'No source'}
-          >
+      {/* All settings, tucked into accordions */}
+      <Accordion type="multiple" defaultValue={['source']} className="bg-card">
+        <AccordionItem value="source">
+          <AccordionTrigger>
+            <SectionLabel
+              icon={Monitor}
+              title="Source"
+              summary={selectedCaptureDevice?.name ?? selectedCamera?.name ?? 'No source'}
+            />
+          </AccordionTrigger>
+          <AccordionContent className="flex flex-col gap-3.5">
             <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
               <SummaryRow label="Screen" value={selectedCaptureDevice?.name ?? 'None'} />
               <SummaryRow label="Camera" value={selectedCamera?.name ?? 'Off'} />
@@ -252,16 +261,27 @@ export function StudioTab(): ReactElement {
             <Button size="sm" variant="outline" className="w-fit" onClick={() => setActive('sources')}>
               Configure sources
             </Button>
-          </InspectorSection>
+          </AccordionContent>
+        </AccordionItem>
 
-          <InspectorSection
-            icon={Layout}
-            title="Scene & layout"
-            summary={captureConfig.layout.layoutPreset.replace(/-/g, ' ')}
-          >
+        <AccordionItem value="layout">
+          <AccordionTrigger>
+            <SectionLabel
+              icon={Layout}
+              title="Scene & layout"
+              summary={captureConfig.layout.layoutPreset.replace(/-/g, ' ')}
+            />
+          </AccordionTrigger>
+          <AccordionContent className="flex flex-col gap-3.5">
             <p className="text-sm text-muted-foreground">
               Camera and screen arrangement, crop, and output resolution.
             </p>
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="studio-edit-mode">Edit transforms</FieldLabel>
+              </FieldContent>
+              <Switch checked={sceneEditMode} id="studio-edit-mode" onCheckedChange={setSceneEditMode} />
+            </Field>
             <Button
               size="sm"
               variant="outline"
@@ -271,9 +291,14 @@ export function StudioTab(): ReactElement {
             >
               Edit layout
             </Button>
-          </InspectorSection>
+          </AccordionContent>
+        </AccordionItem>
 
-          <InspectorSection icon={ImageSquare} title="Screens">
+        <AccordionItem value="screens">
+          <AccordionTrigger>
+            <SectionLabel icon={ImageSquare} title="Screens" />
+          </AccordionTrigger>
+          <AccordionContent className="flex flex-col gap-3.5">
             <StudioScreensRow
               activeScreen={activeScreen}
               screens={screens}
@@ -281,9 +306,18 @@ export function StudioTab(): ReactElement {
               onClear={() => void clearActiveScreen()}
               onOpenScreens={() => setActive('screens')}
             />
-          </InspectorSection>
+          </AccordionContent>
+        </AccordionItem>
 
-          <InspectorSection icon={selectedMicrophone ? SpeakerHigh : SpeakerSlash} title="Mixer">
+        <AccordionItem value="mixer">
+          <AccordionTrigger>
+            <SectionLabel
+              icon={selectedMicrophone ? SpeakerHigh : SpeakerSlash}
+              title="Audio mixer"
+              summary={selectedMicrophone?.name}
+            />
+          </AccordionTrigger>
+          <AccordionContent className="flex flex-col gap-3.5">
             <MixerRow
               gainDb={captureConfig.audio.microphoneGainDb}
               meterLevel={meterLevel}
@@ -292,9 +326,30 @@ export function StudioTab(): ReactElement {
               selectedMicrophoneName={selectedMicrophone?.name}
               syncOffsetMs={captureConfig.audio.microphoneSyncOffsetMs}
             />
-          </InspectorSection>
+          </AccordionContent>
+        </AccordionItem>
 
-          <InspectorSection icon={Broadcast} title="Live summary">
+        <AccordionItem value="output">
+          <AccordionTrigger>
+            <SectionLabel
+              icon={Broadcast}
+              title="Output & status"
+              summary={`${captureConfig.video.width}×${captureConfig.video.height} · ${captureConfig.video.fps}fps`}
+            />
+          </AccordionTrigger>
+          <AccordionContent className="flex flex-col gap-3.5">
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="studio-record">Record to file</FieldLabel>
+              </FieldContent>
+              <Switch
+                checked={captureConfig.recordEnabled}
+                id="studio-record"
+                onCheckedChange={(checked) =>
+                  setCaptureConfig((current) => ({ ...current, recordEnabled: checked }))
+                }
+              />
+            </Field>
             <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
               <SummaryRow label="Screen" value={selectedCaptureDevice?.name ?? 'None'} />
               <SummaryRow label="Screen takeover" value={activeScreen?.name ?? 'Normal'} />
@@ -332,14 +387,39 @@ export function StudioTab(): ReactElement {
                 Streaming settings
               </Button>
             </div>
-          </InspectorSection>
+          </AccordionContent>
+        </AccordionItem>
 
-          <InspectorSection icon={ChatCircle} title="Live Chat">
+        <AccordionItem value="chat">
+          <AccordionTrigger>
+            <SectionLabel icon={ChatCircle} title="Live chat" />
+          </AccordionTrigger>
+          <AccordionContent className="flex flex-col gap-3.5">
             <LiveChatPanel snapshot={studio.liveChatSnapshot} onClearLocal={studio.clearLiveChat} />
-          </InspectorSection>
-        </div>
-      </div>
+          </AccordionContent>
+        </AccordionItem>
+      </Accordion>
     </div>
+  )
+}
+
+function SectionLabel({
+  icon: LeadingIcon,
+  title,
+  summary
+}: {
+  icon: Icon
+  title: string
+  summary?: string
+}): ReactElement {
+  return (
+    <span className="flex min-w-0 items-center gap-2.5">
+      <LeadingIcon className="size-4 shrink-0 text-muted-foreground" weight="duotone" />
+      <span className="font-medium">{title}</span>
+      {summary ? (
+        <span className="min-w-0 truncate text-xs font-normal text-muted-foreground">{summary}</span>
+      ) : null}
+    </span>
   )
 }
 
