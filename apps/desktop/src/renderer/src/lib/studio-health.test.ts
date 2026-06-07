@@ -60,6 +60,15 @@ describe('studioHealth', () => {
     })
   })
 
+  it('keeps showing Fallback over Lagging when polling with high latency (no flapping)', () => {
+    expect(
+      studioHealth(
+        stats({ previewTransport: 'latest-jpeg-polling', previewInputToPresentLatencyP95Ms: 200 }),
+        true
+      )
+    ).toMatchObject({ tone: 'warn', value: 'Fallback' })
+  })
+
   it('is neutral when no compositor has reported yet', () => {
     expect(studioHealth(stats({ compositorBackend: undefined }), false)).toMatchObject({
       tone: 'neutral',

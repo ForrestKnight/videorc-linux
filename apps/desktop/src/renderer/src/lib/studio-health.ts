@@ -47,6 +47,17 @@ export function studioHealth(stats: StudioHealthInput, active: boolean): StudioH
     }
   }
 
+  // A fallback transport is the dominant, stable state, so surface it before borderline latency.
+  // Otherwise the badge flaps between "Fallback" and "Lagging" while the preview sits on the
+  // polling path and its present latency oscillates around the budget.
+  if (stats.previewTransport === 'latest-jpeg-polling' || stats.previewTransport === 'mjpeg-stream') {
+    return {
+      tone: 'warn',
+      value: 'Fallback',
+      detail: `Preview is on the ${stats.previewTransport} fallback instead of the native surface`
+    }
+  }
+
   const p95 = stats.previewInputToPresentLatencyP95Ms
   const p99 = stats.previewInputToPresentLatencyP99Ms
   if (
@@ -59,14 +70,6 @@ export function studioHealth(stats: StudioHealthInput, active: boolean): StudioH
       detail: `Preview behind the live budget — present p95 ${Math.round(p95 ?? 0)}ms / p99 ${Math.round(
         p99 ?? 0
       )}ms`
-    }
-  }
-
-  if (stats.previewTransport === 'latest-jpeg-polling' || stats.previewTransport === 'mjpeg-stream') {
-    return {
-      tone: 'warn',
-      value: 'Fallback',
-      detail: `Preview on fallback transport: ${stats.previewTransport}`
     }
   }
 
