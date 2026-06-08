@@ -1015,22 +1015,22 @@ pub fn import_pixel_buffer_texture(
 /// This is the native-preview bridge primitive for a helper process or Electron native
 /// host: the backend can publish an IOSurface id with a compositor frame, and the host
 /// can import that shared storage without a PNG/JPEG readback path.
-/// Whether live capture sources should be imported zero-copy via their IOSurface. Opt-in while
-/// the path is validated on-device; defaults off so the proven `replaceRegion` upload is used.
+/// Whether live capture sources should be imported zero-copy via their IOSurface.
+/// Defaults on for OBS-parity capture; `VIDEORC_ZEROCOPY_SOURCES=0` keeps the byte-upload
+/// escape hatch for diagnosis.
 pub fn source_zerocopy_enabled() -> bool {
     use std::sync::OnceLock;
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| {
-        std::env::var("VIDEORC_ZEROCOPY_SOURCES")
-            .ok()
-            .map(|value| {
-                matches!(
-                    value.trim().to_ascii_lowercase().as_str(),
-                    "1" | "true" | "on" | "yes"
-                )
-            })
-            .unwrap_or(false)
+        source_zerocopy_enabled_from_env(std::env::var("VIDEORC_ZEROCOPY_SOURCES").ok().as_deref())
     })
+}
+
+fn source_zerocopy_enabled_from_env(value: Option<&str>) -> bool {
+    !matches!(
+        value.map(|value| value.trim().to_ascii_lowercase()),
+        Some(value) if matches!(value.as_str(), "0" | "false" | "off" | "no")
+    )
 }
 
 /// Import an already-retained capture-source IOSurface as a BGRA Metal texture with no CPU copy.
@@ -1352,6 +1352,20 @@ mod tests {
         assert!(yuv[..16].iter().all(|&y| y == 76), "Y plane");
         assert!(yuv[16..20].iter().all(|&u| u == 85), "U plane");
         assert!(yuv[20..24].iter().all(|&v| v == 255), "V plane");
+    }
+
+    #[test]
+    fn source_zerocopy_defaults_on_with_falsey_escape_hatch() {
+        assert!(source_zerocopy_enabled_from_env(None));
+        assert!(source_zerocopy_enabled_from_env(Some("1")));
+        assert!(source_zerocopy_enabled_from_env(Some("true")));
+        assert!(source_zerocopy_enabled_from_env(Some("yes")));
+        assert!(source_zerocopy_enabled_from_env(Some("on")));
+
+        assert!(!source_zerocopy_enabled_from_env(Some("0")));
+        assert!(!source_zerocopy_enabled_from_env(Some("false")));
+        assert!(!source_zerocopy_enabled_from_env(Some("off")));
+        assert!(!source_zerocopy_enabled_from_env(Some("no")));
     }
 
     #[test]

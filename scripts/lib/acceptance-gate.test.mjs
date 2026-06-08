@@ -45,6 +45,10 @@ const clean4kInput = () => {
   input.startupVerdict = { pass: true, failures: [] }
   input.diagnostics.compositorBackend = 'metal'
   input.diagnostics.compositorCpuFallbackFrames = 0
+  input.diagnostics.compositorScreenSourceIosurfaceImportFrames = 120
+  input.diagnostics.compositorScreenSourceCvpixelbufferImportFrames = 0
+  input.diagnostics.compositorScreenSourceByteUploadFrames = 0
+  input.diagnostics.compositorScreenSourceImportFailures = 0
   input.diagnostics.encoderBridgeVideoToolboxOutputFrames = 120
   input.diagnostics.mediaDimensions = {
     requestedOutput: input.requestedOutput,
@@ -313,6 +317,25 @@ describe('evaluateAcceptance', () => {
     assert.equal(v.pass, false)
     assert.match(v.failures.join(' '), /still copied through the raw-video FFmpeg bridge/)
     assert.match(v.failures.join(' '), /expected zero-copy/)
+  })
+
+  it('fails the 4K fixture when the screen source uses byte upload', () => {
+    const input = clean4kInput()
+    input.diagnostics.compositorScreenSourceByteUploadFrames = 8
+    const v = evaluateAcceptance(input)
+
+    assert.equal(v.pass, false)
+    assert.match(v.failures.join(' '), /screen source used 8 byte-upload frame/)
+  })
+
+  it('fails the 4K fixture when screen source zero-copy import is missing', () => {
+    const input = clean4kInput()
+    input.diagnostics.compositorScreenSourceIosurfaceImportFrames = 0
+    input.diagnostics.compositorScreenSourceCvpixelbufferImportFrames = 0
+    const v = evaluateAcceptance(input)
+
+    assert.equal(v.pass, false)
+    assert.match(v.failures.join(' '), /expected screen source zero-copy import frames/)
   })
 
   it('fails the 4K fixture when the screen source is downscaled', () => {

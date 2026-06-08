@@ -102,6 +102,9 @@ export function evaluateAcceptance(input, gates = DEFAULT_ACCEPTANCE_GATES) {
     for (const failure of evaluate4kMediaEvidence(d.mediaDimensions, input.requestedOutput)) {
       failures.push(failure)
     }
+    for (const failure of evaluate4kSourceImportEvidence(d)) {
+      failures.push(failure)
+    }
   }
 
   // 3. Encoder progress speed is useful live telemetry, but VideoToolbox can report
@@ -221,6 +224,25 @@ function evaluate4kMediaEvidence(mediaDimensions, requestedOutput) {
     mediaDimensions?.compositorMetalTarget?.max,
     requested
   )
+
+  return failures
+}
+
+function evaluate4kSourceImportEvidence(diagnostics) {
+  const failures = []
+  const screenByteUploads = diagnostics.compositorScreenSourceByteUploadFrames ?? 0
+  const screenZeroCopyImports =
+    (diagnostics.compositorScreenSourceIosurfaceImportFrames ?? 0) +
+    (diagnostics.compositorScreenSourceCvpixelbufferImportFrames ?? 0)
+
+  if (screenByteUploads > 0) {
+    failures.push(
+      `4k: screen source used ${screenByteUploads} byte-upload frame(s); expected zero-copy source import`
+    )
+  }
+  if (screenZeroCopyImports <= 0) {
+    failures.push('4k: expected screen source zero-copy import frames, got none')
+  }
 
   return failures
 }
