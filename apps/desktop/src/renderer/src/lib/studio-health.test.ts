@@ -7,6 +7,7 @@ function stats(overrides: Partial<StudioHealthInput> = {}): StudioHealthInput {
     compositorBackend: 'metal',
     compositorCpuFallbackFrames: 0,
     previewTransport: 'native-surface',
+    previewSurfaceBacking: 'cametal-layer',
     ...overrides
   }
 }
@@ -53,18 +54,52 @@ describe('studioHealth', () => {
     })
   })
 
-  it('warns when preview is on an image-polling fallback transport', () => {
+  it('blocks production preview when image polling is the active transport', () => {
     expect(studioHealth(stats({ previewTransport: 'latest-jpeg-polling' }), true)).toMatchObject({
+      tone: 'error',
+      value: 'Blocked'
+    })
+  })
+
+  it('blocks production preview when the Electron proof surface is the active transport', () => {
+    expect(
+      studioHealth(
+        stats({
+          previewTransport: 'electron-proof-surface',
+          previewSurfaceBacking: 'electron-browser-window'
+        }),
+        false
+      )
+    ).toMatchObject({ tone: 'error', value: 'Blocked' })
+  })
+
+  it('blocks active production preview when no native surface is available yet', () => {
+    expect(
+      studioHealth(stats({ previewTransport: 'unavailable', previewSurfaceBacking: 'none' }), true)
+    ).toMatchObject({ tone: 'error', value: 'Blocked' })
+  })
+
+  it('allows debug fallback policy to warn when preview is on an image-polling transport', () => {
+    expect(studioHealth(stats({ previewTransport: 'latest-jpeg-polling' }), true)).toMatchObject({
+      tone: 'error',
+      value: 'Blocked'
+    })
+    expect(
+      studioHealth(stats({ previewTransport: 'latest-jpeg-polling' }), true, {
+        requireNativePreview: false
+      })
+    ).toMatchObject({
       tone: 'warn',
       value: 'Fallback'
     })
   })
 
-  it('keeps showing Fallback over Lagging when polling with high latency (no flapping)', () => {
+  it('keeps showing debug Fallback over Lagging when polling with high latency (no flapping)', () => {
     expect(
       studioHealth(
         stats({ previewTransport: 'latest-jpeg-polling', previewInputToPresentLatencyP95Ms: 200 }),
-        true
+        true,
+        { requireNativePreview: false }
       )
     ).toMatchObject({ tone: 'warn', value: 'Fallback' })
   })

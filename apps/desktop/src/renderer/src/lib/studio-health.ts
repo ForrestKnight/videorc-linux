@@ -10,6 +10,7 @@ export type StudioHealthInput = Pick<
   | 'compositorFallbackReason'
   | 'previewInputToPresentLatencyP95Ms'
   | 'previewInputToPresentLatencyP99Ms'
+  | 'previewSurfaceBacking'
   | 'previewTransport'
 >
 
@@ -19,6 +20,11 @@ export interface StudioHealth {
   value: string
   /** Full explanation for the degraded strip / tooltip. */
   detail?: string
+}
+
+export interface StudioHealthPolicy {
+  /** Production macOS preview must use the native CAMetalLayer path. Disable only for debug/proof runs. */
+  requireNativePreview?: boolean
 }
 
 // Live preview present-latency budget (ms) from the preview/recording parity plan.
@@ -33,7 +39,11 @@ const PREVIEW_PRESENT_BUDGET_P99_MS = 150
  * are no longer guaranteed. Warn when preview presentation drifts past the live latency
  * budget or falls back to an HTTP image-polling transport.
  */
-export function studioHealth(stats: StudioHealthInput, active: boolean): StudioHealth {
+export function studioHealth(
+  stats: StudioHealthInput,
+  active: boolean,
+  policy: StudioHealthPolicy = {}
+): StudioHealth {
   if (
     stats.compositorBackend === 'cpu-fallback' ||
     (active && stats.compositorCpuFallbackFrames > 0)
@@ -44,6 +54,15 @@ export function studioHealth(stats: StudioHealthInput, active: boolean): StudioH
       detail: stats.compositorFallbackReason
         ? `Preview may not match recording — ${stats.compositorFallbackReason}`
         : 'Preview may not match recording — compositor is on CPU fallback'
+    }
+  }
+
+  const requireNativePreview = policy.requireNativePreview ?? true
+  if (requireNativePreview && shouldBlockForNonNativePreview(stats, active)) {
+    return {
+      tone: 'error',
+      value: 'Blocked',
+      detail: `Production preview requires native CAMetalLayer; current path is ${previewPathLabel(stats)}`
     }
   }
 
@@ -78,4 +97,18 @@ export function studioHealth(stats: StudioHealthInput, active: boolean): StudioH
   }
 
   return { tone: 'good', value: active ? 'Live' : 'Ready' }
+}
+
+function shouldBlockForNonNativePreview(stats: StudioHealthInput, active: boolean): boolean {
+  if (stats.previewTransport === 'native-surface' && stats.previewSurfaceBacking === 'cametal-layer') {
+    return false
+  }
+  if (stats.previewTransport && stats.previewTransport !== 'unavailable') {
+    return true
+  }
+  return active
+}
+
+function previewPathLabel(stats: StudioHealthInput): string {
+  return `${stats.previewTransport ?? 'unknown transport'} / ${stats.previewSurfaceBacking ?? 'unknown backing'}`
 }
