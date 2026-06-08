@@ -49,6 +49,12 @@ const clean4kInput = () => {
   input.diagnostics.compositorScreenSourceCvpixelbufferImportFrames = 0
   input.diagnostics.compositorScreenSourceByteUploadFrames = 0
   input.diagnostics.compositorScreenSourceImportFailures = 0
+  input.diagnostics.previewCameraActualWidth = 1920
+  input.diagnostics.previewCameraActualHeight = 1080
+  input.diagnostics.compositorCameraSourceIosurfaceImportFrames = 0
+  input.diagnostics.compositorCameraSourceCvpixelbufferImportFrames = 120
+  input.diagnostics.compositorCameraSourceByteUploadFrames = 0
+  input.diagnostics.compositorCameraSourceImportFailures = 0
   input.diagnostics.encoderBridgeVideoToolboxOutputFrames = 120
   input.diagnostics.mediaDimensions = {
     requestedOutput: input.requestedOutput,
@@ -336,6 +342,25 @@ describe('evaluateAcceptance', () => {
 
     assert.equal(v.pass, false)
     assert.match(v.failures.join(' '), /expected screen source zero-copy import frames/)
+  })
+
+  it('fails the 4K fixture when the camera source uses byte upload', () => {
+    const input = clean4kInput()
+    input.diagnostics.compositorCameraSourceByteUploadFrames = 6
+    const v = evaluateAcceptance(input)
+
+    assert.equal(v.pass, false)
+    assert.match(v.failures.join(' '), /camera source used 6 byte-upload frame/)
+  })
+
+  it('fails the 4K fixture when active camera zero-copy import is missing', () => {
+    const input = clean4kInput()
+    input.diagnostics.compositorCameraSourceCvpixelbufferImportFrames = 0
+    input.diagnostics.compositorCameraSourceIosurfaceImportFrames = 0
+    const v = evaluateAcceptance(input)
+
+    assert.equal(v.pass, false)
+    assert.match(v.failures.join(' '), /expected camera source zero-copy import frames/)
   })
 
   it('fails the 4K fixture when the screen source is downscaled', () => {

@@ -234,6 +234,17 @@ function evaluate4kSourceImportEvidence(diagnostics) {
   const screenZeroCopyImports =
     (diagnostics.compositorScreenSourceIosurfaceImportFrames ?? 0) +
     (diagnostics.compositorScreenSourceCvpixelbufferImportFrames ?? 0)
+  const cameraByteUploads = diagnostics.compositorCameraSourceByteUploadFrames ?? 0
+  const cameraZeroCopyImports =
+    (diagnostics.compositorCameraSourceIosurfaceImportFrames ?? 0) +
+    (diagnostics.compositorCameraSourceCvpixelbufferImportFrames ?? 0)
+  const cameraImportFailures = diagnostics.compositorCameraSourceImportFailures ?? 0
+  const cameraObserved =
+    cameraByteUploads > 0 ||
+    cameraZeroCopyImports > 0 ||
+    cameraImportFailures > 0 ||
+    isAtLeast(diagnostics.previewCameraActualWidth, 1) ||
+    isAtLeast(diagnostics.previewCameraActualHeight, 1)
 
   if (screenByteUploads > 0) {
     failures.push(
@@ -242,6 +253,14 @@ function evaluate4kSourceImportEvidence(diagnostics) {
   }
   if (screenZeroCopyImports <= 0) {
     failures.push('4k: expected screen source zero-copy import frames, got none')
+  }
+  if (cameraObserved && cameraByteUploads > 0) {
+    failures.push(
+      `4k: camera source used ${cameraByteUploads} byte-upload frame(s); expected zero-copy source import`
+    )
+  }
+  if (cameraObserved && cameraZeroCopyImports <= 0) {
+    failures.push('4k: expected camera source zero-copy import frames, got none')
   }
 
   return failures
