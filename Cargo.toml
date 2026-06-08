@@ -1,3 +1,10 @@
 [workspace]
 members = ["crates/videorc-backend"]
 resolver = "3"
+
+# The backend runs real-time per-pixel work (e.g. camera YUV->BGRA conversion at 4K).
+# An unoptimized debug build makes that ~50x slower (hundreds of ms/frame), which
+# starves capture. Optimize the backend crate even in dev so `pnpm dev` behaves like
+# the shipped build; its hot paths are otherwise GPU/hardware so this is cheap at runtime.
+[profile.dev.package.videorc-backend]
+opt-level = 2

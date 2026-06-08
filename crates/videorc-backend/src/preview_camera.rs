@@ -988,14 +988,21 @@ mod macos {
     };
     use objc2_core_media::{CMSampleBuffer, CMTime, CMVideoFormatDescriptionGetDimensions};
     use objc2_core_video::{
-        CVPixelBufferGetBaseAddress, CVPixelBufferGetBytesPerRow, CVPixelBufferGetHeight,
-        CVPixelBufferGetPixelFormatType, CVPixelBufferGetWidth, CVPixelBufferLockBaseAddress,
-        CVPixelBufferLockFlags, CVPixelBufferUnlockBaseAddress, kCVPixelBufferHeightKey,
-        kCVPixelBufferPixelFormatTypeKey, kCVPixelBufferWidthKey, kCVPixelFormatType_32BGRA,
+        CVPixelBuffer, CVPixelBufferGetBaseAddress, CVPixelBufferGetBaseAddressOfPlane,
+        CVPixelBufferGetBytesPerRow,
+        CVPixelBufferGetBytesPerRowOfPlane, CVPixelBufferGetHeight, CVPixelBufferGetHeightOfPlane,
+        CVPixelBufferGetPixelFormatType, CVPixelBufferGetPlaneCount, CVPixelBufferGetWidth,
+        CVPixelBufferLockBaseAddress, CVPixelBufferLockFlags, CVPixelBufferUnlockBaseAddress,
+        kCVPixelBufferHeightKey, kCVPixelBufferPixelFormatTypeKey, kCVPixelBufferWidthKey,
+        kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+        kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_422YpCbCr8,
+        kCVPixelFormatType_422YpCbCr8_yuvs,
     };
     use objc2_foundation::{NSDictionary, NSNumber, NSObject, NSObjectProtocol, NSString};
+    use rayon::prelude::*;
 
     use super::*;
+    use crate::color::{ycbcr_bt709_full_to_bgr, ycbcr_bt709_video_to_bgr};
     use crate::camera_capture::{
         CameraFormatSummary, NativeCameraPermission, choose_camera_format,
     };
@@ -1127,7 +1134,22 @@ mod macos {
                 if session.canSetSessionPreset(AVCaptureSessionPresetInputPriority) {
                     session.setSessionPreset(AVCaptureSessionPresetInputPriority);
                 }
-                set_bgra_video_settings(&output, selected.output_width, selected.output_height);
+                let capture_pixel_format = preferred_capture_pixel_format(&output);
+                tracing::info!(
+                    "Native camera capture pixel format: {} ({})",
+                    format_fourcc(capture_pixel_format),
+                    if capture_pixel_format == kCVPixelFormatType_32BGRA {
+                        "BGRA, full bandwidth"
+                    } else {
+                        "Y'CbCr, reduced bandwidth"
+                    }
+                );
+                set_capture_video_settings(
+                    &output,
+                    capture_pixel_format,
+                    selected.output_width,
+                    selected.output_height,
+                );
                 output.setAlwaysDiscardsLateVideoFrames(true);
                 output.setSampleBufferDelegate_queue(
                     Some(ProtocolObject::from_ref(&*delegate)),
@@ -1319,14 +1341,53 @@ mod macos {
         }
     }
 
-    unsafe fn set_bgra_video_settings(output: &AVCaptureVideoDataOutput, width: u32, height: u32) {
+    /// Whether a capture pixel format is a Y'CbCr format the conversion path handles.
+    fn is_yuv_capture_format(format: u32) -> bool {
+        format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+            || format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+            || format == kCVPixelFormatType_422YpCbCr8
+            || format == kCVPixelFormatType_422YpCbCr8_yuvs
+    }
+
+    /// Pick the most bandwidth-efficient capture pixel format the output advertises.
+    /// 4:2:0 / 4:2:2 Y'CbCr are ~3/8 and ~1/2 the bytes of BGRA, so a bandwidth-limited
+    /// USB capture card (e.g. a Cam Link 4K at 4K) can deliver more frames per second.
+    /// `availableVideoCVPixelFormatTypes` is ordered most-efficient-first, so the first
+    /// entry is the device's native wire format. Requesting a *non*-native format forces
+    /// a slow host conversion (NV12 on a 4:2:2 card drops it to a few fps), so we take the
+    /// first advertised format we can convert ourselves; BGRA only if no YUV is offered.
+    fn preferred_capture_pixel_format(output: &AVCaptureVideoDataOutput) -> u32 {
+        let available = unsafe { output.availableVideoCVPixelFormatTypes() };
+        let formats: Vec<u32> = (0..available.count())
+            .map(|index| available.objectAtIndex(index).unsignedIntValue())
+            .collect();
+        tracing::info!(
+            "Camera advertises capture formats (native first): {}",
+            formats
+                .iter()
+                .map(|format| format_fourcc(*format))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        formats
+            .into_iter()
+            .find(|format| is_yuv_capture_format(*format))
+            .unwrap_or(kCVPixelFormatType_32BGRA)
+    }
+
+    unsafe fn set_capture_video_settings(
+        output: &AVCaptureVideoDataOutput,
+        pixel_format_type: u32,
+        width: u32,
+        height: u32,
+    ) {
         let pixel_format_key: &NSString =
             unsafe { &*(kCVPixelBufferPixelFormatTypeKey as *const _ as *const NSString) };
         let width_key: &NSString =
             unsafe { &*(kCVPixelBufferWidthKey as *const _ as *const NSString) };
         let height_key: &NSString =
             unsafe { &*(kCVPixelBufferHeightKey as *const _ as *const NSString) };
-        let pixel_format = NSNumber::new_u32(kCVPixelFormatType_32BGRA);
+        let pixel_format = NSNumber::new_u32(pixel_format_type);
         let width = NSNumber::new_u32(width);
         let height = NSNumber::new_u32(height);
         let settings = NSDictionary::<NSString, NSNumber>::from_slices(
@@ -1365,7 +1426,7 @@ mod macos {
         };
 
         let pixel_format = CVPixelBufferGetPixelFormatType(&pixel_buffer);
-        if pixel_format != kCVPixelFormatType_32BGRA {
+        if !is_supported_capture_format(pixel_format) {
             let mut guard = shared
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -1388,10 +1449,8 @@ mod macos {
 
         let width = CVPixelBufferGetWidth(&pixel_buffer) as u32;
         let height = CVPixelBufferGetHeight(&pixel_buffer) as u32;
-        let bytes_per_row = CVPixelBufferGetBytesPerRow(&pixel_buffer);
-        let base_address = CVPixelBufferGetBaseAddress(&pixel_buffer);
 
-        if base_address.is_null() || width == 0 || height == 0 {
+        if width == 0 || height == 0 {
             unsafe {
                 CVPixelBufferUnlockBaseAddress(&pixel_buffer, CVPixelBufferLockFlags::ReadOnly)
             };
@@ -1418,49 +1477,210 @@ mod macos {
                 vec![0; frame_bytes]
             }
         };
-        unsafe {
-            let copy_started_at = Instant::now();
-            let source = base_address.cast::<u8>();
-            for row in 0..height_usize {
-                let source_row = source.add(row * bytes_per_row);
-                let target_row = &mut bytes[row * row_bytes..(row + 1) * row_bytes];
-                target_row.copy_from_slice(slice::from_raw_parts(source_row, row_bytes));
-            }
-            let row_copy_ms = copy_started_at.elapsed().as_secs_f64() * 1000.0;
-            CVPixelBufferUnlockBaseAddress(&pixel_buffer, CVPixelBufferLockFlags::ReadOnly);
 
-            let publish_started_at = Instant::now();
+        // Fill `bytes` with BGRA, converting from whichever pixel format the device
+        // delivers (BGRA passthrough, or NV12 / UYVY Y'CbCr -> BGRA). The downstream
+        // pipeline stays BGRA, so only this fill changes per format.
+        let copy_started_at = Instant::now();
+        let filled = unsafe {
+            fill_bgra_from_pixel_buffer(
+                &pixel_buffer,
+                pixel_format,
+                width_usize,
+                height_usize,
+                &mut bytes,
+            )
+        };
+        let row_copy_ms = copy_started_at.elapsed().as_secs_f64() * 1000.0;
+        unsafe {
+            CVPixelBufferUnlockBaseAddress(&pixel_buffer, CVPixelBufferLockFlags::ReadOnly);
+        }
+        if !filled {
             let mut guard = shared
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let now = Instant::now();
-            guard.frames_captured = guard.frames_captured.saturating_add(1);
-            guard.frames_in_window = guard.frames_in_window.saturating_add(1);
-            let window_started = *guard.window_started_at.get_or_insert(now);
-            let elapsed = window_started.elapsed();
-            if elapsed >= Duration::from_millis(500) {
-                guard.source_fps =
-                    Some(guard.frames_in_window as f64 / elapsed.as_secs_f64().max(0.001));
-                guard.frames_in_window = 0;
-                guard.window_started_at = Some(now);
-            }
-            let sequence = guard.frames_captured;
-            guard.frame_store.publish(
-                sequence,
-                width,
-                height,
-                PreviewCameraPixelFormat::Bgra8,
-                now,
-                bytes,
-            );
-            let publish_ms = publish_started_at.elapsed().as_secs_f64() * 1000.0;
-            guard.capture_timings.record_valid_frame(
-                pixel_buffer_lock_ms,
-                row_copy_ms,
-                publish_ms,
-                frame_bytes as u64,
-            );
+            guard.dropped_frames = guard.dropped_frames.saturating_add(1);
+            return;
         }
+
+        let publish_started_at = Instant::now();
+        let mut guard = shared
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let now = Instant::now();
+        guard.frames_captured = guard.frames_captured.saturating_add(1);
+        guard.frames_in_window = guard.frames_in_window.saturating_add(1);
+        let window_started = *guard.window_started_at.get_or_insert(now);
+        let elapsed = window_started.elapsed();
+        if elapsed >= Duration::from_millis(500) {
+            guard.source_fps =
+                Some(guard.frames_in_window as f64 / elapsed.as_secs_f64().max(0.001));
+            guard.frames_in_window = 0;
+            guard.window_started_at = Some(now);
+        }
+        let sequence = guard.frames_captured;
+        guard.frame_store.publish(
+            sequence,
+            width,
+            height,
+            PreviewCameraPixelFormat::Bgra8,
+            now,
+            bytes,
+        );
+        let publish_ms = publish_started_at.elapsed().as_secs_f64() * 1000.0;
+        guard.capture_timings.record_valid_frame(
+            pixel_buffer_lock_ms,
+            row_copy_ms,
+            publish_ms,
+            frame_bytes as u64,
+        );
+    }
+
+    /// Render a CoreVideo pixel-format OSType as its FourCC string (e.g. `420v`).
+    fn format_fourcc(format: u32) -> String {
+        String::from_utf8_lossy(&format.to_be_bytes()).into_owned()
+    }
+
+    /// Capture pixel formats the conversion path can turn into BGRA.
+    fn is_supported_capture_format(format: u32) -> bool {
+        format == kCVPixelFormatType_32BGRA || is_yuv_capture_format(format)
+    }
+
+    /// Fill `out` (width*height*4 BGRA) from a locked capture `CVPixelBuffer`,
+    /// converting Y'CbCr (NV12 / UYVY) to BGRA when needed. Returns false if the
+    /// buffer's planes are unexpectedly missing. The caller holds the buffer lock.
+    unsafe fn fill_bgra_from_pixel_buffer(
+        pixel_buffer: &CVPixelBuffer,
+        pixel_format: u32,
+        width: usize,
+        height: usize,
+        out: &mut [u8],
+    ) -> bool {
+        if pixel_format == kCVPixelFormatType_32BGRA {
+            let base = CVPixelBufferGetBaseAddress(pixel_buffer);
+            if base.is_null() {
+                return false;
+            }
+            let stride = CVPixelBufferGetBytesPerRow(pixel_buffer);
+            let row_bytes = width * 4;
+            let source = base.cast::<u8>();
+            for row in 0..height {
+                let source_row =
+                    unsafe { slice::from_raw_parts(source.add(row * stride), row_bytes) };
+                out[row * row_bytes..(row + 1) * row_bytes].copy_from_slice(source_row);
+            }
+            return true;
+        }
+
+        if pixel_format == kCVPixelFormatType_422YpCbCr8
+            || pixel_format == kCVPixelFormatType_422YpCbCr8_yuvs
+        {
+            let base = CVPixelBufferGetBaseAddress(pixel_buffer);
+            if base.is_null() {
+                return false;
+            }
+            let stride = CVPixelBufferGetBytesPerRow(pixel_buffer);
+            let plane = unsafe { slice::from_raw_parts(base.cast::<u8>(), stride * height) };
+            // '2vuy' is UYVY (Cb Y0 Cr Y1); 'yuvs' is YUY2 (Y0 Cb Y1 Cr).
+            let uyvy = pixel_format == kCVPixelFormatType_422YpCbCr8;
+            yuv422_to_bgra(plane, stride, width, height, uyvy, out);
+            return true;
+        }
+
+        // Bi-planar NV12: plane 0 = Y, plane 1 = interleaved CbCr (Cb, Cr, ...).
+        if CVPixelBufferGetPlaneCount(pixel_buffer) < 2 {
+            return false;
+        }
+        let full_range = pixel_format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange;
+        let y_base = CVPixelBufferGetBaseAddressOfPlane(pixel_buffer, 0);
+        let cbcr_base = CVPixelBufferGetBaseAddressOfPlane(pixel_buffer, 1);
+        if y_base.is_null() || cbcr_base.is_null() {
+            return false;
+        }
+        let y_stride = CVPixelBufferGetBytesPerRowOfPlane(pixel_buffer, 0);
+        let cbcr_stride = CVPixelBufferGetBytesPerRowOfPlane(pixel_buffer, 1);
+        let y_height = CVPixelBufferGetHeightOfPlane(pixel_buffer, 0);
+        let cbcr_height = CVPixelBufferGetHeightOfPlane(pixel_buffer, 1);
+        let y = unsafe { slice::from_raw_parts(y_base.cast::<u8>(), y_stride * y_height) };
+        let cbcr =
+            unsafe { slice::from_raw_parts(cbcr_base.cast::<u8>(), cbcr_stride * cbcr_height) };
+        nv12_to_bgra(y, y_stride, cbcr, cbcr_stride, width, height, full_range, out);
+        true
+    }
+
+    /// NV12 (4:2:0 bi-planar Y'CbCr) -> BGRA, parallelized across output rows.
+    #[allow(clippy::too_many_arguments)]
+    fn nv12_to_bgra(
+        y: &[u8],
+        y_stride: usize,
+        cbcr: &[u8],
+        cbcr_stride: usize,
+        width: usize,
+        height: usize,
+        full_range: bool,
+        out: &mut [u8],
+    ) {
+        let row_bytes = width * 4;
+        out.par_chunks_mut(row_bytes)
+            .enumerate()
+            .for_each(|(row, out_row)| {
+                if row >= height {
+                    return;
+                }
+                let y_row = &y[row * y_stride..];
+                let cbcr_row = &cbcr[(row / 2) * cbcr_stride..];
+                for (x, pixel) in out_row.chunks_exact_mut(4).enumerate() {
+                    let chroma = (x / 2) * 2;
+                    let (b, g, r) = if full_range {
+                        ycbcr_bt709_full_to_bgr(y_row[x], cbcr_row[chroma], cbcr_row[chroma + 1])
+                    } else {
+                        ycbcr_bt709_video_to_bgr(y_row[x], cbcr_row[chroma], cbcr_row[chroma + 1])
+                    };
+                    pixel[0] = b;
+                    pixel[1] = g;
+                    pixel[2] = r;
+                    pixel[3] = 255;
+                }
+            });
+    }
+
+    /// Packed 4:2:2 Y'CbCr -> BGRA, parallelized by row. `uyvy` selects the byte
+    /// order: UYVY (`2vuy`, Cb Y0 Cr Y1) when true, YUY2 (`yuvs`, Y0 Cb Y1 Cr) when false.
+    fn yuv422_to_bgra(
+        plane: &[u8],
+        stride: usize,
+        width: usize,
+        height: usize,
+        uyvy: bool,
+        out: &mut [u8],
+    ) {
+        let row_bytes = width * 4;
+        out.par_chunks_mut(row_bytes)
+            .enumerate()
+            .for_each(|(row, out_row)| {
+                if row >= height {
+                    return;
+                }
+                let src = &plane[row * stride..];
+                for (pair, out8) in out_row.chunks_exact_mut(8).enumerate() {
+                    let i = pair * 4;
+                    let (cb, y0, cr, y1) = if uyvy {
+                        (src[i], src[i + 1], src[i + 2], src[i + 3])
+                    } else {
+                        (src[i + 1], src[i], src[i + 3], src[i + 2])
+                    };
+                    let (b0, g0, r0) = ycbcr_bt709_video_to_bgr(y0, cb, cr);
+                    let (b1, g1, r1) = ycbcr_bt709_video_to_bgr(y1, cb, cr);
+                    out8[0] = b0;
+                    out8[1] = g0;
+                    out8[2] = r0;
+                    out8[3] = 255;
+                    out8[4] = b1;
+                    out8[5] = g1;
+                    out8[6] = r1;
+                    out8[7] = 255;
+                }
+            });
     }
 
     fn cm_time_seconds(time: CMTime) -> Option<f64> {
