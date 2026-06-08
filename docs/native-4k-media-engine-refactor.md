@@ -62,6 +62,7 @@ pnpm baseline:real-source:4k30:endurance -- --gate
 ```
 
 Both commands request real sources at `3840x2160`, `30fps`, `30000kbps`, and launch the screen motion stimulus so freeze/repeated-frame gates measure moving content.
+Each successful or blocked real-source run writes a sibling `.evidence.json` manifest with the recording path, baseline report, analyzer reports, startup report, gate verdict, selected sources, and zero-copy/native-preview counters.
 
 ## Output Profiles
 

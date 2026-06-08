@@ -259,7 +259,23 @@ async function main() {
         qualityMode,
         previewSurfaceOutputFailures,
       })
-      printBlockedStartupSummary(error, diagnostics, previewTransport, baselinePath, qualityMode)
+      const evidenceManifestPath = writeBlockedEvidenceManifest({
+        sources,
+        previewTransport,
+        diagnostics,
+        baselinePath,
+        error,
+        qualityMode,
+        previewSurfaceOutputFailures,
+      })
+      printBlockedStartupSummary(
+        error,
+        diagnostics,
+        previewTransport,
+        baselinePath,
+        evidenceManifestPath,
+        qualityMode
+      )
       return {
         pass: false,
         failures: [
@@ -302,7 +318,7 @@ async function main() {
     const diagnostics = summarizeDiagnostics(diagnosticsEvents, snapshots, scenarioStartedAt, stopRequestedAt, {
       previewMeasurement,
     })
-    writeReports(report)
+    const analyzerPaths = writeReports(report)
     const startupReport = await analyzeStartupResolution(outputPath, {
       ffmpegPath: config.ffmpegPath,
       ffprobePath: config.ffprobePath,
@@ -368,8 +384,31 @@ async function main() {
       qualityMode,
       previewSurfaceOutputFailures,
     })
+    const evidenceManifestPath = writeEvidenceManifest(outputPath, {
+      sources,
+      previewTransport,
+      diagnostics,
+      report,
+      startupReport,
+      analyzerPaths,
+      startupPaths,
+      baselinePath,
+      acceptance,
+      qualityMode,
+      previewSurfaceOutputFailures,
+    })
 
-    printSummary(report, startupReport, diagnostics, previewTransport, baselinePath, acceptance, ownership, qualityMode)
+    printSummary(
+      report,
+      startupReport,
+      diagnostics,
+      previewTransport,
+      baselinePath,
+      evidenceManifestPath,
+      acceptance,
+      ownership,
+      qualityMode
+    )
     return acceptance
   } finally {
     ws.close()
@@ -1067,6 +1106,7 @@ function writeBaselineReport(
   lines.push(`- Generated: ${new Date().toISOString()}`)
   lines.push(`- Platform: ${process.platform}`)
   lines.push(`- Recording: \`${outputPath}\` (${(size / (1024 * 1024)).toFixed(1)} MiB)`)
+  lines.push(`- Evidence manifest: \`${evidenceManifestPathForOutput(outputPath)}\``)
   lines.push(`- Output: ${config.width}×${config.height} @ ${config.fps}fps, ${config.bitrateKbps}kbps, ${(config.recordingMs / 1000).toFixed(0)}s`)
   lines.push(`- Encoder bridge video output: \`${config.bridgeVideoOutput}\``)
   lines.push(`- Media quality mode: \`${qualityMode.mode}\` - ${qualityMode.label}`)
@@ -1311,6 +1351,224 @@ function writeBaselineReport(
 
   writeFileSync(reportPath, lines.join('\n'))
   return reportPath
+}
+
+function writeEvidenceManifest(
+  outputPath,
+  {
+    sources,
+    previewTransport,
+    diagnostics,
+    report,
+    startupReport,
+    analyzerPaths,
+    startupPaths,
+    baselinePath,
+    acceptance,
+    qualityMode,
+    previewSurfaceOutputFailures = [],
+  }
+) {
+  const manifestPath = evidenceManifestPathForOutput(outputPath)
+  const manifest = {
+    generatedAtIso: new Date().toISOString(),
+    platform: process.platform,
+    command: {
+      argv: process.argv.slice(2),
+      gate: config.gate,
+    },
+    request: realSourceGateRequest(),
+    result: {
+      blockedBeforeEncoding: false,
+      acceptancePass: acceptance?.pass === true,
+      acceptanceFailures: acceptance?.failures ?? [],
+      finalFilePass: report?.verdict?.pass === true,
+      startupPass: startupReport?.verdict?.pass === true,
+      mediaQualityMode: qualityMode?.mode ?? 'unknown',
+      mediaQualityLabel: qualityMode?.label ?? 'unknown',
+      mediaQualityReasons: qualityMode?.reasons ?? [],
+    },
+    paths: {
+      recording: outputPath,
+      baselineReport: baselinePath,
+      evidenceManifest: manifestPath,
+      qualityJson: analyzerPaths?.jsonPath ?? null,
+      qualityReport: analyzerPaths?.mdPath ?? null,
+      startupJson: startupPaths?.jsonPath ?? null,
+      startupReport: startupPaths?.mdPath ?? null,
+      startupThumbnail: startupPaths?.thumbnailPath ?? null,
+    },
+    sources: selectedSourcesManifest(sources),
+    diagnostics: gateDiagnosticsManifest(diagnostics, {
+      finalMetrics: report?.metrics,
+      startupMetrics: startupReport?.metrics,
+      previewTransport,
+      previewSurfaceOutputFailures,
+    }),
+  }
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+  return manifestPath
+}
+
+function writeBlockedEvidenceManifest({
+  sources,
+  previewTransport,
+  diagnostics,
+  baselinePath,
+  error,
+  qualityMode,
+  previewSurfaceOutputFailures = [],
+}) {
+  const manifestPath = evidenceManifestPathForReport(baselinePath)
+  const manifest = {
+    generatedAtIso: new Date().toISOString(),
+    platform: process.platform,
+    command: {
+      argv: process.argv.slice(2),
+      gate: config.gate,
+    },
+    request: realSourceGateRequest(),
+    result: {
+      blockedBeforeEncoding: true,
+      acceptancePass: false,
+      acceptanceFailures: [
+        `session.start failed before encoding: ${error?.message ?? error}`,
+        ...previewSurfaceOutputFailureMessages(previewSurfaceOutputFailures),
+      ],
+      finalFilePass: false,
+      startupPass: false,
+      mediaQualityMode: qualityMode?.mode ?? 'unknown',
+      mediaQualityLabel: qualityMode?.label ?? 'unknown',
+      mediaQualityReasons: qualityMode?.reasons ?? [],
+    },
+    paths: {
+      recording: null,
+      baselineReport: baselinePath,
+      evidenceManifest: manifestPath,
+      qualityJson: null,
+      qualityReport: null,
+      startupJson: null,
+      startupReport: null,
+      startupThumbnail: null,
+    },
+    sources: selectedSourcesManifest(sources),
+    diagnostics: gateDiagnosticsManifest(diagnostics, {
+      finalMetrics: null,
+      startupMetrics: null,
+      previewTransport,
+      previewSurfaceOutputFailures,
+    }),
+  }
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+  return manifestPath
+}
+
+function evidenceManifestPathForOutput(outputPath) {
+  const base = outputPath.split('/').pop().replace(/\.[^.]+$/, '')
+  return join(dirname(outputPath), `${base}.evidence.json`)
+}
+
+function evidenceManifestPathForReport(reportPath) {
+  return reportPath.replace(/\.md$/, '.evidence.json')
+}
+
+function realSourceGateRequest() {
+  return {
+    width: config.width,
+    height: config.height,
+    fps: config.fps,
+    bitrateKbps: config.bitrateKbps,
+    recordingMs: config.recordingMs,
+    bridgeVideoOutput: config.bridgeVideoOutput,
+    requireMotion: config.requireMotion,
+    screenMotionStimulus: config.screenMotionStimulus,
+    avSyncStimulus: config.avSyncStimulus,
+    microphoneSyncOffsetMs: config.microphoneSyncOffsetMs,
+    noPreviewSurface: config.noPreviewSurface,
+    fallbackLivePreview: config.fallbackLivePreview,
+    requestedOutput: requestedOutputSettings(),
+    require4kMediaEvidence: requires4kMediaEvidence(),
+  }
+}
+
+function selectedSourcesManifest(sources) {
+  return {
+    screen: sourceManifest(sources.screen),
+    camera: sourceManifest(sources.camera),
+    microphone: sourceManifest(sources.microphone),
+  }
+}
+
+function sourceManifest(source) {
+  if (!source) return null
+  return {
+    id: source.id ?? null,
+    name: source.name ?? null,
+  }
+}
+
+function gateDiagnosticsManifest(
+  diagnostics,
+  { finalMetrics, startupMetrics, previewTransport, previewSurfaceOutputFailures = [] }
+) {
+  return {
+    previewTransportRequested: previewTransport,
+    previewTransportsObserved: diagnostics.transports,
+    previewSurfaceBacking: diagnostics.previewSurfaceBacking ?? null,
+    previewSurfaceBackingsObserved: diagnostics.surfaceBackings,
+    imagePollDuringSession: diagnostics.imagePollDuringSession,
+    previewSourcePixelsPresent: diagnostics.previewSourcePixelsPresent,
+    previewFramePollingSuppressed: diagnostics.previewFramePollingSuppressed,
+    previewPendingHostCommandCount: diagnostics.previewPendingHostCommandCount,
+    previewInputToPresentLatencyP95Ms: diagnostics.previewInputToPresentLatencyP95Ms,
+    previewInputToPresentLatencyP99Ms: diagnostics.previewInputToPresentLatencyP99Ms,
+    previewIntervalP95Ms: diagnostics.previewIntervalP95Ms,
+    previewCompositorFrameLag: diagnostics.previewCompositorFrameLag,
+    compositorBackend: diagnostics.compositorBackend ?? null,
+    compositorCpuFallbackFrames: diagnostics.compositorCpuFallbackFrames,
+    mediaDimensions: diagnostics.mediaDimensions ?? null,
+    encoderBridgeRawVideoCopiedFrames: diagnostics.encoderBridgeRawVideoCopiedFrames,
+    encoderBridgeMetalTargetCopiedFrames: diagnostics.encoderBridgeMetalTargetCopiedFrames,
+    encoderBridgeMetalTargetFrames: diagnostics.encoderBridgeMetalTargetFrames,
+    encoderBridgeMetalTargetHandleFrames: diagnostics.encoderBridgeMetalTargetHandleFrames,
+    encoderBridgeZeroCopyFrames: diagnostics.encoderBridgeZeroCopyFrames,
+    encoderBridgeVideoToolboxOutputFrames: diagnostics.encoderBridgeVideoToolboxOutputFrames,
+    encoderBridgeVideoToolboxOutputBytes: diagnostics.encoderBridgeVideoToolboxOutputBytes,
+    encoderBridgeVideoToolboxProbeErrors: diagnostics.encoderBridgeVideoToolboxProbeErrors,
+    encoderBridgeRepeatedFrames: diagnostics.encoderBridgeRepeatedFrames,
+    encoderBridgeMaxRepeatedFrameRun: diagnostics.encoderBridgeMaxRepeatedFrameRun,
+    encoderBridgeSyntheticFrames: diagnostics.encoderBridgeSyntheticFrames,
+    encoderBridgeSourceAgeP95Ms: diagnostics.encoderBridgeSourceAgeP95Ms,
+    micDroppedFrames: diagnostics.micDroppedFrames,
+    minMicCaptureCoverage: diagnostics.minMicCaptureCoverage,
+    minEncoderSpeed: diagnostics.minEncoderSpeed,
+    finalFile: finalMetrics
+      ? {
+          path: finalMetrics.file ?? null,
+          width: finalMetrics.width ?? null,
+          height: finalMetrics.height ?? null,
+          durationSeconds: finalMetrics.durationSeconds ?? null,
+          observedFrames: finalMetrics.observedFrames ?? null,
+          observedFps: finalMetrics.observedFps ?? null,
+          maxRepeatedFrameRun: finalMetrics.maxRepeatedFrameRun ?? null,
+          longestFreezeMs: finalMetrics.longestFreezeMs ?? null,
+          avSkewMs: finalMetrics.avSkewMs ?? null,
+        }
+      : null,
+    startup: startupMetrics
+      ? {
+          metadataWidth: startupMetrics.metadataWidth ?? null,
+          metadataHeight: startupMetrics.metadataHeight ?? null,
+          expectedWidth: startupMetrics.expectedWidth ?? null,
+          expectedHeight: startupMetrics.expectedHeight ?? null,
+          startupFrameCount: startupMetrics.startupFrameCount ?? null,
+          dimensionMismatchCount: startupMetrics.dimensionMismatchCount ?? null,
+          previewSizedFrameCount: startupMetrics.previewSizedFrameCount ?? null,
+          maxRepeatedFrameRun: startupMetrics.maxRepeatedFrameRun ?? null,
+        }
+      : null,
+    previewSurfaceOutputFailures,
+  }
 }
 
 function append4kMediaPathEvidence(lines, { sources, diagnostics, report, startupReport, blocked = false }) {
@@ -1634,7 +1892,17 @@ function acceptanceGates() {
   }
 }
 
-function printSummary(report, startupReport, diagnostics, previewTransport, baselinePath, acceptance, ownership, qualityMode) {
+function printSummary(
+  report,
+  startupReport,
+  diagnostics,
+  previewTransport,
+  baselinePath,
+  evidenceManifestPath,
+  acceptance,
+  ownership,
+  qualityMode
+) {
   const fmtMs = (value) => typeof value === 'number' && Number.isFinite(value) ? `${value}ms` : 'n/a'
   console.log('')
   console.log('════════ REAL-SOURCE BASELINE ════════')
@@ -1706,10 +1974,18 @@ function printSummary(report, startupReport, diagnostics, previewTransport, base
       `screen misses ${diagnostics.compositorScreenSourceTryLockMisses ?? 'n/a'} / refreshes ${diagnostics.compositorScreenSourceBlockingRefreshes ?? 'n/a'}`
   )
   console.log(`Baseline report: ${baselinePath}`)
+  console.log(`Evidence manifest: ${evidenceManifestPath}`)
   console.log('══════════════════════════════════════')
 }
 
-function printBlockedStartupSummary(error, diagnostics, previewTransport, baselinePath, qualityMode) {
+function printBlockedStartupSummary(
+  error,
+  diagnostics,
+  previewTransport,
+  baselinePath,
+  evidenceManifestPath,
+  qualityMode
+) {
   const cadence = blockedStartupCameraCadence(error?.message ?? String(error), [])
   console.log('')
   console.log('════════ REAL-SOURCE BASELINE ════════')
@@ -1724,6 +2000,7 @@ function printBlockedStartupSummary(error, diagnostics, previewTransport, baseli
       `frame age ${fmtOrFallback(diagnostics.previewCameraFrameAgeMs, cadence?.frameAge, 0)}`
   )
   console.log(`Blocked-start report: ${baselinePath}`)
+  console.log(`Evidence manifest: ${evidenceManifestPath}`)
   console.log('══════════════════════════════════════')
 }
 
