@@ -14,6 +14,12 @@ The execution slices live in:
 /Users/orcdev/Documents/Obsidian Vault/plans/planned/2026-06-08 - Videorc Native 4K OBS Class Media Engine Refactor Slices.md
 ```
 
+A priority insertion from 2026-06-09 live usage (stream A/V sync fix, preview glued to the studio slot, left-sidebar studio shell, live layout switching — pulls forward master Phases 7/10/12) lives in:
+
+```text
+/Users/orcdev/Documents/Obsidian Vault/plans/planned/2026-06-09 - Videorc Studio Shell And Live Control Plan.md
+```
+
 ## Locked Product Target
 
 - 4K30 local recording is required.
