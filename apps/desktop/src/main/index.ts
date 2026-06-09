@@ -676,6 +676,20 @@ function nativePreviewSurfaceHtml(initialScene: PreviewSurfaceSceneState | null)
         window.__videorcSetPreviewScene = applyScene;
         window.__videorcSetFramePollingSuppressed = setFramePollingSuppressed;
 
+        // B2 crop contract: the window covers only the visible clip of the studio
+        // slot; the scene root keeps the full slot size shifted so the window edge
+        // crops it (instead of squishing the composition while half scrolled away).
+        window.__videorcSetCropOffset = (offsetX, offsetY, slotWidth, slotHeight) => {
+          // The stylesheet uses inset: 0; explicit left/top + size must win, so the
+          // right/bottom constraints are released while a crop offset is active.
+          root.style.right = 'auto';
+          root.style.bottom = 'auto';
+          root.style.left = (-offsetX) + 'px';
+          root.style.top = (-offsetY) + 'px';
+          root.style.width = slotWidth + 'px';
+          root.style.height = slotHeight + 'px';
+        };
+
         function applyCompositorStatus(nextStatus) {
           pendingCompositorStatus = nextStatus;
           pendingCompositorReceivedAt = performance.now();
@@ -791,13 +805,58 @@ function nativePreviewSurfaceHtml(initialScene: PreviewSurfaceSceneState | null)
   `
 }
 
-function normalizedSurfaceBounds(bounds: PreviewSurfaceBounds): Electron.Rectangle {
+// Placement for the proof surface window under the B2 containment contract: the
+// window covers exactly the visible CLIP rect (so a half-scrolled slot crops instead
+// of floating over other UI), the scene root keeps the full slot size shifted by the
+// crop offset, and `visible:false` (slot scrolled away, document hidden, overlay
+// open, app blurred) means the window leaves the screen entirely.
+function surfaceWindowPlacement(bounds: PreviewSurfaceBounds): {
+  visible: boolean
+  rect: Electron.Rectangle
+  cropOffsetX: number
+  cropOffsetY: number
+  slotWidth: number
+  slotHeight: number
+} {
   const normalized = normalizePreviewSurfaceBounds(bounds)
+  const clipX = normalized.clipX ?? normalized.screenX
+  const clipY = normalized.clipY ?? normalized.screenY
+  const clipWidth = normalized.clipWidth ?? normalized.width
+  const clipHeight = normalized.clipHeight ?? normalized.height
   return {
-    x: Math.round(normalized.screenX),
-    y: Math.round(normalized.screenY),
-    width: Math.max(1, Math.round(normalized.width)),
-    height: Math.max(1, Math.round(normalized.height))
+    visible: (normalized.visible ?? true) && clipWidth >= 1 && clipHeight >= 1,
+    rect: {
+      x: Math.round(clipX),
+      y: Math.round(clipY),
+      width: Math.max(1, Math.round(clipWidth)),
+      height: Math.max(1, Math.round(clipHeight))
+    },
+    cropOffsetX: Math.round(clipX - normalized.screenX),
+    cropOffsetY: Math.round(clipY - normalized.screenY),
+    slotWidth: Math.max(1, Math.round(normalized.width)),
+    slotHeight: Math.max(1, Math.round(normalized.height))
+  }
+}
+
+let nativePreviewSurfaceLastCropKey: string | null = null
+
+async function applyNativePreviewSurfaceCrop(placement: ReturnType<typeof surfaceWindowPlacement>): Promise<void> {
+  if (!nativePreviewSurfaceWindow || nativePreviewSurfaceWindow.isDestroyed()) {
+    return
+  }
+  const cropKey = `${placement.cropOffsetX}:${placement.cropOffsetY}:${placement.slotWidth}:${placement.slotHeight}`
+  if (cropKey === nativePreviewSurfaceLastCropKey) {
+    return
+  }
+  nativePreviewSurfaceLastCropKey = cropKey
+  try {
+    await nativePreviewSurfaceWindow.webContents.executeJavaScript(
+      `window.__videorcSetCropOffset?.(${placement.cropOffsetX}, ${placement.cropOffsetY}, ${placement.slotWidth}, ${placement.slotHeight})`,
+      true
+    )
+  } catch {
+    // The surface page may still be loading; the next bounds update retries.
+    nativePreviewSurfaceLastCropKey = null
   }
 }
 
@@ -816,7 +875,9 @@ async function createNativePreviewSurfaceWindow(): Promise<void> {
       skipTaskbar: true,
       hasShadow: false,
       resizable: false,
-      movable: true,
+      // Glued to the studio slot (plan slice B2): never user-movable and never a
+      // click target — placement is owned entirely by the renderer's slot tracking.
+      movable: false,
       show: false,
       backgroundColor: '#00000000',
       webPreferences: {
@@ -827,7 +888,8 @@ async function createNativePreviewSurfaceWindow(): Promise<void> {
       }
     })
     nativePreviewSurfaceWindow = surfaceWindow
-    surfaceWindow.setIgnoreMouseEvents(false)
+    nativePreviewSurfaceLastCropKey = null
+    surfaceWindow.setIgnoreMouseEvents(true)
     surfaceWindow.on('closed', () => {
       if (nativePreviewSurfaceWindow === surfaceWindow) {
         nativePreviewSurfaceWindow = null
@@ -881,7 +943,8 @@ async function createNativePreviewSurface(bounds: PreviewSurfaceBounds): Promise
     throw new Error('Main window is not ready for native preview surface.')
   }
 
-  const rect = normalizedSurfaceBounds(bounds)
+  const placement = surfaceWindowPlacement(bounds)
+  const rect = placement.rect
   if (!nativePreviewSurfaceWindow || nativePreviewSurfaceWindow.isDestroyed()) {
     await createNativePreviewSurfaceWindow()
   }
@@ -890,7 +953,12 @@ async function createNativePreviewSurface(bounds: PreviewSurfaceBounds): Promise
     throw new Error('Native preview surface window closed before it could be positioned.')
   }
   nativePreviewSurfaceWindow.setBounds(rect)
-  nativePreviewSurfaceWindow.showInactive()
+  await applyNativePreviewSurfaceCrop(placement)
+  if (placement.visible) {
+    nativePreviewSurfaceWindow.showInactive()
+  } else {
+    nativePreviewSurfaceWindow.hide()
+  }
   nativePreviewSurfaceStatus = {
     state: 'live',
     source: nativePreviewSurfaceScene?.sources.some((source) => source.kind === 'screen' || source.kind === 'window')
@@ -933,8 +1001,17 @@ async function updateNativePreviewSurfaceBounds(bounds: PreviewSurfaceBounds): P
     return createNativePreviewSurface(bounds)
   }
 
-  const rect = normalizedSurfaceBounds(bounds)
+  const placement = surfaceWindowPlacement(bounds)
+  const rect = placement.rect
   nativePreviewSurfaceWindow.setBounds(rect)
+  await applyNativePreviewSurfaceCrop(placement)
+  if (placement.visible) {
+    if (!nativePreviewSurfaceWindow.isVisible()) {
+      nativePreviewSurfaceWindow.showInactive()
+    }
+  } else {
+    nativePreviewSurfaceWindow.hide()
+  }
   nativePreviewSurfaceStatus = {
     ...nativePreviewSurfaceStatus,
     state: 'live',
