@@ -890,6 +890,14 @@ pub async fn update_compositor_active_screen(
 }
 
 impl CompositorRuntime {
+    /// The active takeover screen of the current scene snapshot, for callers that
+    /// must preserve it across a scene swap (e.g. live layout switching).
+    pub fn active_screen(&self) -> Option<StreamScreen> {
+        self.scene
+            .as_ref()
+            .and_then(|snapshot| snapshot.active_screen.clone())
+    }
+
     fn cache_image_source(&mut self, screen: &StreamScreen) -> CompositorImageSource {
         let path = Path::new(&screen.image_path);
         let file_revision = image_file_revision(path);

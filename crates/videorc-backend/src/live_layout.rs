@@ -1,0 +1,534 @@
+//! Live layout preset switching on the native compositor path — Studio Shell And
+//! Live Control Plan, slice D1.
+//!
+//! The compositor already swaps scene snapshots atomically per frame
+//! ([`update_compositor_scene`] is revision-ordered and never touches the encoders),
+//! so a preset change while recording/streaming is a scene-snapshot swap, not a
+//! pipeline restart. What this module adds:
+//!
+//! - **Hot path:** every source the target preset needs is already delivering fresh
+//!   frames → commit the new scene immediately.
+//! - **Warm path (swap-on-ready, decision 6):** a needed source is not live → start
+//!   it, keep the OLD layout on program output until the source delivers its first
+//!   fresh frames, then commit atomically. Viewers never see a placeholder; the
+//!   pending state lives in the UI only.
+//! - **Honest blocking:** a preset that needs an unselected device, or a source that
+//!   fails to start in time, returns an exact error and leaves the running layout
+//!   untouched (no silent partial state).
+//! - **Revision discipline:** committed revisions are always above both the current
+//!   compositor revision and the wallclock-millis revisions used at session start, so
+//!   live commits can never be silently rejected by the stale-revision guard.
+
+use std::time::Duration;
+
+use anyhow::{Result, bail};
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
+use tokio::time::{Instant, sleep};
+
+use crate::compositor::update_compositor_scene;
+use crate::live_scene::{ApplyMode, MutationContext, MutationKind, classify_mutation};
+use crate::preview_camera::{preview_camera_status, start_preview_camera};
+use crate::preview_screen::{preview_screen_status, start_preview_screen};
+use crate::protocol::{
+    CompositorSceneUpdateParams, LayoutPreset, PreviewCameraStartParams, PreviewCameraState,
+    PreviewCameraStatus, PreviewScreenStartParams, PreviewScreenState, PreviewScreenStatus, Scene,
+    SceneConfigParams, SceneSourceKind,
+};
+use crate::scene::scene_from_capture_config;
+use crate::state::AppState;
+
+const WARM_SOURCE_START_TIMEOUT: Duration = Duration::from_secs(5);
+const WARM_SOURCE_POLL: Duration = Duration::from_millis(100);
+/// A source counts as live only when its newest frame is at most this old — a stalled
+/// capturer must not be swapped onto program output.
+const SOURCE_FRESH_FRAME_MAX_AGE_MS: u64 = 1_500;
+
+fn fallback_video_settings() -> crate::protocol::VideoSettings {
+    crate::protocol::VideoSettings {
+        preset: crate::protocol::VideoPreset::Tutorial1440p30,
+        width: 2560,
+        height: 1440,
+        fps: 30,
+        bitrate_kbps: 8000,
+    }
+}
+
+/// Which real sources the target scene composes (visible sources only).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SceneSourceNeeds {
+    pub camera: bool,
+    pub screen: bool,
+}
+
+/// Which real sources are currently delivering fresh frames.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SourceLiveness {
+    pub camera: bool,
+    pub screen: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveLayoutApplyStatus {
+    pub applied: bool,
+    /// "idle" (no active session), "hot", or "warm".
+    pub mode: String,
+    pub scene_revision: u64,
+    pub scene: Scene,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+pub fn required_scene_sources(scene: &Scene) -> SceneSourceNeeds {
+    let mut needs = SceneSourceNeeds::default();
+    for source in scene.sources.iter().filter(|source| source.visible) {
+        match source.kind {
+            SceneSourceKind::Camera => needs.camera = true,
+            SceneSourceKind::Screen | SceneSourceKind::Window => needs.screen = true,
+            SceneSourceKind::TestPattern => {}
+        }
+    }
+    needs
+}
+
+pub fn missing_sources(needs: SceneSourceNeeds, live: SourceLiveness) -> Vec<&'static str> {
+    let mut missing = Vec::new();
+    if needs.screen && !live.screen {
+        missing.push("screen");
+    }
+    if needs.camera && !live.camera {
+        missing.push("camera");
+    }
+    missing
+}
+
+/// Classify the swap through the LS1 model: hot when every needed source is live,
+/// warm otherwise (start, then swap on ready).
+pub fn plan_live_swap(needs: SceneSourceNeeds, live: SourceLiveness) -> ApplyMode {
+    let required_sources_active = missing_sources(needs, live).is_empty();
+    classify_mutation(
+        MutationKind::LayoutSetPreset,
+        &MutationContext {
+            required_sources_active,
+        },
+    )
+}
+
+/// Live commits must beat both the current compositor revision and the
+/// wallclock-millis revisions stamped at session start; otherwise the compositor's
+/// stale-revision guard would silently drop them (the pre-D1 bug: renderer counters
+/// started at 0 and every mid-session scene push was rejected).
+pub fn next_scene_revision(current: Option<u64>, now_millis: u64) -> u64 {
+    current
+        .map(|revision| revision.saturating_add(1))
+        .unwrap_or(0)
+        .max(now_millis)
+}
+
+pub fn camera_status_is_live(status: &PreviewCameraStatus) -> bool {
+    status.state == PreviewCameraState::Live
+        && status
+            .frame_age_ms
+            .is_some_and(|age| age <= SOURCE_FRESH_FRAME_MAX_AGE_MS)
+}
+
+pub fn screen_status_is_live(status: &PreviewScreenStatus) -> bool {
+    status.state == PreviewScreenState::Live
+        && status
+            .frame_age_ms
+            .is_some_and(|age| age <= SOURCE_FRESH_FRAME_MAX_AGE_MS)
+}
+
+/// A preset that composes a device which is not even selected can never swap; report
+/// exactly what is missing instead of degrading silently.
+pub fn preset_selection_blocker(params: &SceneConfigParams) -> Option<String> {
+    let preset = &params.layout.layout_preset;
+    let needs_camera = matches!(preset, LayoutPreset::CameraOnly | LayoutPreset::SideBySide);
+    let needs_screen = matches!(
+        preset,
+        LayoutPreset::ScreenOnly | LayoutPreset::ScreenCamera | LayoutPreset::SideBySide
+    );
+    let camera_selected = params.sources.camera_id.is_some();
+    let screen_selected = params.sources.screen_id.is_some() || params.sources.window_id.is_some();
+    if needs_camera && !camera_selected {
+        return Some(format!(
+            "Layout preset {preset:?} needs a camera, but no camera is selected. Pick a camera, then switch."
+        ));
+    }
+    if needs_screen && !screen_selected {
+        return Some(format!(
+            "Layout preset {preset:?} needs a screen or window, but none is selected. Pick one, then switch."
+        ));
+    }
+    None
+}
+
+async fn source_liveness(state: &AppState) -> SourceLiveness {
+    SourceLiveness {
+        camera: camera_status_is_live(&preview_camera_status(state).await),
+        screen: screen_status_is_live(&preview_screen_status(state).await),
+    }
+}
+
+/// Apply a layout preset (or full layout change) to the live scene. Outside a session
+/// this is a plain scene reload + compositor push; during a session it is the D1
+/// hot/warm swap with swap-on-ready semantics.
+pub async fn apply_layout_live(
+    state: &AppState,
+    params: SceneConfigParams,
+) -> Result<LiveLayoutApplyStatus> {
+    if let Some(blocker) = preset_selection_blocker(&params) {
+        bail!(blocker);
+    }
+
+    let scene = scene_from_capture_config(params.clone());
+    let needs = required_scene_sources(&scene);
+    let session_active = state.recording.lock().await.is_some();
+
+    if !session_active {
+        let revision = commit_live_scene(state, &scene, &params).await;
+        return Ok(LiveLayoutApplyStatus {
+            applied: true,
+            mode: "idle".to_string(),
+            scene_revision: revision,
+            scene,
+            message: None,
+        });
+    }
+
+    let live = source_liveness(state).await;
+    match plan_live_swap(needs, live) {
+        ApplyMode::Hot => {
+            let revision = commit_live_scene(state, &scene, &params).await;
+            Ok(LiveLayoutApplyStatus {
+                applied: true,
+                mode: "hot".to_string(),
+                scene_revision: revision,
+                scene,
+                message: None,
+            })
+        }
+        ApplyMode::Warm => {
+            let missing = missing_sources(needs, live);
+            start_missing_sources(state, &params, &missing).await?;
+            wait_for_sources_ready(state, needs).await?;
+            // Swap-on-ready: the old layout rendered until this exact commit; the new
+            // sources are already delivering fresh frames, so the swap is seamless.
+            let revision = commit_live_scene(state, &scene, &params).await;
+            Ok(LiveLayoutApplyStatus {
+                applied: true,
+                mode: "warm".to_string(),
+                scene_revision: revision,
+                scene,
+                message: Some(format!(
+                    "Started {} mid-session, swapped on first fresh frames.",
+                    missing.join(" + ")
+                )),
+            })
+        }
+        ApplyMode::Cold => {
+            // classify_mutation never returns Cold for LayoutSetPreset; keep the
+            // honest failure anyway rather than silently doing nothing.
+            bail!("Layout preset change classified cold during an active session.");
+        }
+    }
+}
+
+async fn start_missing_sources(
+    state: &AppState,
+    params: &SceneConfigParams,
+    missing: &[&'static str],
+) -> Result<()> {
+    for source in missing {
+        match *source {
+            "camera" => {
+                let status = start_preview_camera(
+                    state.clone(),
+                    PreviewCameraStartParams {
+                        sources: params.sources.clone(),
+                        layout: params.layout.clone(),
+                        video: params.video.clone().unwrap_or_else(fallback_video_settings),
+                    },
+                )
+                .await;
+                if matches!(
+                    status.state,
+                    PreviewCameraState::Failed
+                        | PreviewCameraState::DeviceMissing
+                        | PreviewCameraState::PermissionNeeded
+                ) {
+                    bail!(
+                        "Camera failed to start for the live layout switch ({:?}): {}",
+                        status.state,
+                        status.message.unwrap_or_else(|| "no detail".to_string())
+                    );
+                }
+            }
+            "screen" => {
+                let status = start_preview_screen(
+                    state.clone(),
+                    PreviewScreenStartParams {
+                        sources: params.sources.clone(),
+                        video: params.video.clone().unwrap_or_else(fallback_video_settings),
+                    },
+                )
+                .await;
+                if matches!(
+                    status.state,
+                    PreviewScreenState::Failed
+                        | PreviewScreenState::SourceMissing
+                        | PreviewScreenState::PermissionNeeded
+                ) {
+                    bail!(
+                        "Screen capture failed to start for the live layout switch ({:?}): {}",
+                        status.state,
+                        status.message.unwrap_or_else(|| "no detail".to_string())
+                    );
+                }
+            }
+            other => bail!("Unknown source kind {other} for live layout switch."),
+        }
+    }
+    Ok(())
+}
+
+async fn wait_for_sources_ready(state: &AppState, needs: SceneSourceNeeds) -> Result<()> {
+    let started = Instant::now();
+    loop {
+        let live = source_liveness(state).await;
+        if missing_sources(needs, live).is_empty() {
+            return Ok(());
+        }
+        if started.elapsed() >= WARM_SOURCE_START_TIMEOUT {
+            let still_missing = missing_sources(needs, live).join(" + ");
+            bail!(
+                "Live layout switch blocked: {still_missing} produced no fresh frames within {}s. The previous layout is still live.",
+                WARM_SOURCE_START_TIMEOUT.as_secs()
+            );
+        }
+        sleep(WARM_SOURCE_POLL).await;
+    }
+}
+
+async fn commit_live_scene(state: &AppState, scene: &Scene, params: &SceneConfigParams) -> u64 {
+    {
+        let mut guard = state.scene.lock().await;
+        *guard = scene.clone();
+    }
+    state.emit_event("scene.changed", scene);
+
+    let (current_revision, active_screen) = {
+        let compositor = state.compositor.lock().await;
+        (compositor.status.scene_revision, compositor.active_screen())
+    };
+    let now_millis = u64::try_from(Utc::now().timestamp_millis()).unwrap_or(0);
+    let revision = next_scene_revision(current_revision, now_millis);
+    update_compositor_scene(
+        state,
+        CompositorSceneUpdateParams {
+            revision,
+            scene: Some(scene.clone()),
+            layout: params.layout.clone(),
+            active_screen,
+        },
+    )
+    .await;
+    revision
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::{LayoutSettings, SourceSelection};
+
+    fn sources(camera: bool, screen: bool) -> SourceSelection {
+        SourceSelection {
+            screen_id: screen.then(|| "screen:screencapturekit:1".to_string()),
+            window_id: None,
+            camera_id: camera.then(|| "camera:avfoundation-native:0".to_string()),
+            microphone_id: Some("microphone:coreaudio:81".to_string()),
+            test_pattern: false,
+        }
+    }
+
+    fn layout(preset: LayoutPreset) -> LayoutSettings {
+        use crate::protocol::{
+            CameraCorner, CameraFit, CameraShape, CameraSize, CameraTransformMode,
+            SideBySideCameraSide, SideBySideSplit,
+        };
+        LayoutSettings {
+            layout_preset: preset,
+            camera_transform_mode: CameraTransformMode::Preset,
+            camera_transform: None,
+            camera_corner: CameraCorner::BottomRight,
+            camera_size: CameraSize::Medium,
+            camera_shape: CameraShape::Rectangle,
+            camera_margin: 32,
+            camera_fit: CameraFit::Fill,
+            camera_mirror: false,
+            camera_zoom: 100,
+            camera_offset_x: 0,
+            camera_offset_y: 0,
+            side_by_side_split: SideBySideSplit::SeventyThirty,
+            side_by_side_camera_side: SideBySideCameraSide::Right,
+        }
+    }
+
+    fn config(preset: LayoutPreset, camera: bool, screen: bool) -> SceneConfigParams {
+        SceneConfigParams {
+            sources: sources(camera, screen),
+            layout: layout(preset),
+            video: Some(fallback_video_settings()),
+        }
+    }
+
+    #[test]
+    fn required_sources_follow_the_built_scene() {
+        let both = scene_from_capture_config(config(LayoutPreset::ScreenCamera, true, true));
+        assert_eq!(
+            required_scene_sources(&both),
+            SceneSourceNeeds {
+                camera: true,
+                screen: true
+            }
+        );
+
+        let camera_only = scene_from_capture_config(config(LayoutPreset::CameraOnly, true, true));
+        assert_eq!(
+            required_scene_sources(&camera_only),
+            SceneSourceNeeds {
+                camera: true,
+                screen: false
+            }
+        );
+
+        let screen_only = scene_from_capture_config(config(LayoutPreset::ScreenOnly, true, true));
+        assert_eq!(
+            required_scene_sources(&screen_only),
+            SceneSourceNeeds {
+                camera: false,
+                screen: true
+            }
+        );
+    }
+
+    #[test]
+    fn swap_is_hot_only_when_every_needed_source_is_live() {
+        let needs = SceneSourceNeeds {
+            camera: true,
+            screen: true,
+        };
+        assert_eq!(
+            plan_live_swap(
+                needs,
+                SourceLiveness {
+                    camera: true,
+                    screen: true
+                }
+            ),
+            ApplyMode::Hot
+        );
+        assert_eq!(
+            plan_live_swap(
+                needs,
+                SourceLiveness {
+                    camera: false,
+                    screen: true
+                }
+            ),
+            ApplyMode::Warm
+        );
+        assert_eq!(
+            missing_sources(
+                needs,
+                SourceLiveness {
+                    camera: false,
+                    screen: false
+                }
+            ),
+            vec!["screen", "camera"]
+        );
+    }
+
+    #[test]
+    fn unneeded_sources_never_block_a_hot_swap() {
+        // screen-only while the camera is dark: camera liveness is irrelevant.
+        let needs = SceneSourceNeeds {
+            camera: false,
+            screen: true,
+        };
+        assert_eq!(
+            plan_live_swap(
+                needs,
+                SourceLiveness {
+                    camera: false,
+                    screen: true
+                }
+            ),
+            ApplyMode::Hot
+        );
+    }
+
+    #[test]
+    fn live_revisions_always_beat_session_start_revisions() {
+        // Session start stamps wallclock millis; a live commit must never be rejected
+        // by the compositor's stale-revision guard.
+        let session_revision = 1_781_038_338_044_u64;
+        let next = next_scene_revision(Some(session_revision), session_revision - 10_000);
+        assert_eq!(next, session_revision + 1);
+
+        // And when the compositor is behind wallclock, jump to wallclock.
+        assert_eq!(next_scene_revision(Some(5), 1_000), 1_000);
+        assert_eq!(next_scene_revision(None, 1_000), 1_000);
+    }
+
+    #[test]
+    fn preset_selection_blockers_are_exact() {
+        let blocked = preset_selection_blocker(&config(LayoutPreset::CameraOnly, false, true));
+        assert!(blocked.is_some_and(|message| message.contains("needs a camera")));
+
+        let blocked = preset_selection_blocker(&config(LayoutPreset::ScreenCamera, true, false));
+        assert!(blocked.is_some_and(|message| message.contains("needs a screen")));
+
+        assert_eq!(
+            preset_selection_blocker(&config(LayoutPreset::SideBySide, true, true)),
+            None
+        );
+    }
+
+    #[test]
+    fn stale_or_missing_frames_do_not_count_as_live() {
+        let mut camera = PreviewCameraStatus {
+            state: PreviewCameraState::Live,
+            camera_id: None,
+            device_unique_id: None,
+            target_fps: 30,
+            width: None,
+            height: None,
+            requested_width: None,
+            requested_height: None,
+            actual_width: None,
+            actual_height: None,
+            selected_format_width: None,
+            selected_format_height: None,
+            selected_format_min_fps: None,
+            selected_format_max_fps: None,
+            source_fps: None,
+            frame_age_ms: Some(120),
+            frames_captured: 10,
+            dropped_frames: 0,
+            sequence: None,
+            updated_at: "t".to_string(),
+            message: None,
+        };
+        assert!(camera_status_is_live(&camera));
+        camera.frame_age_ms = Some(SOURCE_FRESH_FRAME_MAX_AGE_MS + 1);
+        assert!(!camera_status_is_live(&camera));
+        camera.frame_age_ms = None;
+        assert!(!camera_status_is_live(&camera));
+        camera.frame_age_ms = Some(120);
+        camera.state = PreviewCameraState::Starting;
+        assert!(!camera_status_is_live(&camera));
+    }
+}

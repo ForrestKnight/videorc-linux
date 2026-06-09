@@ -11,6 +11,7 @@ mod ffmpeg;
 mod ffmpeg_work;
 mod frame_store;
 mod live_chat;
+mod live_layout;
 mod live_pipeline;
 mod live_render;
 mod live_scene;
@@ -1376,6 +1377,19 @@ async fn handle_text_message(state: &AppState, text: &str) -> ServerResponse {
                     state.emit_event("scene.changed", &scene);
                     ServerResponse::ok(command.id, scene)
                 }
+                Err(error) => {
+                    ServerResponse::error(command.id, "invalid-params", error.to_string())
+                }
+            }
+        }
+        "scene.layout.apply_live" => {
+            match serde_json::from_value::<protocol::SceneConfigParams>(command.params) {
+                Ok(params) => match live_layout::apply_layout_live(state, params).await {
+                    Ok(status) => ServerResponse::ok(command.id, status),
+                    Err(error) => {
+                        ServerResponse::error(command.id, "layout-live-failed", error.to_string())
+                    }
+                },
                 Err(error) => {
                     ServerResponse::error(command.id, "invalid-params", error.to_string())
                 }
