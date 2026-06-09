@@ -64,7 +64,7 @@ export function CommandPalette({
           {STUDIO_PANELS.map((panel) => (
             <CommandItem
               key={panel.id}
-              value={`Open `}
+              value={`Open ${panel.label}`}
               onSelect={() => run(() => openStudioPanel(panel.id))}
             >
               <panel.icon className="size-4" />
