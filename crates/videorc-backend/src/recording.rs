@@ -462,7 +462,10 @@ pub async fn start_session(
         None
     };
     let encoder_bridge_video_output = if use_encoder_bridge {
-        recording_encoder_bridge_video_output()
+        recording_encoder_bridge_video_output(
+            params.output.record_enabled,
+            params.output.stream_enabled,
+        )
     } else {
         EncoderBridgeVideoOutput::RawYuv420p
     };
@@ -3349,17 +3352,36 @@ fn compositor_encoder_bridge_disabled(record_enabled: bool, stream_enabled: bool
         )
 }
 
-fn recording_encoder_bridge_video_output() -> EncoderBridgeVideoOutput {
-    parse_encoder_bridge_video_output(
+fn recording_encoder_bridge_video_output(
+    record_enabled: bool,
+    stream_enabled: bool,
+) -> EncoderBridgeVideoOutput {
+    select_encoder_bridge_video_output(
         std::env::var(ENCODER_BRIDGE_VIDEO_OUTPUT_ENV)
             .ok()
             .as_deref(),
+        record_enabled,
+        stream_enabled,
     )
 }
 
-fn parse_encoder_bridge_video_output(setting: Option<&str>) -> EncoderBridgeVideoOutput {
+fn select_encoder_bridge_video_output(
+    setting: Option<&str>,
+    record_enabled: bool,
+    stream_enabled: bool,
+) -> EncoderBridgeVideoOutput {
+    parse_encoder_bridge_video_output(
+        setting,
+        default_encoder_bridge_video_output_for_outputs(record_enabled, stream_enabled),
+    )
+}
+
+fn parse_encoder_bridge_video_output(
+    setting: Option<&str>,
+    default_output: EncoderBridgeVideoOutput,
+) -> EncoderBridgeVideoOutput {
     let Some(setting) = setting.map(str::trim).filter(|setting| !setting.is_empty()) else {
-        return default_encoder_bridge_video_output();
+        return default_output;
     };
     match setting.to_ascii_lowercase().as_str() {
         "raw" | "raw-yuv420p" | "raw_yuv420p" | "rawvideo" | "yuv420p" => {
@@ -3371,8 +3393,19 @@ fn parse_encoder_bridge_video_output(setting: Option<&str>) -> EncoderBridgeVide
         "videotoolbox-h264-mpegts" | "h264-mpegts" | "mpegts" | "mpeg-ts" => {
             EncoderBridgeVideoOutput::VideoToolboxH264MpegTs
         }
-        _ => default_encoder_bridge_video_output(),
+        _ => default_output,
     }
+}
+
+fn default_encoder_bridge_video_output_for_outputs(
+    _record_enabled: bool,
+    stream_enabled: bool,
+) -> EncoderBridgeVideoOutput {
+    if stream_enabled {
+        return EncoderBridgeVideoOutput::RawYuv420p;
+    }
+
+    default_encoder_bridge_video_output()
 }
 
 fn default_encoder_bridge_video_output() -> EncoderBridgeVideoOutput {
@@ -6489,6 +6522,11 @@ mod tests {
     fn bridge_stream_only_args_use_raw_yuv_video_and_flv_output() {
         let params = base_params(false, true);
         let fifo_path = Path::new("/tmp/videorc-bridge-stream.yuv");
+        let video_output = select_encoder_bridge_video_output(
+            None,
+            params.output.record_enabled,
+            params.output.stream_enabled,
+        );
         let targets = vec![build_stream_url(&params.output.rtmp).unwrap()];
         let args = bridge_compositor_ffmpeg_args(
             &CaptureInputs {
@@ -6500,10 +6538,11 @@ mod tests {
             None,
             &targets,
             fifo_path,
-            EncoderBridgeVideoOutput::RawYuv420p,
+            video_output,
         )
         .unwrap();
 
+        assert_eq!(video_output, EncoderBridgeVideoOutput::RawYuv420p);
         assert!(!args.contains(&"tee".to_string()));
         assert_eq!(arg_value(&args, "-c:v"), Some("h264_videotoolbox"));
         assert_eq!(arg_value(&args, "-c:a"), Some("aac"));
@@ -6566,6 +6605,11 @@ mod tests {
     fn bridge_record_and_stream_tees_mkv_and_flv_targets() {
         let params = base_params(true, true);
         let fifo_path = Path::new("/tmp/videorc-bridge-record-stream.yuv");
+        let video_output = select_encoder_bridge_video_output(
+            None,
+            params.output.record_enabled,
+            params.output.stream_enabled,
+        );
         let streaming = streaming_for(&[
             (
                 StreamPlatform::Youtube,
@@ -6585,10 +6629,11 @@ mod tests {
             Some(Path::new("/tmp/videorc-bridge-record-stream.mkv")),
             &targets,
             fifo_path,
-            EncoderBridgeVideoOutput::RawYuv420p,
+            video_output,
         )
         .unwrap();
 
+        assert_eq!(video_output, EncoderBridgeVideoOutput::RawYuv420p);
         assert!(args.contains(&"tee".to_string()));
         let tee = args.iter().find(|arg| arg.contains("[f=matroska")).unwrap();
         assert!(tee.contains("[f=matroska:onfail=abort]/tmp/videorc-bridge-record-stream.mkv"));
@@ -6649,40 +6694,57 @@ mod tests {
         assert!(encoder_bridge_streaming_disabled(Some("off")));
         assert!(encoder_bridge_disabled_setting(Some("0")));
         assert!(!encoder_bridge_recording_disabled(None));
+        let default_output = default_encoder_bridge_video_output();
         assert_eq!(
-            parse_encoder_bridge_video_output(None),
-            default_encoder_bridge_video_output()
+            parse_encoder_bridge_video_output(None, default_output),
+            default_output
         );
         assert_eq!(
-            parse_encoder_bridge_video_output(Some("  ")),
-            default_encoder_bridge_video_output()
+            parse_encoder_bridge_video_output(Some("  "), default_output),
+            default_output
         );
         assert_eq!(
-            parse_encoder_bridge_video_output(Some("raw-yuv420p")),
+            parse_encoder_bridge_video_output(Some("raw-yuv420p"), default_output),
             EncoderBridgeVideoOutput::RawYuv420p
         );
         assert_eq!(
-            parse_encoder_bridge_video_output(Some("raw")),
+            parse_encoder_bridge_video_output(Some("raw"), default_output),
             EncoderBridgeVideoOutput::RawYuv420p
         );
         assert_eq!(
-            parse_encoder_bridge_video_output(Some("debug-typo")),
-            default_encoder_bridge_video_output()
+            parse_encoder_bridge_video_output(Some("debug-typo"), default_output),
+            default_output
         );
         assert_eq!(
-            parse_encoder_bridge_video_output(Some("videotoolbox-h264")),
+            parse_encoder_bridge_video_output(Some("videotoolbox-h264"), default_output),
             EncoderBridgeVideoOutput::VideoToolboxH264AnnexB
         );
         assert_eq!(
-            parse_encoder_bridge_video_output(Some(" annex-b ")),
+            parse_encoder_bridge_video_output(Some(" annex-b "), default_output),
             EncoderBridgeVideoOutput::VideoToolboxH264AnnexB
         );
         assert_eq!(
-            parse_encoder_bridge_video_output(Some("videotoolbox-h264-mpegts")),
+            parse_encoder_bridge_video_output(Some("videotoolbox-h264-mpegts"), default_output),
             EncoderBridgeVideoOutput::VideoToolboxH264MpegTs
         );
         assert_eq!(
-            parse_encoder_bridge_video_output(Some(" mpeg-ts ")),
+            parse_encoder_bridge_video_output(Some(" mpeg-ts "), default_output),
+            EncoderBridgeVideoOutput::VideoToolboxH264MpegTs
+        );
+        assert_eq!(
+            select_encoder_bridge_video_output(None, true, true),
+            EncoderBridgeVideoOutput::RawYuv420p
+        );
+        assert_eq!(
+            select_encoder_bridge_video_output(None, true, false),
+            default_output
+        );
+        assert_eq!(
+            select_encoder_bridge_video_output(None, false, true),
+            EncoderBridgeVideoOutput::RawYuv420p
+        );
+        assert_eq!(
+            select_encoder_bridge_video_output(Some("mpeg-ts"), true, true),
             EncoderBridgeVideoOutput::VideoToolboxH264MpegTs
         );
     }
