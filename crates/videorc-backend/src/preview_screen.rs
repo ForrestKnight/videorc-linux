@@ -1038,6 +1038,7 @@ mod macos {
     use objc2::rc::{Retained, autoreleasepool};
     use objc2::runtime::ProtocolObject;
     use objc2::{AnyThread, DefinedClass, define_class, msg_send};
+    use objc2_core_graphics::{CGDirectDisplayID, CGDisplayCopyDisplayMode, CGDisplayMode};
     use objc2_core_media::{CMSampleBuffer, CMTime};
     use objc2_core_video::{
         CVPixelBufferGetBaseAddress, CVPixelBufferGetBytesPerRow, CVPixelBufferGetHeight,
@@ -1275,9 +1276,13 @@ mod macos {
                         &excluded,
                     )
                 };
+                let logical_width = positive_u32(unsafe { display.width() });
+                let logical_height = positive_u32(unsafe { display.height() });
+                let (source_width, source_height) =
+                    display_capture_dimensions(display_id, logical_width, logical_height);
                 Ok(SelectedContent {
-                    source_width: positive_u32(unsafe { display.width() }),
-                    source_height: positive_u32(unsafe { display.height() }),
+                    source_width,
+                    source_height,
                     filter,
                 })
             }
@@ -1628,6 +1633,30 @@ mod macos {
 
     fn positive_u32(value: isize) -> u32 {
         value.max(1) as u32
+    }
+
+    fn display_capture_dimensions(
+        display_id: CGDirectDisplayID,
+        fallback_width: u32,
+        fallback_height: u32,
+    ) -> (u32, u32) {
+        let Some(mode) = CGDisplayCopyDisplayMode(display_id) else {
+            return (fallback_width, fallback_height);
+        };
+        let pixel_width = positive_usize_u32(CGDisplayMode::pixel_width(Some(&mode)));
+        let pixel_height = positive_usize_u32(CGDisplayMode::pixel_height(Some(&mode)));
+        match (pixel_width, pixel_height) {
+            (Some(width), Some(height)) => (width, height),
+            _ => (fallback_width, fallback_height),
+        }
+    }
+
+    fn positive_usize_u32(value: usize) -> Option<u32> {
+        if value == 0 {
+            None
+        } else {
+            Some(u32::try_from(value).unwrap_or(u32::MAX))
+        }
     }
 
     fn is_permission_error(error: &str) -> bool {
