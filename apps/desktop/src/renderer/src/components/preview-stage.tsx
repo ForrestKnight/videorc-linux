@@ -288,7 +288,9 @@ export function PreviewStage({
           windowScreenY: window.screenY,
           scaleFactor: window.devicePixelRatio || 1,
           screenHeight: window.screen.height,
-          documentVisible: document.visibilityState === 'visible'
+          // The native surface floats above every app, so it must leave the screen
+          // whenever this window is hidden, minimized, or not the focused app.
+          documentVisible: document.visibilityState === 'visible' && document.hasFocus()
         })
         if (nativeSurfaceLive && !previewSurfaceBoundsChanged(lastNativeBoundsRef.current, bounds)) {
           return
@@ -325,6 +327,8 @@ export function PreviewStage({
     observer.observe(previewSurfaceRef.current)
     window.addEventListener('resize', reportBounds)
     window.addEventListener('scroll', reportBounds, true)
+    window.addEventListener('focus', reportBounds)
+    window.addEventListener('blur', reportBounds)
     document.addEventListener('visibilitychange', reportBounds)
     placementFrame = window.requestAnimationFrame(watchWindowPlacement)
     reportBounds()
@@ -333,6 +337,8 @@ export function PreviewStage({
       observer.disconnect()
       window.removeEventListener('resize', reportBounds)
       window.removeEventListener('scroll', reportBounds, true)
+      window.removeEventListener('focus', reportBounds)
+      window.removeEventListener('blur', reportBounds)
       document.removeEventListener('visibilitychange', reportBounds)
       if (placementFrame !== null) {
         window.cancelAnimationFrame(placementFrame)

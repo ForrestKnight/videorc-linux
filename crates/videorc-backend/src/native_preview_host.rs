@@ -50,13 +50,64 @@ impl NativePreviewHostBounds {
         )
     }
 
+    // The full slot frame in AppKit coordinates (the window itself uses the clip
+    // frame; this remains the reference for tests and future hosts).
+    #[allow(dead_code)]
     pub fn appkit_frame(self) -> (f64, f64, f64, f64) {
-        let appkit_y = self
-            .screen_height
-            .filter(|screen_height| screen_height.is_finite())
-            .map(|screen_height| screen_height - self.screen_y - self.height)
-            .unwrap_or(self.screen_y);
+        let appkit_y = self.appkit_y(self.screen_y, self.height);
         (self.screen_x, appkit_y, self.width, self.height)
+    }
+
+    /// Whether the surface should be on screen at all: the renderer's visibility
+    /// verdict (absent = legacy caller = visible) plus a non-empty clip.
+    pub fn is_visible(self) -> bool {
+        if !self.visible.unwrap_or(true) {
+            return false;
+        }
+        let (_, _, clip_width, clip_height) = self.clip_rect_screen();
+        clip_width >= 1.0 && clip_height >= 1.0
+    }
+
+    /// The window frame in AppKit coordinates: the visible clip rect, so a slot that
+    /// is half scrolled out of its container crops instead of floating over other UI.
+    pub fn appkit_clip_frame(self) -> (f64, f64, f64, f64) {
+        let (clip_x, clip_y, clip_width, clip_height) = self.clip_rect_screen();
+        let appkit_y = self.appkit_y(clip_y, clip_height);
+        (clip_x, appkit_y, clip_width.max(1.0), clip_height.max(1.0))
+    }
+
+    /// The layer view's frame inside the clip-sized window (AppKit bottom-left
+    /// origin). The view keeps the full slot size; parts outside the window are
+    /// clipped by the window surface, which is exactly the wanted crop.
+    pub fn view_frame_in_clip(self) -> (f64, f64, f64, f64) {
+        let (clip_x, clip_y, clip_height) = {
+            let (x, y, _, h) = self.clip_rect_screen();
+            (x, y, h)
+        };
+        let view_x = self.screen_x - clip_x;
+        let slot_appkit_y = self.appkit_y(self.screen_y, self.height);
+        let clip_appkit_y = self.appkit_y(clip_y, clip_height);
+        (
+            view_x,
+            slot_appkit_y - clip_appkit_y,
+            self.width,
+            self.height,
+        )
+    }
+
+    /// Clip rect in screen (top-left origin) coordinates; absent clip = full slot.
+    fn clip_rect_screen(self) -> (f64, f64, f64, f64) {
+        match (self.clip_x, self.clip_y, self.clip_width, self.clip_height) {
+            (Some(x), Some(y), Some(width), Some(height)) => (x, y, width, height),
+            _ => (self.screen_x, self.screen_y, self.width, self.height),
+        }
+    }
+
+    fn appkit_y(self, top: f64, height: f64) -> f64 {
+        self.screen_height
+            .filter(|screen_height| screen_height.is_finite())
+            .map(|screen_height| screen_height - top - height)
+            .unwrap_or(top)
     }
 }
 
@@ -292,15 +343,26 @@ mod macos {
                     false,
                 )
             };
-            window.setContentView(Some(layer_host.view()));
+            // The window is sized to the visible CLIP rect while the layer view keeps
+            // the full slot frame (offset inside it). A content view always fills the
+            // window, so the layer view must be a subview of a plain container — the
+            // window surface then crops whatever extends past the clip.
+            let container = NSView::initWithFrame(
+                NSView::alloc(mtm),
+                NSRect::new(NSPoint::new(0.0, 0.0), window_frame(bounds).size),
+            );
+            container.addSubview(layer_host.view());
+            window.setContentView(Some(&container));
             window.setOpaque(false);
             window.setBackgroundColor(Some(&NSColor::clearColor()));
-            window.setIgnoresMouseEvents(false);
-            window.setMovable(true);
-            window.setMovableByWindowBackground(true);
-            // The overlay has to sit above Studio's own content to be visible. Keep it hidden
-            // outside Videorc and out of the window cycle, while allowing users to drag the
-            // borderless preview away if it lands over controls.
+            // The preview is glued to the studio slot: it never takes a click and is
+            // never user-movable — its placement is owned entirely by the renderer's
+            // slot-rect tracking (Studio Shell And Live Control Plan, slice B2).
+            window.setIgnoresMouseEvents(true);
+            window.setMovable(false);
+            window.setMovableByWindowBackground(false);
+            // The overlay has to sit above Studio's own content to be visible. Keep it
+            // hidden outside Videorc and out of the window cycle.
             window.setLevel(NSFloatingWindowLevel);
             window.setHasShadow(false);
             window.setHidesOnDeactivate(true);
@@ -471,16 +533,22 @@ mod macos {
                 let Some(bounds) = command.bounds else {
                     return;
                 };
-                match overlay.as_mut() {
-                    Some(overlay) => {
-                        overlay.set_bounds(bounds);
-                        overlay.show();
+                let host = match overlay.as_mut() {
+                    Some(existing) => {
+                        existing.set_bounds(bounds);
+                        existing
                     }
                     None => {
-                        let next_overlay = NativePreviewOverlayHost::new(presenter, bounds, mtm);
-                        next_overlay.show();
-                        *overlay = Some(next_overlay);
+                        *overlay = Some(NativePreviewOverlayHost::new(presenter, bounds, mtm));
+                        overlay.as_mut().expect("overlay was just created")
                     }
+                };
+                // A slot scrolled fully away or a hidden document means the surface
+                // must leave the screen — never float over unrelated UI.
+                if bounds.is_visible() {
+                    host.show();
+                } else {
+                    host.hide();
                 }
             }
             NativePreviewHostCommandKind::Destroy => {
@@ -492,14 +560,12 @@ mod macos {
     }
 
     fn view_frame(bounds: NativePreviewHostBounds) -> NSRect {
-        NSRect::new(
-            NSPoint::new(0.0, 0.0),
-            NSSize::new(bounds.width, bounds.height),
-        )
+        let (x, y, width, height) = bounds.view_frame_in_clip();
+        NSRect::new(NSPoint::new(x, y), NSSize::new(width, height))
     }
 
     fn window_frame(bounds: NativePreviewHostBounds) -> NSRect {
-        let (x, y, width, height) = bounds.appkit_frame();
+        let (x, y, width, height) = bounds.appkit_clip_frame();
         NSRect::new(NSPoint::new(x, y), NSSize::new(width, height))
     }
 }
@@ -533,6 +599,82 @@ mod tests {
         assert_eq!(host_bounds.height, 450.0);
         assert_eq!(host_bounds.drawable_size(), (2.0, 900.0));
         assert_eq!(host_bounds.appkit_frame(), (10.0, 530.0, 1.0, 450.0));
+    }
+
+    #[test]
+    fn clip_frame_and_view_offset_crop_the_scrolled_slot() {
+        // Slot spans screen rows 20..380; the scroll container only shows rows 120..320.
+        let bounds = NativePreviewHostBounds {
+            screen_x: 10.0,
+            screen_y: 20.0,
+            width: 640.0,
+            height: 360.0,
+            scale_factor: 2.0,
+            screen_height: Some(1000.0),
+            clip_x: Some(10.0),
+            clip_y: Some(120.0),
+            clip_width: Some(640.0),
+            clip_height: Some(200.0),
+            visible: Some(true),
+        };
+
+        assert!(bounds.is_visible());
+        // Window covers exactly the visible clip (AppKit y-flip applied).
+        assert_eq!(bounds.appkit_clip_frame(), (10.0, 680.0, 640.0, 200.0));
+        // The layer keeps the full slot size, shifted so the window crops the
+        // scrolled-away 100px at the top and 60px at the bottom.
+        assert_eq!(bounds.view_frame_in_clip(), (0.0, -60.0, 640.0, 360.0));
+        // Drawable resolution stays slot-sized: cropping is placement, not scaling.
+        assert_eq!(bounds.drawable_size(), (1280.0, 720.0));
+    }
+
+    #[test]
+    fn legacy_bounds_without_clip_stay_fully_visible() {
+        let bounds = NativePreviewHostBounds {
+            screen_x: 10.0,
+            screen_y: 20.0,
+            width: 640.0,
+            height: 360.0,
+            scale_factor: 1.0,
+            screen_height: Some(1000.0),
+            ..Default::default()
+        };
+
+        assert!(bounds.is_visible());
+        assert_eq!(bounds.appkit_clip_frame(), bounds.appkit_frame());
+        assert_eq!(bounds.view_frame_in_clip(), (0.0, 0.0, 640.0, 360.0));
+    }
+
+    #[test]
+    fn hidden_or_empty_clip_bounds_are_not_visible() {
+        let hidden = NativePreviewHostBounds {
+            screen_x: 10.0,
+            screen_y: 20.0,
+            width: 640.0,
+            height: 360.0,
+            scale_factor: 1.0,
+            visible: Some(false),
+            ..Default::default()
+        };
+        assert!(!hidden.is_visible());
+
+        let scrolled_away = NativePreviewHostBounds {
+            screen_x: 10.0,
+            screen_y: 20.0,
+            width: 640.0,
+            height: 360.0,
+            scale_factor: 1.0,
+            clip_x: Some(10.0),
+            clip_y: Some(20.0),
+            clip_width: Some(0.0),
+            clip_height: Some(0.0),
+            visible: Some(true),
+            ..Default::default()
+        };
+        assert!(!scrolled_away.is_visible());
+        // The window frame stays well-formed even while hidden.
+        let (_, _, width, height) = scrolled_away.appkit_clip_frame();
+        assert_eq!((width, height), (1.0, 1.0));
     }
 
     #[test]
