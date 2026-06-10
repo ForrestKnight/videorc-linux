@@ -320,11 +320,14 @@ function pushPreviewWindowPlacement(): void {
 }
 
 const PREVIEW_WINDOW_HTML = `<!doctype html><html><head><meta charset="utf-8"><style>
+  /* The whole window is a drag surface: the native video floats above this page
+     and ignores mouse events, so every grab lands here. There are no controls in
+     the page, and edge-resize is handled by the real window frame (hiddenInset). */
   html, body { margin: 0; height: 100%; background: #09090b; color: #a1a1aa;
     font: 12px/1.4 -apple-system, BlinkMacSystemFont, sans-serif; overflow: hidden;
-    user-select: none; -webkit-user-select: none; }
+    user-select: none; -webkit-user-select: none; -webkit-app-region: drag; }
   .drag-strip { position: fixed; top: 0; left: 0; right: 0; height: 28px;
-    -webkit-app-region: drag; display: flex; align-items: center;
+    display: flex; align-items: center;
     justify-content: center; color: #52525b; font-size: 11px; letter-spacing: 0.08em;
     text-transform: uppercase; }
   .hint { position: fixed; inset: 0; display: flex; align-items: center;

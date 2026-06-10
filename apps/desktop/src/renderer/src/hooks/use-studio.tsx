@@ -2041,19 +2041,37 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   previewWindowRef.current = previewWindow
   const previewWindowSurfaceActiveRef = useRef(false)
 
+  // Window-state EVENTS are an optimization; the periodic pull is the truth.
+  // A lost IPC event (HMR reload, listener not yet registered at auto-restore)
+  // previously left the backend session uncreated — open window, dark preview,
+  // compositor never started. The reconciler heals that within one tick.
   useEffect(() => {
     let cancelled = false
-    void window.videorc?.getPreviewWindowState?.().then((state) => {
-      if (!cancelled && state) {
-        setPreviewWindow(state)
+    const reconcile = async (): Promise<void> => {
+      const fresh = await window.videorc?.getPreviewWindowState?.()
+      if (!fresh || cancelled) {
+        return
       }
-    })
+      setPreviewWindow((current) => {
+        // Force a re-drive when the window is open but the surface session was
+        // never created (a swallowed create attempt) even if state looks equal.
+        if (fresh.open && !nativePreviewSurfaceCreatedRef.current) {
+          return { ...fresh }
+        }
+        return JSON.stringify(current) === JSON.stringify(fresh) ? current : fresh
+      })
+    }
+    void reconcile()
+    const timer = window.setInterval(() => {
+      void reconcile()
+    }, 4000)
     const unsubscribe = window.videorc?.onPreviewWindowState?.((state) => setPreviewWindow(state))
     return () => {
       cancelled = true
+      window.clearInterval(timer)
       unsubscribe?.()
     }
-  }, [])
+  }, [wsStatus])
 
   // Frame polling serves the Electron proof surface; it is pure overhead while a
   // session records (the compositor feeds the encoder directly) and while the
