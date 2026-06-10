@@ -454,6 +454,12 @@ pub async fn start_session(
     let active_screen = state.database.active_stream_screen()?;
     let use_encoder_bridge =
         should_use_compositor_encoder_bridge(&state, &params, active_screen.as_ref()).await;
+    // Shared session epoch (plan slice A2): the encoder bridge sets this at its first
+    // delivered video frame, and the audio FIFO writer trims everything captured
+    // before that instant — so audio and video content start together regardless of
+    // how long the video pipeline takes to warm up at a given resolution.
+    let video_epoch: std::sync::Arc<std::sync::OnceLock<Instant>> =
+        std::sync::Arc::new(std::sync::OnceLock::new());
     let encoder_bridge_fifo = if use_encoder_bridge {
         let fifo_path = recording_encoder_bridge_fifo_path(&session_id);
         create_recording_encoder_bridge_fifo(&fifo_path)?;
@@ -684,6 +690,7 @@ pub async fn start_session(
             encoder_bridge_frame_store.clone(),
             encoder_bridge_video_output,
             Some(params.output.video.bitrate_kbps),
+            video_epoch.clone(),
         )?)
     } else {
         None
@@ -714,8 +721,13 @@ pub async fn start_session(
         mode: mode.to_string(),
         audio_tracks,
         pipeline,
-        native_audio: native_audio_source
-            .map(|prepared| attach_fifo_writer(prepared.source, prepared.fifo_path)),
+        native_audio: native_audio_source.map(|prepared| {
+            attach_fifo_writer(
+                prepared.source,
+                prepared.fifo_path,
+                use_encoder_bridge.then(|| video_epoch.clone()),
+            )
+        }),
         screen_overlay: match screen_overlay_fifo {
             Some(screen_overlay_fifo) => Some(ScreenOverlaySession::start(
                 screen_overlay_fifo,
@@ -7385,16 +7397,20 @@ mod tests {
         )
         .unwrap();
 
+        // Default offset is 0 (alignment is structural via the video epoch), so the
+        // chain carries the channel/resample processing only — no compensating trim.
         assert_eq!(
             arg_value(&args, "-af"),
-            Some(
-                "atrim=start=0.750,asetpts=PTS-STARTPTS,pan=stereo|c0=c0|c1=c0,aresample=async=1:first_pts=0"
-            )
+            Some("pan=stereo|c0=c0|c1=c0,aresample=async=1:first_pts=0")
         );
     }
 
     #[test]
     fn default_microphone_sync_offset_applies_to_native_coreaudio_fifo() {
+        // A/V alignment is structural (the audio FIFO writer trims to the encoder
+        // bridge's first-frame epoch), so the DEFAULT offset is 0 and the filter
+        // chain must carry no compensating trim/delay — the offset is a pure manual
+        // trim that only appears when a user sets it.
         let mut params = base_params(true, false);
         params.audio = AudioSettings::default();
         let args = bridge_recording_ffmpeg_args(
@@ -7415,7 +7431,29 @@ mod tests {
 
         assert_eq!(
             arg_value(&args, "-af"),
-            Some("atrim=start=0.750,asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0")
+            Some("aresample=async=1:first_pts=0")
+        );
+
+        // An explicit user trim still flows into the chain.
+        params.audio.microphone_sync_offset_ms = -250;
+        let trimmed = bridge_recording_ffmpeg_args(
+            &CaptureInputs {
+                video: VideoInput::TestPattern,
+                camera_index: None,
+                microphone: Some(MicrophoneInput::CoreAudio {
+                    device_id: 42,
+                    fifo_path: Some(PathBuf::from("/tmp/videorc-audio-test.f32le")),
+                }),
+            },
+            &params,
+            Some(Path::new("/tmp/videorc-bridge-test.mkv")),
+            Path::new("/tmp/videorc-bridge-input.ts"),
+            EncoderBridgeVideoOutput::VideoToolboxH264MpegTs,
+        )
+        .unwrap();
+        assert_eq!(
+            arg_value(&trimmed, "-af"),
+            Some("atrim=start=0.250,asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0")
         );
     }
 

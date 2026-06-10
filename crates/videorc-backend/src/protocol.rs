@@ -607,11 +607,11 @@ impl Default for AudioSettings {
 }
 
 fn default_microphone_sync_offset_ms() -> i32 {
-    // Compensate the capture pipeline's audio latency so mic audio is not late by
-    // default. A 2026-06-09 native CoreAudio/camera-only clap sample was still about
-    // 230ms late after the older -500ms compensation, so bias the default earlier.
-    // Users can fine-tune via the Sources tab Sync control.
-    -750
+    // Audio/video alignment is structural now: the audio FIFO writer trims to the
+    // encoder bridge's first-frame epoch, so no calibrated constant can (or should)
+    // paper over pipeline startup latency — the old -750ms default under-corrected at
+    // 4K and over-corrected elsewhere. This offset is a pure manual trim for users.
+    0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

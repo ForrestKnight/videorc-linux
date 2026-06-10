@@ -4,7 +4,7 @@ use std::io::{self, Write};
 use std::os::fd::FromRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, OnceLock, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -250,9 +250,42 @@ pub fn start_native_audio_source(
     start_platform_audio_source(device_id, settings)
 }
 
+/// How long the FIFO writer waits for the encoder bridge to deliver its first video
+/// frame before giving up on epoch alignment (mirrors the recording startup budget).
+const VIDEO_EPOCH_WAIT_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Discard queued audio until the shared video epoch is set (the encoder bridge's
+/// first delivered frame), so the first audio sample written corresponds to the same
+/// instant as the first video frame. This replaces the old calibrated constant: the
+/// video pipeline's startup latency varies with resolution (4K warms slower than
+/// 1080p), so no fixed offset can align both. Returns the number of discarded frames,
+/// or None when the wait timed out and the writer should proceed unaligned.
+fn discard_audio_until_video_epoch(
+    receiver: &mpsc::Receiver<AudioFrame>,
+    video_epoch: &OnceLock<Instant>,
+    stop: &AtomicBool,
+) -> Option<u64> {
+    let waited_since = Instant::now();
+    let mut discarded = 0_u64;
+    loop {
+        if video_epoch.get().is_some() {
+            // Drop whatever queued up to this instant; the next received frame is the
+            // first one captured at/after the video epoch.
+            discarded = discarded.saturating_add(discard_preroll_audio_frames(receiver));
+            return Some(discarded);
+        }
+        if stop.load(Ordering::Relaxed) || waited_since.elapsed() >= VIDEO_EPOCH_WAIT_TIMEOUT {
+            return None;
+        }
+        discarded = discarded.saturating_add(discard_preroll_audio_frames(receiver));
+        thread::sleep(Duration::from_millis(2));
+    }
+}
+
 pub fn attach_fifo_writer(
     mut source: NativeAudioSource,
     fifo_path: PathBuf,
+    video_epoch: Option<Arc<OnceLock<Instant>>>,
 ) -> NativeAudioCaptureSession {
     source.stop_on_drop = false;
     let device_id = source.device_id;
@@ -284,7 +317,18 @@ pub fn attach_fifo_writer(
             }
         };
 
-        let discarded_preroll_frames = discard_preroll_audio_frames(&receiver);
+        let discarded_preroll_frames = match video_epoch.as_deref() {
+            Some(epoch) => match discard_audio_until_video_epoch(&receiver, epoch, &writer_stop) {
+                Some(discarded) => discarded,
+                None => {
+                    tracing::warn!(
+                        "Video epoch never arrived; writing native audio without epoch alignment."
+                    );
+                    discard_preroll_audio_frames(&receiver)
+                }
+            },
+            None => discard_preroll_audio_frames(&receiver),
+        };
         if discarded_preroll_frames > 0 {
             tracing::info!(
                 "Discarded {discarded_preroll_frames} native audio pre-roll frames before starting the recording FIFO."
@@ -714,6 +758,44 @@ fn list_platform_microphones() -> Result<Vec<Device>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn frame(samples: usize) -> AudioFrame {
+        AudioFrame {
+            timestamp_micros: 0,
+            sample_rate: NATIVE_AUDIO_SAMPLE_RATE,
+            channels: NATIVE_AUDIO_CHANNELS,
+            samples: vec![0.0; samples * NATIVE_AUDIO_CHANNELS as usize],
+        }
+    }
+
+    #[test]
+    fn epoch_trim_discards_audio_captured_before_the_first_video_frame() {
+        let (tx, rx) = mpsc::channel::<AudioFrame>();
+        let epoch: OnceLock<Instant> = OnceLock::new();
+        let stop = AtomicBool::new(false);
+
+        // Pre-epoch capture: queued before the video pipeline delivered anything.
+        tx.send(frame(480)).unwrap();
+        tx.send(frame(480)).unwrap();
+        epoch.set(Instant::now()).unwrap();
+
+        let discarded = discard_audio_until_video_epoch(&rx, &epoch, &stop)
+            .expect("epoch was set, the wait must succeed");
+        assert_eq!(discarded, 960, "both pre-epoch frames are trimmed");
+
+        // Post-epoch frames flow to the FIFO untouched.
+        tx.send(frame(480)).unwrap();
+        assert_eq!(rx.try_recv().unwrap().frame_count(), 480);
+    }
+
+    #[test]
+    fn epoch_trim_gives_up_when_stopped_before_video_arrives() {
+        let (tx, rx) = mpsc::channel::<AudioFrame>();
+        let epoch: OnceLock<Instant> = OnceLock::new();
+        let stop = AtomicBool::new(true);
+        tx.send(frame(480)).unwrap();
+        assert_eq!(discard_audio_until_video_epoch(&rx, &epoch, &stop), None);
+    }
 
     #[test]
     fn audio_capture_coverage_flags_real_time_vs_stalled_capture() {

@@ -4,9 +4,9 @@ use std::io::{self, Write as StdWrite};
 use std::os::fd::FromRawFd;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc as std_mpsc;
+use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::Instant;
 
@@ -403,6 +403,9 @@ pub fn start_synthetic_recording_bridge(
     frame_store: Option<CompositorFrameStore>,
     video_output: EncoderBridgeVideoOutput,
     bitrate_kbps: Option<u32>,
+    // Set once at the bridge's first delivered frame: the shared session epoch the
+    // audio FIFO writer aligns to (Studio Shell And Live Control Plan, slice A2).
+    video_epoch: Arc<OnceLock<Instant>>,
 ) -> Result<EncoderBridgeRecordingSession> {
     let byte_len = raw_yuv420p_len(width, height)?;
     let stop = Arc::new(AtomicBool::new(false));
@@ -438,6 +441,7 @@ pub fn start_synthetic_recording_bridge(
                 bitrate_kbps,
                 stop: writer_stop,
                 diagnostics_tx,
+                video_epoch,
             };
             write_synthetic_recording_frames(params);
         })
@@ -626,6 +630,7 @@ struct SyntheticRecordingWriterParams {
     video_output: EncoderBridgeVideoOutput,
     bitrate_kbps: Option<u32>,
     diagnostics_tx: mpsc::UnboundedSender<EncoderBridgeWriterEvent>,
+    video_epoch: Arc<OnceLock<Instant>>,
 }
 
 #[derive(Debug, Clone)]
@@ -649,6 +654,7 @@ fn write_synthetic_recording_frames(params: SyntheticRecordingWriterParams) {
         video_output,
         bitrate_kbps,
         diagnostics_tx,
+        video_epoch,
     } = params;
     let fifo = match open_recording_fifo_writer(&fifo_path, &stop) {
         Ok(fifo) => fifo,
@@ -876,6 +882,11 @@ fn write_synthetic_recording_frames(params: SyntheticRecordingWriterParams) {
             }
         }
         if let Some(frame) = fed.as_ref() {
+            if last_fed_sequence.is_none() {
+                // First video content of the session: everything the audio writer
+                // captured before this instant is pre-roll and must be trimmed.
+                let _ = video_epoch.set(Instant::now());
+            }
             last_fed_sequence = Some(frame.sequence);
             max_source_to_encode_age_ms =
                 Some(max_source_to_encode_age_ms.map_or(frame.age_ms, |age| age.max(frame.age_ms)));

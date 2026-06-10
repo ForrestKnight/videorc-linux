@@ -276,7 +276,10 @@ export const defaultCaptureConfig: CaptureConfig = {
   audio: {
     microphoneGainDb: 0,
     microphoneMuted: false,
-    microphoneSyncOffsetMs: -750,
+    // Pure manual trim: structural A/V alignment happens in the backend (the audio
+    // writer trims to the encoder bridge's first-frame epoch), so the old calibrated
+    // -750ms constant is gone — it could never fit every resolution at once.
+    microphoneSyncOffsetMs: 0,
     microphoneSyncOffsetUserSet: false
   },
   video: videoPresets['tutorial-1440p30'],
@@ -338,8 +341,8 @@ export function smokePreviewCompositorCaptureConfig(
 export function normalizeAudioSettings(audio: unknown): AudioSettings {
   const candidate = audio && typeof audio === 'object' ? (audio as Partial<AudioSettings>) : {}
   const offsetUserSet = candidate.microphoneSyncOffsetUserSet === true
-  // Until the user explicitly sets a sync offset, always apply the calibrated default so
-  // mic audio is compensated for capture-pipeline latency out of the box.
+  // Until the user explicitly sets a sync offset, follow the default (0: alignment is
+  // structural in the backend; this control is a manual trim only).
   const microphoneSyncOffsetMs = offsetUserSet
     ? normalizeMicrophoneSyncOffsetMs(
         candidate.microphoneSyncOffsetMs,

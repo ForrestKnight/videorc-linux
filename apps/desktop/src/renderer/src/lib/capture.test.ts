@@ -69,9 +69,12 @@ describe('normalizeMicrophoneSyncOffsetMs', () => {
     ).toBe(-166)
   })
 
-  it('applies the calibrated default until the user sets an offset', () => {
-    expect(normalizeAudioSettings({ microphoneSyncOffsetMs: 0 }).microphoneSyncOffsetMs).toBe(-750)
-    expect(normalizeAudioSettings({}).microphoneSyncOffsetMs).toBe(-750)
+  it('applies the structural default (0) until the user sets an offset', () => {
+    // Alignment happens in the backend via the video epoch; this offset is a pure
+    // manual trim. Stored non-user-set values (e.g. the old -750 calibration)
+    // migrate back to 0 on load.
+    expect(normalizeAudioSettings({ microphoneSyncOffsetMs: -750 }).microphoneSyncOffsetMs).toBe(0)
+    expect(normalizeAudioSettings({}).microphoneSyncOffsetMs).toBe(0)
   })
 
   it('clamps to the backend-supported range', () => {
