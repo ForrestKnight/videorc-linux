@@ -27,6 +27,56 @@ const STATUS_TONE: Record<DeviceStatus, StatusTone> = {
   'permission-required': 'warn'
 }
 
+// Live chip for a capture source (UI rewrite V3): what the preview pipeline says
+// about the source RIGHT NOW. A live source whose newest frame is old is reported
+// honestly — for cameras that means trouble; screens only deliver on change, so
+// staleness is normal there and not flagged.
+function sourceRuntimeChip({
+  state,
+  frameAgeMs,
+  message,
+  staleWarnMs
+}: {
+  state?: 'starting' | 'live' | 'permission-needed' | 'source-missing' | 'device-missing' | 'failed'
+  frameAgeMs?: number
+  message?: string
+  staleWarnMs?: number
+}): { label: string; tone: StatusTone; hint?: string } | null {
+  switch (state) {
+    case 'live':
+      if (staleWarnMs && typeof frameAgeMs === 'number' && frameAgeMs > staleWarnMs) {
+        return {
+          label: `Stale ${Math.round(frameAgeMs / 1000)}s`,
+          tone: 'warn',
+          hint: 'No fresh frames — re-select the source to restart it.'
+        }
+      }
+      return { label: 'Live', tone: 'good' }
+    case 'starting':
+      return { label: 'Starting', tone: 'warn' }
+    case 'permission-needed':
+      return { label: 'Permission needed', tone: 'warn', hint: message }
+    case 'failed':
+      return { label: 'Failed', tone: 'error', hint: message ?? 'Re-select the source to retry.' }
+    case 'source-missing':
+    case 'device-missing':
+      return null
+    default:
+      return null
+  }
+}
+
+function RuntimeChip({ chip }: { chip: { label: string; tone: StatusTone; hint?: string } | null }): ReactElement | null {
+  if (!chip) {
+    return null
+  }
+  return (
+    <span className="flex items-center gap-2" title={chip.hint}>
+      <StatusBadge label="" tone={chip.tone} value={chip.label} />
+    </span>
+  )
+}
+
 // The single home for every capture device — screen/window, camera, and microphone
 // with its mixer — so changing what gets captured never spans pages (UI rewrite plan
 // V1/V2, 2026-06-10).
@@ -42,7 +92,9 @@ export function SourcesTab(): ReactElement {
     meterLevel,
     canSampleAudio,
     selectedMicrophone,
-    isSessionActive
+    isSessionActive,
+    previewCameraStatus,
+    previewScreenStatus
   } = useStudio()
 
   const captureDevices = deviceList.devices.filter((device) => ['screen', 'window'].includes(device.kind))
@@ -103,7 +155,8 @@ export function SourcesTab(): ReactElement {
           </Alert>
         ))}
         <div className="grid gap-4 md:grid-cols-2">
-          <SourceSelect
+          <div className="flex flex-col gap-1.5">
+            <SourceSelect
             devices={captureDevices}
             disabled={isSessionActive}
             label="Screen / window"
@@ -124,8 +177,21 @@ export function SourcesTab(): ReactElement {
                 }
               })
             }
-          />
-          <SourceSelect
+            />
+            <RuntimeChip
+              chip={
+                selectedCaptureId
+                  ? sourceRuntimeChip({
+                      state: previewScreenStatus?.state,
+                      frameAgeMs: previewScreenStatus?.frameAgeMs,
+                      message: previewScreenStatus?.message
+                    })
+                  : null
+              }
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <SourceSelect
             allowNone
             devices={cameras}
             disabled={isSessionActive}
@@ -144,7 +210,20 @@ export function SourcesTab(): ReactElement {
                 }
               })
             }
-          />
+            />
+            <RuntimeChip
+              chip={
+                captureConfig.sources.cameraId
+                  ? sourceRuntimeChip({
+                      state: previewCameraStatus?.state,
+                      frameAgeMs: previewCameraStatus?.frameAgeMs,
+                      message: previewCameraStatus?.message,
+                      staleWarnMs: 3000
+                    })
+                  : null
+              }
+            />
+          </div>
         </div>
         {isSessionActive ? (
           <p className="text-xs text-muted-foreground">Devices are locked while a session is live.</p>
@@ -207,6 +286,17 @@ export function SourcesTab(): ReactElement {
               <SpeakerHigh className="size-4" weight="duotone" />
             )}
             {selectedMicrophone ? selectedMicrophone.name : 'No microphone selected'}
+            <RuntimeChip
+              chip={
+                audioMeter?.status === 'ready'
+                  ? { label: 'Live', tone: 'good' }
+                  : audioMeter?.status === 'silent'
+                    ? { label: 'Silent', tone: 'warn', hint: 'The mic delivered only silence on the last check.' }
+                    : audioMeter?.status === 'permission-required'
+                      ? { label: 'Permission needed', tone: 'warn' }
+                      : null
+              }
+            />
           </span>
           <span className="font-semibold tabular-nums">{formatDb(audioMeter?.peakDb)}</span>
         </div>
