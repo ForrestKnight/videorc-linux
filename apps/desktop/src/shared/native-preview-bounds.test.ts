@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
+import type { PreviewSurfaceBounds } from './backend'
 import {
   normalizePreviewSurfaceBounds,
   previewSurfaceBoundsChanged
 } from './native-preview-bounds'
+
+type FuturePreviewSurfaceBounds = PreviewSurfaceBounds & { futurePlacementToken: string }
 
 describe('normalizePreviewSurfaceBounds', () => {
   it('preserves valid fractional CSS bounds and device scale for CAMetalLayer drawable sizing', () => {
@@ -86,6 +89,41 @@ describe('normalizePreviewSurfaceBounds', () => {
     expect('clipX' in normalized).toBe(false)
     expect('visible' in normalized).toBe(false)
   })
+
+  it('preserves detached-window stacking fields', () => {
+    expect(
+      normalizePreviewSurfaceBounds({
+        screenX: 10,
+        screenY: 20,
+        width: 640,
+        height: 360,
+        scaleFactor: 2,
+        orderAboveWindowId: 42,
+        elevated: true
+      })
+    ).toMatchObject({
+      orderAboveWindowId: 42,
+      elevated: true
+    })
+  })
+
+  it('preserves unknown future fields while normalizing known fields', () => {
+    const futureBounds: FuturePreviewSurfaceBounds = {
+      screenX: Number.NaN,
+      screenY: 20,
+      width: 0,
+      height: 360,
+      scaleFactor: 2,
+      futurePlacementToken: 'keep-me'
+    }
+    const normalized = normalizePreviewSurfaceBounds(futureBounds) as PreviewSurfaceBounds & {
+      futurePlacementToken: string
+    }
+
+    expect(normalized.screenX).toBe(0)
+    expect(normalized.width).toBe(1)
+    expect(normalized.futurePlacementToken).toBe('keep-me')
+  })
 })
 
 describe('previewSurfaceBoundsChanged', () => {
@@ -107,12 +145,14 @@ describe('previewSurfaceBoundsChanged', () => {
     expect(previewSurfaceBoundsChanged(base, { ...base, screenX: base.screenX + 0.4 })).toBe(false)
   })
 
-  it('detects window moves, clip changes, and visibility flips', () => {
+  it('detects window moves, clip changes, visibility flips, and stacking changes', () => {
     expect(previewSurfaceBoundsChanged(base, { ...base, screenX: base.screenX + 10 })).toBe(true)
     expect(
       previewSurfaceBoundsChanged(base, { ...base, clipHeight: (base.clipHeight ?? 0) - 40 })
     ).toBe(true)
     expect(previewSurfaceBoundsChanged(base, { ...base, visible: false })).toBe(true)
+    expect(previewSurfaceBoundsChanged(base, { ...base, orderAboveWindowId: 42 })).toBe(true)
+    expect(previewSurfaceBoundsChanged(base, { ...base, elevated: true })).toBe(true)
   })
 
   it('treats absent clip as full-rect clip so legacy bounds compare cleanly', () => {

@@ -1,31 +1,43 @@
 import type { PreviewSurfaceBounds } from './backend'
 
 export function normalizePreviewSurfaceBounds(bounds: PreviewSurfaceBounds): PreviewSurfaceBounds {
-  const normalized: PreviewSurfaceBounds = {
+  const normalized = {
+    ...(bounds as PreviewSurfaceBounds & Record<string, unknown>),
     screenX: finiteNumber(bounds.screenX, 0),
     screenY: finiteNumber(bounds.screenY, 0),
     width: positiveNumber(bounds.width, 1),
     height: positiveNumber(bounds.height, 1),
     scaleFactor: Math.max(1, positiveNumber(bounds.scaleFactor, 1)),
     screenHeight: optionalPositiveNumber(bounds.screenHeight)
-  }
+  } as PreviewSurfaceBounds & Record<string, unknown>
   if (hasClip(bounds)) {
     normalized.clipX = finiteNumber(bounds.clipX, normalized.screenX)
     normalized.clipY = finiteNumber(bounds.clipY, normalized.screenY)
     normalized.clipWidth = nonNegativeNumber(bounds.clipWidth, 0)
     normalized.clipHeight = nonNegativeNumber(bounds.clipHeight, 0)
+  } else {
+    delete normalized.clipX
+    delete normalized.clipY
+    delete normalized.clipWidth
+    delete normalized.clipHeight
   }
   if (typeof bounds.visible === 'boolean') {
     normalized.visible = bounds.visible
+  } else {
+    delete normalized.visible
   }
   // Stacking fields must survive normalization: dropping them here silently
   // flipped the native surface back to floating level (always-on-top over
   // every app) because the helper treats their absence as detached-window stacking off.
   if (typeof bounds.orderAboveWindowId === 'number') {
     normalized.orderAboveWindowId = bounds.orderAboveWindowId
+  } else {
+    delete normalized.orderAboveWindowId
   }
   if (typeof bounds.elevated === 'boolean') {
     normalized.elevated = bounds.elevated
+  } else {
+    delete normalized.elevated
   }
   return normalized
 }
@@ -52,7 +64,9 @@ export function previewSurfaceBoundsChanged(
     Math.abs((previous.clipY ?? previous.screenY) - (next.clipY ?? next.screenY)) >= 1 ||
     Math.abs((previous.clipWidth ?? previous.width) - (next.clipWidth ?? next.width)) >= 1 ||
     Math.abs((previous.clipHeight ?? previous.height) - (next.clipHeight ?? next.height)) >= 1 ||
-    (previous.visible ?? true) !== (next.visible ?? true)
+    (previous.visible ?? true) !== (next.visible ?? true) ||
+    previous.orderAboveWindowId !== next.orderAboveWindowId ||
+    previous.elevated !== next.elevated
   )
 }
 
