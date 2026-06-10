@@ -275,7 +275,7 @@ pub async fn prepare_youtube_broadcast(
         .api_base_url
         .unwrap_or_else(|| YOUTUBE_API_BASE_URL.to_string());
 
-    let broadcast: YouTubeIdResponse = client
+    let broadcast_response = client
         .post(youtube_api_url(
             &base_url,
             "/youtube/v3/liveBroadcasts",
@@ -299,14 +299,15 @@ pub async fn prepare_youtube_broadcast(
         }))
         .send()
         .await
-        .context("Could not create YouTube broadcast.")?
-        .error_for_status()
-        .context("YouTube broadcast creation failed.")?
-        .json()
-        .await
-        .context("Could not parse YouTube broadcast response.")?;
+        .context("Could not create YouTube broadcast.")?;
+    let broadcast: YouTubeIdResponse =
+        require_youtube_success(broadcast_response, "YouTube broadcast creation failed")
+            .await?
+            .json()
+            .await
+            .context("Could not parse YouTube broadcast response.")?;
 
-    let live_stream: YouTubeLiveStreamResponse = client
+    let stream_response = client
         .post(youtube_api_url(
             &base_url,
             "/youtube/v3/liveStreams",
@@ -329,14 +330,15 @@ pub async fn prepare_youtube_broadcast(
         }))
         .send()
         .await
-        .context("Could not create YouTube stream.")?
-        .error_for_status()
-        .context("YouTube stream creation failed.")?
-        .json()
-        .await
-        .context("Could not parse YouTube stream response.")?;
+        .context("Could not create YouTube stream.")?;
+    let live_stream: YouTubeLiveStreamResponse =
+        require_youtube_success(stream_response, "YouTube stream creation failed")
+            .await?
+            .json()
+            .await
+            .context("Could not parse YouTube stream response.")?;
 
-    let _bound: YouTubeIdResponse = client
+    let bind_response = client
         .post(youtube_api_url(
             &base_url,
             "/youtube/v3/liveBroadcasts/bind",
@@ -349,12 +351,13 @@ pub async fn prepare_youtube_broadcast(
         .bearer_auth(&request.access_token)
         .send()
         .await
-        .context("Could not bind YouTube broadcast to stream.")?
-        .error_for_status()
-        .context("YouTube broadcast bind failed.")?
-        .json()
-        .await
-        .context("Could not parse YouTube bind response.")?;
+        .context("Could not bind YouTube broadcast to stream.")?;
+    let _bound: YouTubeIdResponse =
+        require_youtube_success(bind_response, "YouTube broadcast bind failed")
+            .await?
+            .json()
+            .await
+            .context("Could not parse YouTube bind response.")?;
 
     let stream_key_secret_ref = format!("platform:youtube:{}:stream-key", request.account_id);
     put_secret(
@@ -388,7 +391,7 @@ pub async fn list_youtube_channels(
     let base_url = request
         .api_base_url
         .unwrap_or_else(|| YOUTUBE_API_BASE_URL.to_string());
-    let response: YouTubeChannelListResponse = client
+    let channels_response = client
         .get(youtube_api_url(
             &base_url,
             "/youtube/v3/channels",
@@ -397,12 +400,13 @@ pub async fn list_youtube_channels(
         .bearer_auth(&request.access_token)
         .send()
         .await
-        .context("Could not fetch YouTube channels.")?
-        .error_for_status()
-        .context("YouTube channel list request failed.")?
-        .json()
-        .await
-        .context("Could not parse YouTube channel list response.")?;
+        .context("Could not fetch YouTube channels.")?;
+    let response: YouTubeChannelListResponse =
+        require_youtube_success(channels_response, "YouTube channel list request failed")
+            .await?
+            .json()
+            .await
+            .context("Could not parse YouTube channel list response.")?;
 
     Ok(YouTubeChannelListResult {
         platform: StreamPlatform::Youtube,
@@ -447,7 +451,7 @@ pub async fn get_youtube_stream_status(
     let base_url = request
         .api_base_url
         .unwrap_or_else(|| YOUTUBE_API_BASE_URL.to_string());
-    let response: YouTubeLiveStreamListResponse = client
+    let status_response = client
         .get(youtube_api_url(
             &base_url,
             "/youtube/v3/liveStreams",
@@ -456,12 +460,13 @@ pub async fn get_youtube_stream_status(
         .bearer_auth(&request.access_token)
         .send()
         .await
-        .context("Could not fetch YouTube stream status.")?
-        .error_for_status()
-        .context("YouTube stream status request failed.")?
-        .json()
-        .await
-        .context("Could not parse YouTube stream status response.")?;
+        .context("Could not fetch YouTube stream status.")?;
+    let response: YouTubeLiveStreamListResponse =
+        require_youtube_success(status_response, "YouTube stream status request failed")
+            .await?
+            .json()
+            .await
+            .context("Could not parse YouTube stream status response.")?;
 
     let item = response
         .items
@@ -603,6 +608,67 @@ fn youtube_api_url(base_url: &str, path: &str, query: &[(&str, &str)]) -> Result
         .context("Invalid YouTube API base URL.")?;
     url.query_pairs_mut().extend_pairs(query.iter().copied());
     Ok(url)
+}
+
+/// Replace `error_for_status` for YouTube API calls: Google puts the actionable
+/// reason (liveStreamingNotEnabled, insufficientLivePermissions, quota…) in the
+/// error BODY, and dropping it leaves the user with an unfixable generic message.
+async fn require_youtube_success(
+    response: reqwest::Response,
+    action: &str,
+) -> Result<reqwest::Response> {
+    let status = response.status();
+    if status.is_success() {
+        return Ok(response);
+    }
+    let body = response.text().await.unwrap_or_default();
+    anyhow::bail!("{action} ({status}): {}", youtube_error_detail(&body));
+}
+
+fn youtube_error_detail(body: &str) -> String {
+    #[derive(Deserialize)]
+    struct GoogleErrorEnvelope {
+        error: Option<GoogleErrorBody>,
+    }
+    #[derive(Deserialize)]
+    struct GoogleErrorBody {
+        message: Option<String>,
+        status: Option<String>,
+        errors: Option<Vec<GoogleErrorItem>>,
+    }
+    #[derive(Deserialize)]
+    struct GoogleErrorItem {
+        reason: Option<String>,
+        message: Option<String>,
+    }
+
+    if let Ok(envelope) = serde_json::from_str::<GoogleErrorEnvelope>(body)
+        && let Some(error) = envelope.error
+    {
+        let reason = error
+            .errors
+            .as_ref()
+            .and_then(|errors| errors.first())
+            .and_then(|item| item.reason.clone())
+            .or(error.status);
+        let message = error
+            .errors
+            .as_ref()
+            .and_then(|errors| errors.first())
+            .and_then(|item| item.message.clone())
+            .or(error.message)
+            .unwrap_or_else(|| "no detail".to_string());
+        return match reason {
+            Some(reason) => format!("{reason}: {message}"),
+            None => message,
+        };
+    }
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        "no error body".to_string()
+    } else {
+        trimmed.chars().take(300).collect()
+    }
 }
 
 fn youtube_privacy(privacy: StreamPrivacy) -> &'static str {
@@ -1176,6 +1242,22 @@ mod tests {
             logs[0].authorization.as_deref(),
             Some("Bearer access-token")
         );
+    }
+
+    #[test]
+    fn youtube_error_detail_surfaces_google_reason_and_message() {
+        let body = r#"{"error":{"code":403,"message":"The user is not enabled for live streaming.","errors":[{"message":"The user is not enabled for live streaming.","domain":"youtube.liveBroadcast","reason":"liveStreamingNotEnabled"}]}}"#;
+        assert_eq!(
+            youtube_error_detail(body),
+            "liveStreamingNotEnabled: The user is not enabled for live streaming."
+        );
+
+        // Non-JSON bodies degrade to a truncated raw snippet, never an empty message.
+        assert_eq!(
+            youtube_error_detail("<html>boom</html>"),
+            "<html>boom</html>"
+        );
+        assert_eq!(youtube_error_detail("  "), "no error body");
     }
 
     #[test]
