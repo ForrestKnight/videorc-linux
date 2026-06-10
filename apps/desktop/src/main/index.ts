@@ -231,6 +231,40 @@ function emitPreviewWindowState(): void {
   }
 }
 
+// Placement hot path: main applies the preview window's content rect to both
+// surface hosts DIRECTLY — no renderer round trip. The renderer still owns the
+// backend session lifecycle (create/destroy/suppression) off the same state
+// events, but a delayed renderer must never leave the surface misplaced.
+function pushPreviewWindowPlacement(): void {
+  if (nativePreviewEmbeddedMode) {
+    return
+  }
+  const state = previewWindowState()
+  if (!state.open || !state.contentBounds) {
+    return
+  }
+  const contentBounds = state.contentBounds
+  const bounds: PreviewSurfaceBounds = {
+    screenX: contentBounds.x,
+    screenY: contentBounds.y,
+    width: contentBounds.width,
+    height: contentBounds.height,
+    scaleFactor: state.scaleFactor,
+    screenHeight: state.screenHeight,
+    clipX: contentBounds.x,
+    clipY: contentBounds.y,
+    clipWidth: contentBounds.width,
+    clipHeight: contentBounds.height,
+    visible: state.visible
+  }
+  const surfaceExists = Boolean(nativePreviewSurfaceWindow && !nativePreviewSurfaceWindow.isDestroyed())
+  void applyNativePreviewHostCommands([
+    { kind: surfaceExists ? 'update-bounds' : 'create', bounds }
+  ]).catch((error) => {
+    console.error('Preview window placement push failed:', error)
+  })
+}
+
 const PREVIEW_WINDOW_HTML = `<!doctype html><html><head><meta charset="utf-8"><style>
   html, body { margin: 0; height: 100%; background: #09090b; color: #a1a1aa;
     font: 12px/1.4 -apple-system, BlinkMacSystemFont, sans-serif; overflow: hidden;
@@ -284,6 +318,7 @@ async function openPreviewWindow(): Promise<PreviewWindowState> {
   for (const event of ['move', 'resize', 'show', 'hide', 'minimize', 'restore'] as const) {
     window.on(event as 'move', () => {
       if (previewWindow === window) {
+        pushPreviewWindowPlacement()
         emitPreviewWindowState()
       }
     })
@@ -301,6 +336,7 @@ async function openPreviewWindow(): Promise<PreviewWindowState> {
   })
 
   await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(PREVIEW_WINDOW_HTML)}`)
+  pushPreviewWindowPlacement()
   emitPreviewWindowState()
   return previewWindowState()
 }
@@ -1162,6 +1198,13 @@ async function updateNativePreviewSurfaceBounds(bounds: PreviewSurfaceBounds): P
     nativePreviewRendererBounds = bounds
   }
   if (!nativePreviewSurfaceWindow || nativePreviewSurfaceWindow.isDestroyed()) {
+    // Never resurrect a torn-down surface just to hide it: after the detached
+    // preview window closes (U2 teardown), the app-focus policy still pushes
+    // hidden bounds, and recreating the proof window for them would undo the
+    // teardown's whole point.
+    if (!surfaceWindowPlacement(bounds).visible) {
+      return nativePreviewSurfaceStatus
+    }
     return createNativePreviewSurface(bounds)
   }
 
@@ -2322,6 +2365,10 @@ async function runSmokePreviewMotionCommand(command: string, params: Record<stri
       width: typeof params.width === 'number' ? params.width : current.width,
       height: typeof params.height === 'number' ? params.height : current.height
     })
+    // macOS does not reliably emit 'move' for programmatic position-only
+    // setBounds, so push placement and state explicitly.
+    pushPreviewWindowPlacement()
+    emitPreviewWindowState()
     return previewWindowState()
   }
 
@@ -2335,6 +2382,8 @@ async function runSmokePreviewMotionCommand(command: string, params: Record<stri
         bounds: surface && !surface.isDestroyed() ? surface.getBounds() : null
       },
       nativeOwnsPlacement: nativeSurfaceOwnsPlacement(),
+      framePollingSuppressedFlag: nativePreviewSurfaceFramePollingSuppressed,
+      rendererBounds: nativePreviewRendererBounds,
       surfaceStatus: {
         state: nativePreviewSurfaceStatus.state,
         transport: nativePreviewSurfaceStatus.transport,

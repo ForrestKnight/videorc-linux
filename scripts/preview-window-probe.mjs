@@ -88,16 +88,32 @@ async function main() {
     JSON.stringify(state.contentBounds)
   )
 
-  // --- Close: surface leaves the screen -------------------------------------------
+  // --- Close: surface leaves the screen AND the session tears down (U2) -----------
   const sizeHint = { width: state.contentBounds.width, height: state.contentBounds.height }
   await smokeCommand('preview-window-close')
   await assertSurfaceHidden('close: surface leaves the screen with the window', sizeHint)
-  const closedState = await smokeCommand('preview-window-state')
-  assertProbe(closedState.open === false, 'close: preview window reports closed', JSON.stringify(closedState))
+  const closedState = await waitFor(
+    async () => smokeCommand('preview-window-state'),
+    (s) => s.open === false && s.surface.exists === false && s.framePollingSuppressedFlag === true,
+    8000
+  )
+  assertProbe(closedState.ok, 'close: surface session destroyed and frame polling suppressed', JSON.stringify(closedState.last))
+  const decayed = await waitFor(
+    async () => smokeCommand('preview-window-state'),
+    (s) => s.nativeOwnsPlacement === false,
+    4000
+  )
+  assertProbe(decayed.ok, 'close: native presents stop (placement authority decays)', JSON.stringify(decayed.last))
 
-  // --- Reopen: surface returns -----------------------------------------------------
+  // --- Reopen: surface returns and polling resumes ---------------------------------
   await smokeCommand('preview-window-open')
   await waitForSurfaceAtContentRect('reopen: surface returns at the window content rect')
+  const reopened = await waitFor(
+    async () => smokeCommand('preview-window-state'),
+    (s) => s.framePollingSuppressedFlag === false,
+    5000
+  )
+  assertProbe(reopened.ok, 'reopen: frame polling resumes', JSON.stringify(reopened.last))
 
   console.log('\n=== Preview window probe summary ===')
   if (failures.length === 0) {
@@ -166,6 +182,19 @@ async function assertSurfaceHidden(label, sizeHint, timeoutMsLocal = 8000) {
     await sleep(250)
   } while (Date.now() < deadline)
   assertProbe(false, label, `state: ${JSON.stringify(state)}, floating: ${JSON.stringify(floating)}`)
+}
+
+async function waitFor(fetchState, predicate, timeoutMsLocal) {
+  const deadline = Date.now() + timeoutMsLocal
+  let last = null
+  do {
+    last = await fetchState()
+    if (predicate(last)) {
+      return { ok: true, last }
+    }
+    await sleep(250)
+  } while (Date.now() < deadline)
+  return { ok: false, last }
 }
 
 async function smokeCommand(command, params = {}) {

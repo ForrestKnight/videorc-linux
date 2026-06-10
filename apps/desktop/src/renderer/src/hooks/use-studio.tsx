@@ -463,7 +463,11 @@ export function useStudio(): StudioContextValue {
 export function StudioProvider({ children }: { children: ReactNode }): ReactElement {
   const [connection, setConnection] = useState<BackendConnection | null>(null)
   const [client, setClient] = useState<BackendClient | null>(null)
+  const clientRef = useRef<BackendClient | null>(null)
   const [wsStatus, setWsStatus] = useState<WsStatus>('waiting')
+  const wsStatusRef = useRef<WsStatus>('waiting')
+  clientRef.current = client
+  wsStatusRef.current = wsStatus
   const [health, setHealth] = useState<BackendHealth | null>(null)
   const [deviceList, setDeviceList] = useState<DeviceList>({ devices: [], warnings: [] })
   const [recording, setRecording] = useState<RecordingStatus>({ state: 'idle', message: 'Ready.' })
@@ -532,6 +536,9 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   const previewCameraStatusRef = useRef<PreviewCameraStatus>(idlePreviewCameraStatus())
   const previewScreenStatusRef = useRef<PreviewScreenStatus>(idlePreviewScreenStatus())
   const recordingRef = useRef<RecordingStatus>({ state: 'idle', message: 'Ready.' })
+  // Late-bound mirror so applyRecordingStatus (declared earlier) can trigger the
+  // consolidated frame-polling suppression defined with the preview window state.
+  const syncFramePollingSuppressionRef = useRef<(() => void) | null>(null)
   const nativePreviewCameraKeyRef = useRef<string | null>(null)
   const nativePreviewScreenKeyRef = useRef<string | null>(null)
   const nativePreviewSurfaceSceneRevisionRef = useRef(0)
@@ -631,16 +638,8 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   const applyRecordingStatus = useCallback((status: RecordingStatus) => {
     recordingRef.current = status
     setRecording(status)
-    if (nativePreviewSurfaceEnabled && window.videorc?.setNativePreviewSurfaceFramePollingSuppressed) {
-      const suppressFramePolling = isActiveRecordingState(status.state)
-      void window.videorc
-        .setNativePreviewSurfaceFramePollingSuppressed(suppressFramePolling)
-        .then(applyPreviewSurfaceStatus)
-        .catch((error: unknown) => {
-          console.error('Native preview frame-polling suppression failed:', error)
-        })
-    }
-  }, [applyPreviewSurfaceStatus, nativePreviewSurfaceEnabled])
+    syncFramePollingSuppressionRef.current?.()
+  }, [])
 
   const queueNativePreviewSurfacePresentReport = useCallback((
     activeClient: BackendClient,
@@ -2036,7 +2035,9 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     screenHeight: 0,
     embeddedMode: false
   })
-  const previewWindowLastBoundsRef = useRef<PreviewSurfaceBounds | null>(null)
+  const previewWindowRef = useRef(previewWindow)
+  previewWindowRef.current = previewWindow
+  const previewWindowSurfaceActiveRef = useRef(false)
 
   useEffect(() => {
     let cancelled = false
@@ -2052,10 +2053,47 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     }
   }, [])
 
+  // Frame polling serves the Electron proof surface; it is pure overhead while a
+  // session records (the compositor feeds the encoder directly) and while the
+  // detached preview window is closed (nothing presents at all) — UI rewrite U2.
+  const syncFramePollingSuppression = useCallback(() => {
+    if (!nativePreviewSurfaceEnabled || !window.videorc?.setNativePreviewSurfaceFramePollingSuppressed) {
+      return
+    }
+    const detachedClosed = !previewWindowRef.current.embeddedMode && !previewWindowRef.current.open
+    const suppress = isActiveRecordingState(recordingRef.current.state) || detachedClosed
+    void window.videorc
+      .setNativePreviewSurfaceFramePollingSuppressed(suppress)
+      .then(applyPreviewSurfaceStatus)
+      .catch((error: unknown) => {
+        console.error('Native preview frame-polling suppression failed:', error)
+      })
+  }, [applyPreviewSurfaceStatus, nativePreviewSurfaceEnabled])
+
+  syncFramePollingSuppressionRef.current = syncFramePollingSuppression
+
+  // Closing the preview window must cost nothing: tear the surface session down
+  // (helper window, proof window, backend session) instead of merely hiding it.
+  const teardownDetachedPreviewSurface = useCallback(async () => {
+    nativePreviewSurfaceCreatedRef.current = false
+    nativePreviewSurfaceLastSyncedBoundsRef.current = null
+    try {
+      if (window.videorc?.applyNativePreviewHostCommands) {
+        await window.videorc.applyNativePreviewHostCommands([{ kind: 'destroy' }])
+      }
+      if (clientRef.current && wsStatusRef.current === 'connected') {
+        await clientRef.current.request('preview.surface.destroy')
+      }
+    } catch (error) {
+      console.error('Detached preview surface teardown failed:', error)
+    }
+  }, [])
+
   useEffect(() => {
     if (previewWindow.embeddedMode || !nativePreviewSurfaceEnabled) {
       return
     }
+    syncFramePollingSuppression()
     if (previewWindow.open && previewWindow.contentBounds) {
       const contentBounds = previewWindow.contentBounds
       const bounds: PreviewSurfaceBounds = {
@@ -2071,17 +2109,21 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
         clipHeight: contentBounds.height,
         visible: previewWindow.visible
       }
-      previewWindowLastBoundsRef.current = bounds
+      previewWindowSurfaceActiveRef.current = true
       void syncNativePreviewSurfaceBounds(bounds)
       return
     }
-    const lastBounds = previewWindowLastBoundsRef.current
-    if (!previewWindow.open && lastBounds && lastBounds.visible !== false) {
-      const hidden = { ...lastBounds, visible: false }
-      previewWindowLastBoundsRef.current = hidden
-      void syncNativePreviewSurfaceBounds(hidden)
+    if (!previewWindow.open && previewWindowSurfaceActiveRef.current) {
+      previewWindowSurfaceActiveRef.current = false
+      void teardownDetachedPreviewSurface()
     }
-  }, [nativePreviewSurfaceEnabled, previewWindow, syncNativePreviewSurfaceBounds])
+  }, [
+    nativePreviewSurfaceEnabled,
+    previewWindow,
+    syncFramePollingSuppression,
+    syncNativePreviewSurfaceBounds,
+    teardownDetachedPreviewSurface
+  ])
 
   const openPreviewWindow = useCallback(async () => {
     await window.videorc?.openPreviewWindow?.()
