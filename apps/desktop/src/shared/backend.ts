@@ -814,22 +814,18 @@ export interface PreviewSurfaceBounds {
   height: number
   scaleFactor: number
   screenHeight?: number
-  // Visible intersection of the studio slot with its clipping ancestors and the
-  // window viewport, in the same absolute screen coordinate space as screenX/screenY.
-  // Absent means "treat the full rect as visible" (legacy callers). The native host
-  // crops the surface to this rect so a half-scrolled preview clips instead of
-  // floating over surrounding UI.
+  // Optional clip rect in the same absolute screen coordinate space as
+  // screenX/screenY. Absent means "treat the full rect as visible".
   clipX?: number
   clipY?: number
   clipWidth?: number
   clipHeight?: number
-  // False when the slot is fully scrolled away, the document is hidden, or the
-  // window is not visible — the native host must hide the surface entirely.
+  // False when the preview window is not visible; the native host must hide the
+  // surface entirely.
   visible?: boolean
   // Detached preview window stacking: the global window number of the Electron
   // preview window the native surface sits directly above (normal level), and
-  // whether the pair floats above other apps (always-on-top). Absent = legacy
-  // embedded overlay behavior.
+  // whether the pair floats above other apps (always-on-top).
   orderAboveWindowId?: number
   elevated?: boolean
 }
@@ -1580,8 +1576,8 @@ export interface RuntimeInfo {
   nativePreviewSurfaceStageSuspended?: boolean
 }
 
-// Detached preview window (UI rewrite U1): main is the bounds authority; the
-// renderer mirrors this state into the PreviewSurfaceBounds pipeline.
+// Detached preview window: main is the bounds authority; the renderer uses this
+// state to create and destroy the backend preview surface session.
 export interface PreviewWindowState {
   open: boolean
   visible: boolean
@@ -1590,7 +1586,6 @@ export interface PreviewWindowState {
   scaleFactor: number
   screenHeight: number
   alwaysOnTop: boolean
-  embeddedMode: boolean
 }
 
 export interface VideorcApi {

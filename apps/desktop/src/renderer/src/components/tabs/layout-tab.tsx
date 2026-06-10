@@ -44,18 +44,10 @@ export function LayoutTab(): ReactElement {
     captureConfig,
     openPreviewPermissions,
     patchLayout,
-    previewUrl,
-    previewLoading,
     previewLiveStatus,
-    previewCameraStatus,
-    previewScreenStatus,
     previewSurfaceStatus,
     nativePreviewSurfaceEnabled,
     refreshPreview,
-    registerPreviewSurfaceResize,
-    syncNativePreviewSurfaceBounds,
-    revealPermissionTarget,
-    runtimeInfo,
     scene,
     sceneEditMode,
     selectedSceneSourceId,
@@ -127,26 +119,11 @@ export function LayoutTab(): ReactElement {
 
         <PanelSection icon={FrameCorners} title="Preview">
           <PreviewStage
-            layout={layout}
             onOpenPermissions={openPreviewPermissions}
-            onRevealPermissionTarget={revealPermissionTarget}
             onRetry={refreshPreview}
-            onPreviewSurfaceResize={registerPreviewSurfaceResize}
-            onNativePreviewSurfaceBounds={syncNativePreviewSurfaceBounds}
-            previewCameraStatus={previewCameraStatus}
             previewLiveStatus={previewLiveStatus}
-            previewScreenStatus={previewScreenStatus}
             previewSurfaceStatus={previewSurfaceStatus}
             nativePreviewSurfaceEnabled={nativePreviewSurfaceEnabled}
-            previewLoading={previewLoading}
-            previewUrl={previewUrl}
-            runtimeInfo={runtimeInfo}
-            scene={scene}
-            sceneEditMode={sceneEditMode}
-            selectedSceneSourceId={selectedSceneSourceId}
-            onSelectSceneSource={setSelectedSceneSourceId}
-            onCameraDragCommit={commitCameraTransform}
-            dragDisabled={isSessionActive || layout.layoutPreset !== 'screen-camera'}
           />
         </PanelSection>
 

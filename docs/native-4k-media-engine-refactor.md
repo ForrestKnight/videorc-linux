@@ -14,7 +14,7 @@ The execution slices live in:
 /Users/orcdev/Documents/Obsidian Vault/plans/planned/2026-06-08 - Videorc Native 4K OBS Class Media Engine Refactor Slices.md
 ```
 
-A priority insertion from 2026-06-09 live usage (stream A/V sync fix, preview glued to the studio slot, left-sidebar studio shell, live layout switching — pulls forward master Phases 7/10/12) lives in:
+A priority insertion from 2026-06-09 live usage (stream A/V sync fix, detached preview window, left-sidebar studio shell, live layout switching — pulls forward master Phases 7/10/12) lives in:
 
 ```text
 /Users/orcdev/Documents/Obsidian Vault/plans/planned/2026-06-09 - Videorc Studio Shell And Live Control Plan.md
@@ -90,13 +90,7 @@ pnpm baseline:stream:av-sync:endurance -- --gate
 
 **Default since the UI rewrite (2026-06-10, slices U1–U4): the live preview is a detached OS window.** Main owns the window and is the placement and existence authority — it applies the window's content rect to both surface hosts directly on every move/resize/visibility event (no renderer round trip), tears the session down on close (frame polling suppressed, hosts destroyed, only `destroy` commands pass while closed), and restores frame/open-state/always-on-top across launches. The placement gate is `node scripts/preview-window-probe.mjs`.
 
-The legacy in-page glued contract below remains behind `VIDEORC_NATIVE_PREVIEW_EMBEDDED=1` (the stage smokes set it) and is scheduled for deletion once the detached window survives a release; its gate is `node scripts/preview-glue-probe.mjs`.
-
-Legacy embedded contract (B1–B3): the renderer continuously reports the slot rect plus a visible clip rect (slot ∩ clipping ancestors ∩ viewport) and a visibility verdict; the cross-process host window covers exactly the clip rect, ignores all mouse events, is not movable, and hides whenever:
-
-- the slot is fully scrolled out of view,
-- the document is hidden/minimized or the app window loses focus, or
-- any open Electron overlay (command palette, dialog, select menu, tooltip, toast) intersects the slot — overlays must never render underneath the preview. New overlay primitives must either portal under `document.body` with one of the selectors in `preview-stage.tsx` (`OVERLAY_SELECTORS`) or be added to that list.
+The legacy in-page glued contract and its embedded-mode flag were deleted after the detached preview window became the only supported preview UI path. Do not reintroduce renderer slot tracking; new placement work belongs to the preview-window contract above.
 
 ## Output Profiles
 

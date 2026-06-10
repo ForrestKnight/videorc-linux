@@ -199,9 +199,6 @@ function launchAndReadConnection() {
       cwd: repoRoot,
       detached: true,
       env: {
-        // These smokes exercise the legacy in-page glued preview stage (UI rewrite U1
-        // made the detached preview window the default).
-        VIDEORC_NATIVE_PREVIEW_EMBEDDED: '1',
         ...process.env,
         VIDEORC_NATIVE_PREVIEW_SURFACE: '0',
         VIDEORC_SMOKE_OUTPUT_DIR: outputDirectory,

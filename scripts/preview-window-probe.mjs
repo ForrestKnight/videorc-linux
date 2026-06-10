@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 // Preview window probe — headless verification of the detached preview window
-// (UI rewrite U1). This is the DEFAULT preview mode; the glue probe covers the
-// legacy embedded stage behind VIDEORC_NATIVE_PREVIEW_EMBEDDED=1.
+// This is the only production preview UI path.
 //
 // Verifies on the real pipeline:
 //   1. Opening the preview window creates the surface session and the surface
 //      covers the window's content rect.
-//   2. Moving and resizing the window keep the surface glued to the content rect.
+//   2. Moving and resizing the window keep the surface aligned to the content rect.
 //   3. Closing the window takes the surface off the screen.
 //   4. Reopening brings the surface back.
 //
@@ -63,12 +62,6 @@ async function main() {
   // --- Open: surface session created at the window's content rect ---------------
   const opened = await smokeCommand('preview-window-open')
   assertProbe(opened.open === true, 'open: preview window reports open', JSON.stringify(opened))
-  assertProbe(
-    opened.embeddedMode !== true,
-    'open: detached mode is the default (no embedded flag)',
-    JSON.stringify(opened)
-  )
-
   // Deterministic starting frame: persisted/relative frames drifted off-screen
   // across runs and macOS clamping broke the geometry asserts.
   await smokeCommand('preview-window-set-bounds', { x: 240, y: 160, width: 960, height: 568 })
@@ -116,7 +109,7 @@ async function main() {
 
   console.log('\n=== Preview window probe summary ===')
   if (failures.length === 0) {
-    console.log('PASS — open, move, resize, close, and reopen all keep the surface glued to the preview window.')
+    console.log('PASS — open, move, resize, close, and reopen all keep the surface aligned to the preview window.')
     return 0
   }
   for (const failure of failures) console.log(`FAIL: ${failure}`)

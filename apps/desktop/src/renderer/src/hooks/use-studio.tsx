@@ -1945,10 +1945,9 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
               : captureConfig.sources.cameraId
                 ? 'camera'
                 : 'synthetic'
-          // Glue fast path: placement must not wait for two backend round trips
-          // (scrolling reads as the preview sliding over the page). Apply the
-          // update-bounds host command straight to the native hosts, then inform the
-          // backend and drop its stale echo below.
+          // Placement fast path: preview-window movement must not wait for two
+          // backend round trips. Apply the update-bounds host command straight to
+          // the native hosts, then inform the backend and drop its stale echo below.
           const directlyApplied = surfaceAlreadyCreated && applyHostCommands
           if (directlyApplied) {
             await applyHostCommands([{ kind: 'update-bounds', bounds: nextBounds }])
@@ -2025,17 +2024,16 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     ]
   )
 
-  // --- Detached preview window (UI rewrite U1) ---------------------------------
-  // Main owns the window and is the placement authority; this mirrors its content
-  // rect into the same PreviewSurfaceBounds pipeline the embedded slot used.
+  // --- Detached preview window --------------------------------------------------
+  // Main owns the window and is the placement authority; the renderer creates and
+  // tears down the backend preview surface session from this state.
   const [previewWindow, setPreviewWindow] = useState<PreviewWindowState>({
     open: false,
     visible: false,
     contentBounds: null,
     scaleFactor: 1,
     screenHeight: 0,
-    alwaysOnTop: false,
-    embeddedMode: false
+    alwaysOnTop: false
   })
   const previewWindowRef = useRef(previewWindow)
   previewWindowRef.current = previewWindow
@@ -2080,8 +2078,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     if (!nativePreviewSurfaceEnabled || !window.videorc?.setNativePreviewSurfaceFramePollingSuppressed) {
       return
     }
-    const detachedClosed = !previewWindowRef.current.embeddedMode && !previewWindowRef.current.open
-    const suppress = isActiveRecordingState(recordingRef.current.state) || detachedClosed
+    const suppress = isActiveRecordingState(recordingRef.current.state) || !previewWindowRef.current.open
     void window.videorc
       .setNativePreviewSurfaceFramePollingSuppressed(suppress)
       .then(applyPreviewSurfaceStatus)
@@ -2110,7 +2107,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   }, [])
 
   useEffect(() => {
-    if (previewWindow.embeddedMode || !nativePreviewSurfaceEnabled) {
+    if (!nativePreviewSurfaceEnabled) {
       return
     }
     syncFramePollingSuppression()
@@ -2160,11 +2157,8 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   // The preview window is locked to the OUTPUT aspect ratio — the user can never
   // squeeze or stretch what they will record/stream.
   useEffect(() => {
-    if (previewWindow.embeddedMode) {
-      return
-    }
     void window.videorc?.setPreviewWindowAspectRatio?.(captureConfig.video.width, captureConfig.video.height)
-  }, [captureConfig.video.width, captureConfig.video.height, previewWindow.embeddedMode])
+  }, [captureConfig.video.width, captureConfig.video.height])
 
   const syncNativePreviewSurfaceScene = useCallback(async () => {
     if (!nativePreviewSurfaceEnabled || !window.videorc?.updateNativePreviewSurfaceScene) {

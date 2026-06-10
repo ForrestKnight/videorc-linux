@@ -64,19 +64,11 @@ export function StudioTab(): ReactElement {
     stopSession,
     captureConfig,
     setCaptureConfig,
-    previewUrl,
-    previewLoading,
     previewLiveStatus,
-    previewCameraStatus,
-    previewScreenStatus,
     previewSurfaceStatus,
     nativePreviewSurfaceEnabled,
     refreshPreview,
-    registerPreviewSurfaceResize,
-    syncNativePreviewSurfaceBounds,
     openPreviewPermissions,
-    revealPermissionTarget,
-    runtimeInfo,
     selectedCaptureDevice,
     selectedCamera,
     selectedMicrophone,
@@ -86,12 +78,8 @@ export function StudioTab(): ReactElement {
     diagnosticStats,
     audioMeter,
     meterLevel,
-    scene,
     sceneEditMode,
-    selectedSceneSourceId,
     setSceneEditMode,
-    setSelectedSceneSourceId,
-    commitCameraTransform,
     isSessionActive,
     screens,
     activeScreen,
@@ -208,27 +196,11 @@ export function StudioTab(): ReactElement {
 
       {/* Big preview on top */}
       <PreviewStage
-        activeScreen={activeScreen}
-        layout={captureConfig.layout}
         onOpenPermissions={openPreviewPermissions}
-        onRevealPermissionTarget={revealPermissionTarget}
         onRetry={refreshPreview}
-        onPreviewSurfaceResize={registerPreviewSurfaceResize}
-        onNativePreviewSurfaceBounds={syncNativePreviewSurfaceBounds}
-        previewCameraStatus={previewCameraStatus}
         previewLiveStatus={previewLiveStatus}
-        previewScreenStatus={previewScreenStatus}
         previewSurfaceStatus={previewSurfaceStatus}
         nativePreviewSurfaceEnabled={nativePreviewSurfaceEnabled}
-        previewLoading={previewLoading}
-        previewUrl={previewUrl}
-        runtimeInfo={runtimeInfo}
-        scene={scene}
-        sceneEditMode={sceneEditMode}
-        selectedSceneSourceId={selectedSceneSourceId}
-        onSelectSceneSource={setSelectedSceneSourceId}
-        onCameraDragCommit={commitCameraTransform}
-        dragDisabled={isSessionActive || captureConfig.layout.layoutPreset !== 'screen-camera'}
       />
 
       {/* Action bar: status + the two primary buttons + output */}

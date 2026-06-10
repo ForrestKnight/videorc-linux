@@ -34,7 +34,6 @@ export function AppShell(): ReactElement {
   )
 
   // Studio control pages are ordinary tabs grouped under "Studio" in the sidebar.
-  // Studio content (and the glued preview) renders only on the Studio tab itself.
   const openStudioPanel = useCallback((panel: StudioPanel) => {
     setActive(panel)
   }, [])
@@ -67,7 +66,7 @@ export function AppShell(): ReactElement {
         event.preventDefault()
         setCommandOpen((value) => !value)
       }
-      if (event.key.toLowerCase() === 'p' && (event.metaKey || event.ctrlKey) && !previewWindow.embeddedMode) {
+      if (event.key.toLowerCase() === 'p' && (event.metaKey || event.ctrlKey)) {
         event.preventDefault()
         if (previewWindow.open) {
           void closePreviewWindow()
@@ -78,7 +77,7 @@ export function AppShell(): ReactElement {
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [closePreviewWindow, openPreviewWindow, previewWindow.embeddedMode, previewWindow.open])
+  }, [closePreviewWindow, openPreviewWindow, previewWindow.open])
 
   const live = recording.state === 'recording' || recording.state === 'streaming'
   const statusTone: StatusDotTone = live
