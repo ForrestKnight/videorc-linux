@@ -2313,7 +2313,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
 
       try {
         setLastError(null)
-        const redirectUri = await window.videorc.getOAuthCallbackRedirectUri()
+        const redirectUri = await window.videorc.getOAuthCallbackRedirectUri(platform)
         const params = redirectUri ? { platform, redirectUri } : { platform }
         const result = await client.request<OAuthStartResult>('platformAccounts.oauth.startProvider', params)
         await window.videorc.openOAuthUrl(result.authUrl)

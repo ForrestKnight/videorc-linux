@@ -64,7 +64,6 @@ const backendLogs: BackendLogEvent[] = []
 const pendingOAuthCallbackUrls: string[] = []
 const OAUTH_CALLBACK_PROTOCOL = 'videorc'
 const OAUTH_APP_PROTOCOL_REDIRECT_URI = 'videorc://oauth/callback'
-const oauthAppProtocolEnabled = process.env.VIDEORC_OAUTH_CALLBACK_MODE === 'app-protocol'
 // v1 default: the native preview surface is always on; the env var is a developer
 // kill switch only (VIDEORC_NATIVE_PREVIEW_SURFACE=0).
 const nativePreviewSurfaceProofEnabled = process.env.VIDEORC_NATIVE_PREVIEW_SURFACE !== '0'
@@ -1790,8 +1789,12 @@ function registerOAuthCallbackProtocol(): void {
   app.setAsDefaultProtocolClient(OAUTH_CALLBACK_PROTOCOL)
 }
 
-function oauthCallbackRedirectUri(): string | null {
-  return oauthAppProtocolEnabled ? OAUTH_APP_PROTOCOL_REDIRECT_URI : null
+function oauthCallbackRedirectUri(platform?: string): string | null {
+  // Callback transport is a per-provider contract, never a global mode: the bundled
+  // X app validates against its registered videorc://oauth/callback, while Google
+  // rejects custom schemes for desktop clients (only loopback redirects comply with
+  // its OAuth policy — sending app-protocol produced "Error 400: invalid_request").
+  return platform === 'x' ? OAUTH_APP_PROTOCOL_REDIRECT_URI : null
 }
 
 function sendOAuthCallbackUrl(callbackUrl: string): void {
@@ -2675,7 +2678,9 @@ app.whenReady().then(() => {
   ipcMain.handle('system:open-permissions', (_event, pane?: SystemPermissionPane) => openSystemPermissions(pane))
   ipcMain.handle('screens:pick-image', () => pickScreenImage())
   ipcMain.handle('oauth:open-url', (_event, authUrl: string) => openOAuthUrl(authUrl))
-  ipcMain.handle('oauth:callback-redirect-uri', () => oauthCallbackRedirectUri())
+  ipcMain.handle('oauth:callback-redirect-uri', (_event, platform?: string) =>
+    oauthCallbackRedirectUri(platform)
+  )
   ipcMain.handle('preview-surface:mode', () => nativePreviewSurfaceProofEnabled)
   ipcMain.handle('preview-surface:create', (_event, bounds: PreviewSurfaceBounds) =>
     runNativePreviewSurfaceMutation(() => createNativePreviewSurface(bounds))

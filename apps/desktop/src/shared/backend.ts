@@ -1580,7 +1580,7 @@ export interface VideorcApi {
   getRuntimeInfo: () => Promise<RuntimeInfo>
   pickScreenImage: () => Promise<string | null>
   openOAuthUrl: (authUrl: string) => Promise<void>
-  getOAuthCallbackRedirectUri: () => Promise<string | null>
+  getOAuthCallbackRedirectUri: (platform?: string) => Promise<string | null>
   getNativePreviewSurfaceMode: () => Promise<boolean>
   createNativePreviewSurface: (bounds: PreviewSurfaceBounds) => Promise<PreviewSurfaceStatus>
   updateNativePreviewSurfaceBounds: (bounds: PreviewSurfaceBounds) => Promise<PreviewSurfaceStatus>
