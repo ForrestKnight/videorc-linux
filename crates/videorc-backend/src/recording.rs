@@ -453,7 +453,13 @@ pub async fn start_session(
     emit_audio_track_health_events(&state, &session_id, &params, &audio_tracks)?;
     let active_screen = state.database.active_stream_screen()?;
     let use_encoder_bridge =
-        should_use_compositor_encoder_bridge(&state, &params, active_screen.as_ref()).await;
+        should_use_compositor_encoder_bridge(&state, &params, active_screen.as_ref()).await?;
+    if !use_encoder_bridge {
+        state.emit_log(
+            "warn",
+            "Session is using the legacy FFmpeg capture path (encoder bridge disabled by env or fps > 30).",
+        );
+    }
     // Shared session epoch (plan slice A2): the encoder bridge sets this at its first
     // delivered video frame, and the audio FIFO writer trims everything captured
     // before that instant — so audio and video content start together regardless of
@@ -3288,18 +3294,21 @@ async fn should_use_compositor_encoder_bridge(
     state: &AppState,
     params: &StartSessionParams,
     active_screen: Option<&crate::protocol::StreamScreen>,
-) -> bool {
+) -> Result<bool> {
     if !params.output.record_enabled && !params.output.stream_enabled {
-        return false;
+        return Ok(false);
     }
     if compositor_encoder_bridge_disabled(
         params.output.record_enabled,
         params.output.stream_enabled,
     ) {
-        return false;
+        // Explicit developer env override — the only sanctioned legacy escape hatch.
+        return Ok(false);
     }
     if params.output.video.fps > 30 {
-        return false;
+        // >30fps still rides the legacy path by design (bridge cap); not silent —
+        // the session log records it below at the call site.
+        return Ok(false);
     }
     let scene = params.scene.clone().unwrap_or_else(|| {
         scene_from_capture_config(SceneConfigParams {
@@ -3308,7 +3317,31 @@ async fn should_use_compositor_encoder_bridge(
             video: Some(params.output.video.clone()),
         })
     });
-    wait_for_recording_encoder_bridge_sources_ready(state, &scene, active_screen.is_some()).await
+    if wait_for_recording_encoder_bridge_sources_ready(state, &scene, active_screen.is_some()).await
+    {
+        return Ok(true);
+    }
+    // No silent downgrade (master plan, locked): falling back to the legacy FFmpeg
+    // capture here records something DIFFERENT from the preview (the user saw the
+    // synthetic pattern in the preview while the file captured via AVFoundation).
+    // Block with the exact reason instead.
+    let has_camera_frame = preview_camera_latest_frame_info(state).await.is_some();
+    let has_screen_frame = preview_screen_latest_frame_info(state).await.is_some();
+    let mut missing = Vec::new();
+    if !has_screen_frame {
+        missing.push("screen");
+    }
+    if !has_camera_frame {
+        missing.push("camera");
+    }
+    bail!(
+        "Cannot start: the {} preview source(s) produced no frames, so the recording would not match the preview. Re-select the source (or restart the app) and try again.",
+        if missing.is_empty() {
+            "required".to_string()
+        } else {
+            missing.join(" + ")
+        }
+    )
 }
 
 async fn wait_for_recording_encoder_bridge_sources_ready(
