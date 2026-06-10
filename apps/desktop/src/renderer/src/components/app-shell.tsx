@@ -24,7 +24,8 @@ import { useStudio } from '@/hooks/use-studio'
 import { ONBOARDING_VERSION, STORAGE_KEYS } from '@/lib/capture'
 
 export function AppShell(): ReactElement {
-  const { connection, wsStatus, recording, refreshBackend } = useStudio()
+  const { connection, wsStatus, recording, refreshBackend, previewWindow, openPreviewWindow, closePreviewWindow } =
+    useStudio()
   const [active, setActive] = useState<WorkspaceTab>('studio')
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
   const [commandOpen, setCommandOpen] = useState(false)
@@ -66,10 +67,18 @@ export function AppShell(): ReactElement {
         event.preventDefault()
         setCommandOpen((value) => !value)
       }
+      if (event.key.toLowerCase() === 'p' && (event.metaKey || event.ctrlKey) && !previewWindow.embeddedMode) {
+        event.preventDefault()
+        if (previewWindow.open) {
+          void closePreviewWindow()
+        } else {
+          void openPreviewWindow()
+        }
+      }
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [])
+  }, [closePreviewWindow, openPreviewWindow, previewWindow.embeddedMode, previewWindow.open])
 
   const live = recording.state === 'recording' || recording.state === 'streaming'
   const statusTone: StatusDotTone = live

@@ -1574,6 +1574,17 @@ export interface RuntimeInfo {
   nativePreviewSurfaceStageSuspended?: boolean
 }
 
+// Detached preview window (UI rewrite U1): main is the bounds authority; the
+// renderer mirrors this state into the PreviewSurfaceBounds pipeline.
+export interface PreviewWindowState {
+  open: boolean
+  visible: boolean
+  contentBounds: { x: number; y: number; width: number; height: number } | null
+  scaleFactor: number
+  screenHeight: number
+  embeddedMode: boolean
+}
+
 export interface VideorcApi {
   getBackendConnection: () => Promise<BackendConnection | null>
   getBackendLogs: () => Promise<BackendLogEvent[]>
@@ -1582,6 +1593,10 @@ export interface VideorcApi {
   openOAuthUrl: (authUrl: string) => Promise<void>
   getOAuthCallbackRedirectUri: (platform?: string) => Promise<string | null>
   getNativePreviewSurfaceMode: () => Promise<boolean>
+  openPreviewWindow: () => Promise<PreviewWindowState>
+  closePreviewWindow: () => Promise<PreviewWindowState>
+  getPreviewWindowState: () => Promise<PreviewWindowState>
+  onPreviewWindowState: (callback: (state: PreviewWindowState) => void) => () => void
   createNativePreviewSurface: (bounds: PreviewSurfaceBounds) => Promise<PreviewSurfaceStatus>
   updateNativePreviewSurfaceBounds: (bounds: PreviewSurfaceBounds) => Promise<PreviewSurfaceStatus>
   applyNativePreviewHostCommands: (commands: NativePreviewHostCommand[]) => Promise<PreviewSurfaceStatus>

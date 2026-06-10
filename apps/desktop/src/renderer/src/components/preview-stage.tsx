@@ -11,6 +11,7 @@ import {
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { useStudio } from '@/hooks/use-studio'
 import type {
   LayoutSettings,
   PreviewCameraStatus,
@@ -115,7 +116,109 @@ export function previewImageFallbackEnabled({
   return runtimeInfo?.isPackaged === false && !nativePreviewSurfaceEnabled
 }
 
-export function PreviewStage({
+type PreviewStageProps = {
+  previewUrl: string | null
+  previewLoading: boolean
+  previewLiveStatus: PreviewLiveStatus
+  previewCameraStatus?: PreviewCameraStatus
+  previewScreenStatus?: PreviewScreenStatus
+  previewSurfaceStatus?: PreviewSurfaceStatus
+  nativePreviewSurfaceEnabled?: boolean
+  activeScreen?: StreamScreen | null
+  layout: LayoutSettings
+  onRetry?: () => void
+  onOpenPermissions?: () => void
+  onRevealPermissionTarget?: () => void
+  runtimeInfo?: RuntimeInfo | null
+  scene?: Scene | null
+  sceneEditMode?: boolean
+  selectedSceneSourceId?: string | null
+  onSelectSceneSource?: (sourceId: string) => void
+  onCameraDragCommit?: (sourceId: string, x: number, y: number) => void
+  onPreviewSurfaceResize?: () => void
+  onNativePreviewSurfaceBounds?: (bounds: PreviewSurfaceBounds) => void
+  dragDisabled?: boolean
+  className?: string
+}
+
+// UI rewrite U1: the live preview is a detached OS window by default; in-page
+// stages render a control card instead of a glued surface. The embedded stage
+// remains reachable via VIDEORC_NATIVE_PREVIEW_EMBEDDED=1 until U4 deletes it.
+export function PreviewStage(props: PreviewStageProps): ReactElement {
+  const { previewWindow, openPreviewWindow, closePreviewWindow } = useStudio()
+  if (previewWindow.embeddedMode || !props.nativePreviewSurfaceEnabled) {
+    return <EmbeddedPreviewStage {...props} />
+  }
+  return (
+    <DetachedPreviewCard
+      className={props.className}
+      previewSurfaceStatus={props.previewSurfaceStatus}
+      previewWindowOpen={previewWindow.open}
+      onClose={() => void closePreviewWindow()}
+      onOpen={() => void openPreviewWindow()}
+    />
+  )
+}
+
+function DetachedPreviewCard({
+  previewWindowOpen,
+  previewSurfaceStatus,
+  onOpen,
+  onClose,
+  className
+}: {
+  previewWindowOpen: boolean
+  previewSurfaceStatus?: PreviewSurfaceStatus
+  onOpen: () => void
+  onClose: () => void
+  className?: string
+}): ReactElement {
+  const transportLabel = previewWindowOpen
+    ? previewTransportLabel(previewSurfaceStatus?.transport ?? 'unavailable', previewSurfaceStatus?.backing)
+    : null
+  return (
+    <div
+      className={cn(
+        'flex aspect-video w-full flex-col items-center justify-center gap-3 rounded-xl border border-dashed bg-muted/20 text-center',
+        className
+      )}
+      data-videorc-preview-card
+    >
+      <VideoCamera className="size-8 text-muted-foreground" weight="duotone" />
+      {previewWindowOpen ? (
+        <>
+          <div className="flex flex-col gap-1">
+            <span className="text-sm font-medium">Preview is open in its own window</span>
+            <span className="text-xs text-muted-foreground">
+              Drag, resize, or close it anytime{transportLabel ? ` · ${transportLabel}` : ''}
+            </span>
+          </div>
+          <div className="flex gap-2">
+            <Button size="sm" variant="secondary" onClick={onOpen}>
+              Focus window
+            </Button>
+            <Button size="sm" variant="outline" onClick={onClose}>
+              Close preview
+            </Button>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="flex flex-col gap-1">
+            <span className="text-sm font-medium">Preview lives in its own window</span>
+            <span className="text-xs text-muted-foreground">Open it to watch the program output.</span>
+          </div>
+          <Button data-videorc-open-preview-window size="sm" onClick={onOpen}>
+            Open preview
+            <kbd className="ml-2 rounded bg-background/40 px-1.5 font-mono text-[10px]">⌘P</kbd>
+          </Button>
+        </>
+      )}
+    </div>
+  )
+}
+
+function EmbeddedPreviewStage({
   previewUrl,
   previewLoading,
   previewLiveStatus,

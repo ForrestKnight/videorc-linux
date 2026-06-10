@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer, shell } from 'electron'
 import type {
   BackendConnection,
   BackendLogEvent,
+  PreviewWindowState,
   RuntimeInfo,
   SystemPermissionPane,
   VideorcApi
@@ -60,6 +61,14 @@ const api: VideorcApi = {
   openOAuthUrl: (authUrl) => ipcRenderer.invoke('oauth:open-url', authUrl),
   getOAuthCallbackRedirectUri: (platform) => ipcRenderer.invoke('oauth:callback-redirect-uri', platform),
   getNativePreviewSurfaceMode: () => ipcRenderer.invoke('preview-surface:mode'),
+  openPreviewWindow: () => ipcRenderer.invoke('preview-window:open'),
+  closePreviewWindow: () => ipcRenderer.invoke('preview-window:close'),
+  getPreviewWindowState: () => ipcRenderer.invoke('preview-window:get-state'),
+  onPreviewWindowState: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, state: PreviewWindowState): void => callback(state)
+    ipcRenderer.on('preview-window:state', listener)
+    return () => ipcRenderer.removeListener('preview-window:state', listener)
+  },
   createNativePreviewSurface: (bounds) => ipcRenderer.invoke('preview-surface:create', bounds),
   updateNativePreviewSurfaceBounds: (bounds) => ipcRenderer.invoke('preview-surface:update-bounds', bounds),
   applyNativePreviewHostCommands: (commands) => ipcRenderer.invoke('preview-surface:apply-host-commands', commands),

@@ -56,6 +56,9 @@ async function main() {
     timeoutMs,
     requiredMarkers: ['backend-ready', 'preview-motion-ready'],
     env: {
+      // These smokes exercise the legacy in-page glued preview stage (UI rewrite U1
+      // made the detached preview window the default).
+      VIDEORC_NATIVE_PREVIEW_EMBEDDED: '1',
       VIDEORC_SMOKE_OUTPUT_DIR: outputDirectory,
       VIDEORC_NATIVE_PREVIEW_SURFACE: '1',
       VIDEORC_DISABLE_AUTO_PREVIEW: '1',

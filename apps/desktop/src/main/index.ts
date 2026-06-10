@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell, type NativeImage } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, screen, shell, type NativeImage } from 'electron'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import {
   createServer,
@@ -67,6 +67,10 @@ const OAUTH_APP_PROTOCOL_REDIRECT_URI = 'videorc://oauth/callback'
 // v1 default: the native preview surface is always on; the env var is a developer
 // kill switch only (VIDEORC_NATIVE_PREVIEW_SURFACE=0).
 const nativePreviewSurfaceProofEnabled = process.env.VIDEORC_NATIVE_PREVIEW_SURFACE !== '0'
+// UI rewrite U1: the live preview lives in its own draggable/resizable window by
+// default. The legacy in-page glued preview remains behind this flag (smokes that
+// exercise the embedded stage set it; it is scheduled for deletion after U4).
+const nativePreviewEmbeddedMode = process.env.VIDEORC_NATIVE_PREVIEW_EMBEDDED === '1'
 const nativePreviewFramePollingEnabled = process.env.VIDEORC_SMOKE_PREVIEW_MOTION !== '1'
 const smokeCommandServerEnabled =
   process.env.VIDEORC_SMOKE_PREVIEW_MOTION === '1' || process.env.VIDEORC_SMOKE_COMMAND_SERVER === '1'
@@ -155,24 +159,10 @@ function createWindow(): void {
 
   mainWindow.on('closed', () => {
     destroyNativePreviewSurface()
+    if (previewWindow && !previewWindow.isDestroyed()) {
+      previewWindow.close()
+    }
     mainWindow = null
-  })
-
-  // The native surface floats above every app, so it must leave the screen with us
-  // and come back when we do. The helper window cannot do this itself (it belongs to
-  // a never-active accessory process), so main owns the blur/focus policy using the
-  // last bounds the renderer reported.
-  mainWindow.on('blur', () => {
-    void setNativePreviewSurfacesVisible(false)
-  })
-  mainWindow.on('focus', () => {
-    void setNativePreviewSurfacesVisible(true)
-  })
-  mainWindow.on('minimize', () => {
-    void setNativePreviewSurfacesVisible(false)
-  })
-  mainWindow.on('restore', () => {
-    void setNativePreviewSurfacesVisible(true)
   })
 
   if (backendConnection) {
@@ -185,6 +175,141 @@ function createWindow(): void {
       flushOAuthCallbackUrls()
     })
   }
+}
+
+// --- Detached preview window (UI rewrite U1) ---------------------------------
+// The live preview is its own draggable/resizable window. Main owns its lifecycle
+// and is the bounds AUTHORITY: every move/resize/visibility change is pushed to the
+// renderer, which feeds the same PreviewSurfaceBounds pipeline the embedded slot
+// used (backend session + native helper + proof surface stay untouched).
+let previewWindow: BrowserWindow | null = null
+let previewWindowLastFrame: Electron.Rectangle | null = null
+
+// The native surface floats above every app, so it must leave the screen with us
+// and come back when we do. The policy is APP-level, not main-window-level:
+// focusing the detached preview window blurs the main window, and the surface
+// must stay up; only losing focus to ANOTHER app hides it.
+app.on('browser-window-blur', () => {
+  setTimeout(() => {
+    if (!BrowserWindow.getFocusedWindow()) {
+      void setNativePreviewSurfacesVisible(false)
+    }
+  }, 50)
+})
+app.on('browser-window-focus', () => {
+  void setNativePreviewSurfacesVisible(true)
+})
+
+type PreviewWindowState = {
+  open: boolean
+  visible: boolean
+  contentBounds: Electron.Rectangle | null
+  scaleFactor: number
+  // Primary display height: the native helper needs it to flip top-left screen
+  // coordinates into AppKit's bottom-left-origin global space.
+  screenHeight: number
+  embeddedMode: boolean
+}
+
+function previewWindowState(): PreviewWindowState {
+  const window = previewWindow
+  const open = Boolean(window && !window.isDestroyed())
+  const contentBounds = open ? window!.getContentBounds() : null
+  return {
+    open,
+    visible: open ? window!.isVisible() && !window!.isMinimized() : false,
+    contentBounds,
+    scaleFactor: contentBounds ? screen.getDisplayMatching(contentBounds).scaleFactor : 1,
+    screenHeight: screen.getPrimaryDisplay().bounds.height,
+    embeddedMode: nativePreviewEmbeddedMode
+  }
+}
+
+function emitPreviewWindowState(): void {
+  if (mainWindow && !mainWindow.webContents.isDestroyed()) {
+    mainWindow.webContents.send('preview-window:state', previewWindowState())
+  }
+}
+
+const PREVIEW_WINDOW_HTML = `<!doctype html><html><head><meta charset="utf-8"><style>
+  html, body { margin: 0; height: 100%; background: #09090b; color: #a1a1aa;
+    font: 12px/1.4 -apple-system, BlinkMacSystemFont, sans-serif; overflow: hidden;
+    user-select: none; -webkit-user-select: none; }
+  .drag-strip { position: fixed; top: 0; left: 0; right: 0; height: 28px;
+    -webkit-app-region: drag; display: flex; align-items: center;
+    justify-content: center; color: #52525b; font-size: 11px; letter-spacing: 0.08em;
+    text-transform: uppercase; }
+  .hint { position: fixed; inset: 0; display: flex; align-items: center;
+    justify-content: center; flex-direction: column; gap: 6px; }
+  .hint .title { color: #d4d4d8; font-size: 13px; }
+</style></head><body>
+  <div class="hint"><div class="title">Waiting for preview</div>
+  <div>The native surface appears here as soon as the compositor presents.</div></div>
+  <div class="drag-strip">Videorc Preview</div>
+</body></html>`
+
+async function openPreviewWindow(): Promise<PreviewWindowState> {
+  if (previewWindow && !previewWindow.isDestroyed()) {
+    if (previewWindow.isMinimized()) {
+      previewWindow.restore()
+    }
+    previewWindow.show()
+    previewWindow.focus()
+    emitPreviewWindowState()
+    return previewWindowState()
+  }
+
+  const frame = previewWindowLastFrame
+  const window = new BrowserWindow({
+    width: frame?.width ?? 960,
+    height: frame?.height ?? 568,
+    ...(frame ? { x: frame.x, y: frame.y } : {}),
+    minWidth: 320,
+    minHeight: 208,
+    title: 'Videorc Preview',
+    titleBarStyle: 'hiddenInset',
+    backgroundColor: '#09090b',
+    show: true,
+    webPreferences: {
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false
+    }
+  })
+  previewWindow = window
+
+  // Every placement-affecting event re-feeds the bounds pipeline. macOS emits
+  // 'move'/'resize' continuously during a drag, so the surface follows live.
+  for (const event of ['move', 'resize', 'show', 'hide', 'minimize', 'restore'] as const) {
+    window.on(event as 'move', () => {
+      if (previewWindow === window) {
+        emitPreviewWindowState()
+      }
+    })
+  }
+  window.on('close', () => {
+    if (previewWindow === window) {
+      previewWindowLastFrame = window.getBounds()
+    }
+  })
+  window.on('closed', () => {
+    if (previewWindow === window) {
+      previewWindow = null
+      emitPreviewWindowState()
+    }
+  })
+
+  await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(PREVIEW_WINDOW_HTML)}`)
+  emitPreviewWindowState()
+  return previewWindowState()
+}
+
+function closePreviewWindow(): PreviewWindowState {
+  if (previewWindow && !previewWindow.isDestroyed()) {
+    previewWindow.close()
+  }
+  return previewWindowState()
 }
 
 function idleNativePreviewSurfaceStatus(message = 'Native preview surface is not running.'): PreviewSurfaceStatus {
@@ -1098,6 +1223,18 @@ async function setNativePreviewSurfacesVisible(visible: boolean): Promise<void> 
   const rendererBounds = nativePreviewRendererBounds
   if (!rendererBounds) {
     return
+  }
+  // In detached mode the preview window is the placement authority: the surface
+  // may only be on screen while that window is up. Without this clamp, the focus
+  // shift back to the main window when the preview window closes re-pushed the
+  // stale visible bounds AFTER the close's hide push (probe-caught race).
+  if (!nativePreviewEmbeddedMode) {
+    const detachedVisible =
+      previewWindow !== null &&
+      !previewWindow.isDestroyed() &&
+      previewWindow.isVisible() &&
+      !previewWindow.isMinimized()
+    visible = visible && detachedVisible
   }
   // On focus, restore the renderer's own verdict (it may legitimately be hidden,
   // e.g. on a non-Studio tab); on blur, force-hide.
@@ -2166,6 +2303,46 @@ async function runSmokePreviewMotionCommand(command: string, params: Record<stri
     }
   }
 
+  if (command === 'preview-window-open') {
+    return openPreviewWindow()
+  }
+
+  if (command === 'preview-window-close') {
+    return closePreviewWindow()
+  }
+
+  if (command === 'preview-window-set-bounds') {
+    if (!previewWindow || previewWindow.isDestroyed()) {
+      throw new Error('Preview window is not open.')
+    }
+    const current = previewWindow.getBounds()
+    previewWindow.setBounds({
+      x: typeof params.x === 'number' ? params.x : current.x,
+      y: typeof params.y === 'number' ? params.y : current.y,
+      width: typeof params.width === 'number' ? params.width : current.width,
+      height: typeof params.height === 'number' ? params.height : current.height
+    })
+    return previewWindowState()
+  }
+
+  if (command === 'preview-window-state') {
+    const surface = nativePreviewSurfaceWindow
+    return {
+      ...previewWindowState(),
+      surface: {
+        exists: Boolean(surface && !surface.isDestroyed()),
+        visible: Boolean(surface && !surface.isDestroyed() && surface.isVisible()),
+        bounds: surface && !surface.isDestroyed() ? surface.getBounds() : null
+      },
+      nativeOwnsPlacement: nativeSurfaceOwnsPlacement(),
+      surfaceStatus: {
+        state: nativePreviewSurfaceStatus.state,
+        transport: nativePreviewSurfaceStatus.transport,
+        framePollingSuppressed: nativePreviewSurfaceStatus.framePollingSuppressed
+      }
+    }
+  }
+
   if (command === 'native-preview-surface-status') {
     return nativePreviewSurfaceStatus
   }
@@ -2682,6 +2859,9 @@ app.whenReady().then(() => {
     oauthCallbackRedirectUri(platform)
   )
   ipcMain.handle('preview-surface:mode', () => nativePreviewSurfaceProofEnabled)
+  ipcMain.handle('preview-window:open', () => openPreviewWindow())
+  ipcMain.handle('preview-window:close', () => closePreviewWindow())
+  ipcMain.handle('preview-window:get-state', () => previewWindowState())
   ipcMain.handle('preview-surface:create', (_event, bounds: PreviewSurfaceBounds) =>
     runNativePreviewSurfaceMutation(() => createNativePreviewSurface(bounds))
   )

@@ -68,6 +68,7 @@ import type {
   PreviewSurfacePresentParams,
   PreviewSurfaceSceneUpdateParams,
   PreviewSurfaceStatus,
+  PreviewWindowState,
   PreviewLiveStatus,
   PlatformAccount,
   PlatformAccountValidation,
@@ -188,6 +189,9 @@ export type StudioContextValue = {
   previewScreenStatus: PreviewScreenStatus
   previewSurfaceStatus: PreviewSurfaceStatus
   nativePreviewSurfaceEnabled: boolean
+  previewWindow: PreviewWindowState
+  openPreviewWindow: () => Promise<void>
+  closePreviewWindow: () => Promise<void>
   scene: Scene | null
   sceneEditMode: boolean
   selectedSceneSourceId: string | null
@@ -2021,6 +2025,72 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     ]
   )
 
+  // --- Detached preview window (UI rewrite U1) ---------------------------------
+  // Main owns the window and is the placement authority; this mirrors its content
+  // rect into the same PreviewSurfaceBounds pipeline the embedded slot used.
+  const [previewWindow, setPreviewWindow] = useState<PreviewWindowState>({
+    open: false,
+    visible: false,
+    contentBounds: null,
+    scaleFactor: 1,
+    screenHeight: 0,
+    embeddedMode: false
+  })
+  const previewWindowLastBoundsRef = useRef<PreviewSurfaceBounds | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    void window.videorc?.getPreviewWindowState?.().then((state) => {
+      if (!cancelled && state) {
+        setPreviewWindow(state)
+      }
+    })
+    const unsubscribe = window.videorc?.onPreviewWindowState?.((state) => setPreviewWindow(state))
+    return () => {
+      cancelled = true
+      unsubscribe?.()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (previewWindow.embeddedMode || !nativePreviewSurfaceEnabled) {
+      return
+    }
+    if (previewWindow.open && previewWindow.contentBounds) {
+      const contentBounds = previewWindow.contentBounds
+      const bounds: PreviewSurfaceBounds = {
+        screenX: contentBounds.x,
+        screenY: contentBounds.y,
+        width: contentBounds.width,
+        height: contentBounds.height,
+        scaleFactor: previewWindow.scaleFactor,
+        screenHeight: previewWindow.screenHeight > 0 ? previewWindow.screenHeight : undefined,
+        clipX: contentBounds.x,
+        clipY: contentBounds.y,
+        clipWidth: contentBounds.width,
+        clipHeight: contentBounds.height,
+        visible: previewWindow.visible
+      }
+      previewWindowLastBoundsRef.current = bounds
+      void syncNativePreviewSurfaceBounds(bounds)
+      return
+    }
+    const lastBounds = previewWindowLastBoundsRef.current
+    if (!previewWindow.open && lastBounds && lastBounds.visible !== false) {
+      const hidden = { ...lastBounds, visible: false }
+      previewWindowLastBoundsRef.current = hidden
+      void syncNativePreviewSurfaceBounds(hidden)
+    }
+  }, [nativePreviewSurfaceEnabled, previewWindow, syncNativePreviewSurfaceBounds])
+
+  const openPreviewWindow = useCallback(async () => {
+    await window.videorc?.openPreviewWindow?.()
+  }, [])
+
+  const closePreviewWindow = useCallback(async () => {
+    await window.videorc?.closePreviewWindow?.()
+  }, [])
+
   const syncNativePreviewSurfaceScene = useCallback(async () => {
     if (!nativePreviewSurfaceEnabled || !window.videorc?.updateNativePreviewSurfaceScene) {
       return
@@ -3253,6 +3323,9 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     previewScreenStatus,
     previewSurfaceStatus,
     nativePreviewSurfaceEnabled,
+    previewWindow,
+    openPreviewWindow,
+    closePreviewWindow,
     scene,
     sceneEditMode,
     selectedSceneSourceId,
