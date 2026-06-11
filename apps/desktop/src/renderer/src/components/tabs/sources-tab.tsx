@@ -24,7 +24,7 @@ import {
   normalizeMicrophoneSyncOffsetMs,
   parseMicrophoneSyncOffsetInput
 } from '@/lib/capture'
-import type { Device, DeviceStatus } from '@/lib/backend'
+import type { Device, DeviceStatus, SourceSelection } from '@/lib/backend'
 import { formatDb } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
@@ -104,6 +104,9 @@ export function SourcesTab(): ReactElement {
     canSampleAudio,
     selectedMicrophone,
     isSessionActive,
+    layoutSwitchPending,
+    sourceDeviceSwitchPending,
+    switchSourceDeviceLive,
     previewCameraStatus,
     previewScreenStatus
   } = useStudio()
@@ -123,6 +126,46 @@ export function SourcesTab(): ReactElement {
         ? 'bg-warning'
         : 'bg-muted-foreground/40'
   const selectedCaptureId = captureConfig.sources.screenId ?? captureConfig.sources.windowId
+  const liveDeviceSwitchDisabled = Boolean(sourceDeviceSwitchPending || layoutSwitchPending)
+
+  const captureSourcesForDevice = (captureId: string | undefined): SourceSelection => {
+    const selectedDevice = captureDevices.find((device) => device.id === captureId)
+    return {
+      ...captureConfig.sources,
+      screenId: selectedDevice?.kind === 'screen' ? captureId : undefined,
+      screenName: selectedDevice?.kind === 'screen' ? selectedDevice.name : undefined,
+      windowId: selectedDevice?.kind === 'window' ? captureId : undefined,
+      windowName: selectedDevice?.kind === 'window' ? selectedDevice.name : undefined
+    }
+  }
+
+  const cameraSourcesForDevice = (cameraId: string | undefined): SourceSelection => {
+    const selectedCamera = cameras.find((device) => device.id === cameraId)
+    return {
+      ...captureConfig.sources,
+      cameraId,
+      cameraName: selectedCamera?.name
+    }
+  }
+
+  const applyCaptureSource = (captureId: string | undefined): void => {
+    const sources = captureSourcesForDevice(captureId)
+    if (isSessionActive) {
+      void switchSourceDeviceLive('capture', sources)
+      return
+    }
+    setCaptureConfig((current) => ({ ...current, sources }))
+  }
+
+  const applyCameraSource = (cameraId: string | undefined): void => {
+    const sources = cameraSourcesForDevice(cameraId)
+    if (isSessionActive) {
+      void switchSourceDeviceLive('camera', sources)
+      return
+    }
+    setCaptureConfig((current) => ({ ...current, sources }))
+  }
+
   useEffect(() => {
     setSyncOffsetDraft(String(syncOffsetMs))
   }, [syncOffsetMs])
@@ -171,37 +214,22 @@ export function SourcesTab(): ReactElement {
           <div className="flex flex-col gap-1.5">
             <SourceSelect
               devices={captureDevices}
-              disabled={isSessionActive}
+              disabled={isSessionActive && liveDeviceSwitchDisabled}
               label="Screen / window"
               value={selectedCaptureId}
-              onChange={(captureId) =>
-                setCaptureConfig((current) => {
-                  const selectedDevice = captureDevices.find((device) => device.id === captureId)
-
-                  return {
-                    ...current,
-                    sources: {
-                      ...current.sources,
-                      screenId: selectedDevice?.kind === 'screen' ? captureId : undefined,
-                      screenName:
-                        selectedDevice?.kind === 'screen' ? selectedDevice.name : undefined,
-                      windowId: selectedDevice?.kind === 'window' ? captureId : undefined,
-                      windowName:
-                        selectedDevice?.kind === 'window' ? selectedDevice.name : undefined
-                    }
-                  }
-                })
-              }
+              onChange={applyCaptureSource}
             />
             <RuntimeChip
               chip={
-                selectedCaptureId
-                  ? sourceRuntimeChip({
-                      state: previewScreenStatus?.state,
-                      frameAgeMs: previewScreenStatus?.frameAgeMs,
-                      message: previewScreenStatus?.message
-                    })
-                  : null
+                sourceDeviceSwitchPending === 'capture'
+                  ? { label: 'Switching', tone: 'warn' }
+                  : selectedCaptureId
+                    ? sourceRuntimeChip({
+                        state: previewScreenStatus?.state,
+                        frameAgeMs: previewScreenStatus?.frameAgeMs,
+                        message: previewScreenStatus?.message
+                      })
+                    : null
               }
             />
           </div>
@@ -209,40 +237,30 @@ export function SourcesTab(): ReactElement {
             <SourceSelect
               allowNone
               devices={cameras}
-              disabled={isSessionActive}
+              disabled={isSessionActive && liveDeviceSwitchDisabled}
               label="Camera"
               value={captureConfig.sources.cameraId}
-              onChange={(cameraId) =>
-                setCaptureConfig((current) => {
-                  const selectedCamera = cameras.find((device) => device.id === cameraId)
-                  return {
-                    ...current,
-                    sources: {
-                      ...current.sources,
-                      cameraId,
-                      cameraName: selectedCamera?.name
-                    }
-                  }
-                })
-              }
+              onChange={applyCameraSource}
             />
             <RuntimeChip
               chip={
-                captureConfig.sources.cameraId
-                  ? sourceRuntimeChip({
-                      state: previewCameraStatus?.state,
-                      frameAgeMs: previewCameraStatus?.frameAgeMs,
-                      message: previewCameraStatus?.message,
-                      staleWarnMs: 3000
-                    })
-                  : null
+                sourceDeviceSwitchPending === 'camera'
+                  ? { label: 'Switching', tone: 'warn' }
+                  : captureConfig.sources.cameraId
+                    ? sourceRuntimeChip({
+                        state: previewCameraStatus?.state,
+                        frameAgeMs: previewCameraStatus?.frameAgeMs,
+                        message: previewCameraStatus?.message,
+                        staleWarnMs: 3000
+                      })
+                    : null
               }
             />
           </div>
         </div>
         {isSessionActive ? (
           <p className="text-xs text-muted-foreground">
-            Devices are locked while a session is live.
+            Video sources switch live after the target source produces fresh frames.
           </p>
         ) : null}
 

@@ -83,6 +83,7 @@ import type {
   Scene,
   SessionLogEntry,
   SessionSummary,
+  SourceSelection,
   StartSessionParams,
   StreamMetadataDraft,
   StreamMetadataValidation,
@@ -225,6 +226,11 @@ export type StudioContextValue = {
   // The layout preset a live switch is currently starting sources for, if any
   // (drives the "Switching…" pending state; plan slice D2).
   layoutSwitchPending: LayoutPreset | null
+  sourceDeviceSwitchPending: LiveSourceDeviceSwitchPending | null
+  switchSourceDeviceLive: (
+    sourceKind: LiveSourceDeviceSwitchPending,
+    sources: SourceSelection
+  ) => Promise<void>
   patchVideo: (patch: Partial<VideoSettings>) => void
   applyVideoPreset: (preset: VideoPreset) => void
   applyRtmpPreset: (preset: RtmpPreset) => void
@@ -429,6 +435,8 @@ const idlePreviewSurfaceStatus = (): PreviewSurfaceStatus => ({
 
 const isPreviewSurfaceTransport = (transport: PreviewLiveStatus['transport']): boolean =>
   transport === 'native-surface' || transport === 'electron-proof-surface'
+
+type LiveSourceDeviceSwitchPending = 'capture' | 'camera'
 
 function pendingCompositorStatusSupersedes(
   pending: CompositorStatus | null,
@@ -1751,6 +1759,8 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   )
 
   const [layoutSwitchPending, setLayoutSwitchPending] = useState<LayoutPreset | null>(null)
+  const [sourceDeviceSwitchPending, setSourceDeviceSwitchPending] =
+    useState<LiveSourceDeviceSwitchPending | null>(null)
 
   const applyCameraPreset = useCallback(
     (patch: Partial<LayoutSettings>) => {
@@ -1830,6 +1840,60 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       loadScene,
       reportError,
       sceneEditMode,
+      wsStatus
+    ]
+  )
+
+  const switchSourceDeviceLive = useCallback(
+    async (sourceKind: LiveSourceDeviceSwitchPending, sources: SourceSelection) => {
+      const isActive = isActiveRecordingState(recordingRef.current.state)
+      if (!isActive) {
+        setCaptureConfig((current) => ({ ...current, sources }))
+        if (sceneEditMode) {
+          await loadScene({
+            sources,
+            layout: captureConfig.layout,
+            video: captureConfig.video
+          }).catch(reportError)
+        }
+        return
+      }
+
+      if (!client || wsStatus !== 'connected') {
+        toast.error('Backend socket is not connected — source unchanged.')
+        return
+      }
+      if (sourceDeviceSwitchPending) {
+        return
+      }
+
+      setSourceDeviceSwitchPending(sourceKind)
+      try {
+        const status = await client.request<LiveLayoutApplyStatus>('scene.source.device.switch', {
+          sources,
+          layout: captureConfig.layout,
+          video: captureConfig.video
+        })
+        applyScene(status.scene)
+        setCaptureConfig((current) => ({ ...current, sources }))
+        if (status.message) {
+          toast.success(status.message)
+        }
+      } catch (error) {
+        reportError(error)
+      } finally {
+        setSourceDeviceSwitchPending(null)
+      }
+    },
+    [
+      applyScene,
+      captureConfig.layout,
+      captureConfig.video,
+      client,
+      loadScene,
+      reportError,
+      sceneEditMode,
+      sourceDeviceSwitchPending,
       wsStatus
     ]
   )
@@ -3721,6 +3785,8 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       commitCameraTransform,
       applyCameraPreset,
       layoutSwitchPending,
+      sourceDeviceSwitchPending,
+      switchSourceDeviceLive,
       setSceneSourceVisible,
       moveSceneSource,
       openSystemPermission,
@@ -3851,6 +3917,8 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       commitCameraTransform,
       applyCameraPreset,
       layoutSwitchPending,
+      sourceDeviceSwitchPending,
+      switchSourceDeviceLive,
       setSceneSourceVisible,
       moveSceneSource,
       openSystemPermission,

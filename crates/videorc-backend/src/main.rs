@@ -1471,6 +1471,23 @@ async fn handle_text_message(state: &AppState, text: &str) -> ServerResponse {
                 }
             }
         }
+        "scene.source.device.switch" => {
+            match serde_json::from_value::<protocol::SceneConfigParams>(command.params) {
+                Ok(params) => {
+                    match live_layout::apply_source_device_switch_live(state, params).await {
+                        Ok(status) => ServerResponse::ok(command.id, status),
+                        Err(error) => ServerResponse::error(
+                            command.id,
+                            "source-device-switch-failed",
+                            error.to_string(),
+                        ),
+                    }
+                }
+                Err(error) => {
+                    ServerResponse::error(command.id, "invalid-params", error.to_string())
+                }
+            }
+        }
         "scene.source.transform.update" => {
             match serde_json::from_value::<protocol::SceneTransformUpdateParams>(command.params) {
                 Ok(params) => {
