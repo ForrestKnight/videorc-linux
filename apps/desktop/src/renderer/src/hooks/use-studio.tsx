@@ -2799,7 +2799,20 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
           params
         )
         await window.videorc.openOAuthUrl(result.authUrl)
-        toast.success('OAuth browser opened.')
+        // Exact-match providers reject unregistered callback URLs with a vague
+        // page ("Something went wrong"); surface the exact URI to register so
+        // the user can fix the portal without guessing.
+        if (platform === 'x' && result.redirectUri.startsWith('http://127.0.0.1')) {
+          toast.success('OAuth browser opened.', {
+            description:
+              `If X shows "Something went wrong", add ${result.redirectUri} ` +
+              '(plus the 27995 and 37995 port variants) to the callback URLs of ' +
+              "the X developer app — X requires an exact match, so use http and 127.0.0.1, not localhost.",
+            duration: 15000
+          })
+        } else {
+          toast.success('OAuth browser opened.')
+        }
       } catch (error) {
         reportError(error)
       }
