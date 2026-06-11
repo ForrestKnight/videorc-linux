@@ -1,4 +1,11 @@
-import { ArrowClockwise, CheckCircle, Database, GearSix, LockKey, Warning } from '@phosphor-icons/react'
+import {
+  ArrowClockwise,
+  CheckCircle,
+  Database,
+  GearSix,
+  LockKey,
+  Warning
+} from '@phosphor-icons/react'
 import { useTheme } from 'next-themes'
 import type { ReactElement } from 'react'
 
@@ -26,7 +33,11 @@ import {
   streamingVideoPresetOptions
 } from '@/lib/capture'
 
-export function SettingsTab({ onResetOnboarding }: { onResetOnboarding: () => void }): ReactElement {
+export function SettingsTab({
+  onResetOnboarding
+}: {
+  onResetOnboarding: () => void
+}): ReactElement {
   const {
     settings,
     setSettings,
@@ -40,7 +51,11 @@ export function SettingsTab({ onResetOnboarding }: { onResetOnboarding: () => vo
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
-      <PanelSection description="Where recordings are written and which FFmpeg binary is used." icon={GearSix} title="Storage & tools">
+      <PanelSection
+        description="Where recordings are written and which FFmpeg binary is used."
+        icon={GearSix}
+        title="Storage & tools"
+      >
         <FieldGroup>
           <Field>
             <FieldLabel htmlFor="output-directory">Output directory</FieldLabel>
@@ -48,7 +63,9 @@ export function SettingsTab({ onResetOnboarding }: { onResetOnboarding: () => vo
               id="output-directory"
               placeholder="~/Movies/Videorc/Recordings"
               value={settings.outputDirectory}
-              onChange={(event) => setSettings((current) => ({ ...current, outputDirectory: event.target.value }))}
+              onChange={(event) =>
+                setSettings((current) => ({ ...current, outputDirectory: event.target.value }))
+              }
             />
           </Field>
           <Field>
@@ -57,7 +74,9 @@ export function SettingsTab({ onResetOnboarding }: { onResetOnboarding: () => vo
               id="ffmpeg-path"
               placeholder="ffmpeg"
               value={settings.ffmpegPath}
-              onChange={(event) => setSettings((current) => ({ ...current, ffmpegPath: event.target.value }))}
+              onChange={(event) =>
+                setSettings((current) => ({ ...current, ffmpegPath: event.target.value }))
+              }
             />
             <FieldDescription className="flex items-center gap-1.5">
               {health?.ffmpeg.available ? (
@@ -75,11 +94,18 @@ export function SettingsTab({ onResetOnboarding }: { onResetOnboarding: () => vo
         </div>
       </PanelSection>
 
-      <PanelSection description="Defaults applied to new capture sessions." icon={GearSix} title="Defaults">
+      <PanelSection
+        description="Defaults applied to new capture sessions."
+        icon={GearSix}
+        title="Defaults"
+      >
         <FieldGroup>
           <Field>
             <FieldLabel htmlFor="default-preset">Default recording preset</FieldLabel>
-            <Select value={captureConfig.video.preset} onValueChange={(value) => applyVideoPreset(value as VideoPreset)}>
+            <Select
+              value={captureConfig.video.preset}
+              onValueChange={(value) => applyVideoPreset(value as VideoPreset)}
+            >
               <SelectTrigger className="w-full" id="default-preset">
                 <SelectValue />
               </SelectTrigger>
@@ -114,14 +140,19 @@ export function SettingsTab({ onResetOnboarding }: { onResetOnboarding: () => vo
                     </SelectItem>
                   ))}
                   <SelectSeparator />
-                  <SelectItem value={customVideoPresetOption.value}>{customVideoPresetOption.label}</SelectItem>
+                  <SelectItem value={customVideoPresetOption.value}>
+                    {customVideoPresetOption.label}
+                  </SelectItem>
                 </SelectGroup>
               </SelectContent>
             </Select>
           </Field>
           <Field>
             <FieldLabel htmlFor="default-rtmp">Default RTMP preset</FieldLabel>
-            <Select value={captureConfig.rtmpPreset} onValueChange={(value) => applyRtmpPreset(value as RtmpPreset)}>
+            <Select
+              value={captureConfig.rtmpPreset}
+              onValueChange={(value) => applyRtmpPreset(value as RtmpPreset)}
+            >
               <SelectTrigger className="w-full" id="default-rtmp">
                 <SelectValue />
               </SelectTrigger>

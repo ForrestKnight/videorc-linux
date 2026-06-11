@@ -37,7 +37,9 @@ export function InspectorSection({
         ) : null}
         <span className="text-sm font-medium">{title}</span>
         {!open && summary ? (
-          <span className="ml-auto max-w-[55%] truncate text-xs text-muted-foreground">{summary}</span>
+          <span className="ml-auto max-w-[55%] truncate text-xs text-muted-foreground">
+            {summary}
+          </span>
         ) : (
           <span className="ml-auto" />
         )}

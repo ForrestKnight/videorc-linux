@@ -74,7 +74,10 @@ function hasClip(bounds: PreviewSurfaceBounds): boolean {
   // null-tolerant: serialized bounds may carry explicit nulls for absent clip
   // fields; treating null as "clip present" would collapse the clip to 0×0.
   return (
-    bounds.clipX != null || bounds.clipY != null || bounds.clipWidth != null || bounds.clipHeight != null
+    bounds.clipX != null ||
+    bounds.clipY != null ||
+    bounds.clipWidth != null ||
+    bounds.clipHeight != null
   )
 }
 

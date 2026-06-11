@@ -14,14 +14,13 @@ import type {
 } from '../shared/native-preview-host-driver'
 import { normalizePreviewSurfaceBounds } from '../shared/native-preview-bounds'
 
-type HelperChildProcess = Pick<ChildProcessWithoutNullStreams, 'stdin' | 'stdout' | 'stderr' | 'kill' | 'on'> & {
+type HelperChildProcess = Pick<
+  ChildProcessWithoutNullStreams,
+  'stdin' | 'stdout' | 'stderr' | 'kill' | 'on'
+> & {
   pid?: number
 }
-type HelperSpawn = (
-  command: string,
-  args: string[],
-  options: SpawnOptions
-) => HelperChildProcess
+type HelperSpawn = (command: string, args: string[], options: SpawnOptions) => HelperChildProcess
 
 export interface NativePreviewHelperProcessDriverOptions {
   command: string
@@ -110,18 +109,24 @@ class NativePreviewHelperProcessDriver implements NativePreviewRealSurfaceDriver
   constructor(private readonly options: NativePreviewHelperProcessDriverOptions) {
     this.spawnProcess =
       options.spawnProcess ??
-      ((command, args, spawnOptions) => spawn(command, args, spawnOptions) as ChildProcessWithoutNullStreams)
+      ((command, args, spawnOptions) =>
+        spawn(command, args, spawnOptions) as ChildProcessWithoutNullStreams)
     this.now = options.now ?? (() => new Date().toISOString())
     this.nowMs = options.nowMs ?? (() => Date.now())
     this.iosurfaceImportRetryDelayMs = options.iosurfaceImportRetryDelayMs ?? 8
-    this.iosurfaceImportRetryAttempts = Math.max(1, Math.floor(options.iosurfaceImportRetryAttempts ?? 3))
+    this.iosurfaceImportRetryAttempts = Math.max(
+      1,
+      Math.floor(options.iosurfaceImportRetryAttempts ?? 3)
+    )
     this.iosurfaceImportFailureWarnThreshold = Math.max(
       1,
       Math.floor(options.iosurfaceImportFailureWarnThreshold ?? 3)
     )
   }
 
-  async applyHostCommands(commands: NativePreviewHostCommand[]): Promise<PreviewSurfaceStatus | null> {
+  async applyHostCommands(
+    commands: NativePreviewHostCommand[]
+  ): Promise<PreviewSurfaceStatus | null> {
     if (commands.length === 0) {
       return null
     }
@@ -146,7 +151,13 @@ class NativePreviewHelperProcessDriver implements NativePreviewRealSurfaceDriver
     request: NativePreviewRealSurfacePresentRequest
   ): Promise<PreviewSurfaceStatus | null> {
     let payload = await this.requestPresentCompositorHandoff(request)
-    for (let attempt = 1; attempt < this.iosurfaceImportRetryAttempts && !payload.activation && payload.presentFailureReason === 'iosurface-import-failed'; attempt += 1) {
+    for (
+      let attempt = 1;
+      attempt < this.iosurfaceImportRetryAttempts &&
+      !payload.activation &&
+      payload.presentFailureReason === 'iosurface-import-failed';
+      attempt += 1
+    ) {
       await delay(this.iosurfaceImportRetryDelayMs * attempt)
       payload = await this.requestPresentCompositorHandoff(request)
     }
@@ -222,7 +233,9 @@ class NativePreviewHelperProcessDriver implements NativePreviewRealSurfaceDriver
     this.suppressedPresentFailureCount = 0
   }
 
-  private recordPresentMetrics(request: NativePreviewRealSurfacePresentRequest): NativePresentMetrics {
+  private recordPresentMetrics(
+    request: NativePreviewRealSurfacePresentRequest
+  ): NativePresentMetrics {
     const nowMs = this.nowMs()
     const previousPresentMs = this.presentTimestampsMs.at(-1)
     this.presentTimestampsMs.push(nowMs)
@@ -262,7 +275,8 @@ class NativePreviewHelperProcessDriver implements NativePreviewRealSurfaceDriver
     }
     const elapsedMs = this.presentTimestampsMs.at(-1)! - this.presentTimestampsMs[0]
     return {
-      presentFps: elapsedMs > 0 ? ((this.presentTimestampsMs.length - 1) * 1000) / elapsedMs : undefined,
+      presentFps:
+        elapsedMs > 0 ? ((this.presentTimestampsMs.length - 1) * 1000) / elapsedMs : undefined,
       intervalP95Ms: percentile(this.presentIntervalsMs, 0.95),
       intervalP99Ms: percentile(this.presentIntervalsMs, 0.99),
       ...helperMetrics,
@@ -278,7 +292,9 @@ class NativePreviewHelperProcessDriver implements NativePreviewRealSurfaceDriver
       const timer = setTimeout(() => {
         if (this.pending.delete(id)) {
           reject(
-            new Error(`Native preview host helper request ${method} timed out after ${HELPER_REQUEST_TIMEOUT_MS}ms`)
+            new Error(
+              `Native preview host helper request ${method} timed out after ${HELPER_REQUEST_TIMEOUT_MS}ms`
+            )
           )
         }
       }, HELPER_REQUEST_TIMEOUT_MS)
@@ -333,13 +349,17 @@ class NativePreviewHelperProcessDriver implements NativePreviewRealSurfaceDriver
     }
     child.stdout.on('data', (chunk: Buffer | string) => this.handleStdout(String(chunk)))
     child.stderr.on('data', (chunk: Buffer | string) => this.handleStderr(String(chunk)))
-    child.on('error', (error: Error) => this.rejectAll(`Native preview host helper error: ${error.message}`))
+    child.on('error', (error: Error) =>
+      this.rejectAll(`Native preview host helper error: ${error.message}`)
+    )
     child.on('close', (code: number | null, signal: string | null) => {
       if (typeof pid === 'number') {
         this.options.onProcessExited?.(pid)
       }
       this.child = null
-      this.rejectAll(`Native preview host helper exited with code ${code ?? 'null'} and signal ${signal ?? 'null'}`)
+      this.rejectAll(
+        `Native preview host helper exited with code ${code ?? 'null'} and signal ${signal ?? 'null'}`
+      )
     })
     this.options.onLog?.('info', `Started native preview host helper: ${this.options.command}`)
     return child
@@ -359,7 +379,10 @@ class NativePreviewHelperProcessDriver implements NativePreviewRealSurfaceDriver
       try {
         response = JSON.parse(trimmed) as HelperResponse
       } catch (error) {
-        this.options.onLog?.('warn', `Ignoring invalid native preview helper response: ${errorMessage(error)}`)
+        this.options.onLog?.(
+          'warn',
+          `Ignoring invalid native preview helper response: ${errorMessage(error)}`
+        )
         continue
       }
       this.handleResponse(response)
@@ -373,7 +396,10 @@ class NativePreviewHelperProcessDriver implements NativePreviewRealSurfaceDriver
     }
     const pending = this.pending.get(response.id)
     if (!pending) {
-      this.options.onLog?.('warn', `Ignoring unknown native preview helper response id ${response.id}.`)
+      this.options.onLog?.(
+        'warn',
+        `Ignoring unknown native preview helper response id ${response.id}.`
+      )
       return
     }
     this.pending.delete(response.id)
@@ -473,7 +499,10 @@ function percentile(values: number[], percentileRank: number): number | undefine
     return undefined
   }
   const sorted = [...values].sort((left, right) => left - right)
-  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * percentileRank) - 1))
+  const index = Math.min(
+    sorted.length - 1,
+    Math.max(0, Math.ceil(sorted.length * percentileRank) - 1)
+  )
   return sorted[index]
 }
 
@@ -487,8 +516,14 @@ function recordLimitedSample(samples: number[], value: number): void {
   }
 }
 
-function previewSurfaceSourceFromScene(scene?: PreviewSurfaceSceneState | null): PreviewSurfaceSource {
-  if (scene?.sources.some((source) => source.visible && (source.kind === 'screen' || source.kind === 'window'))) {
+function previewSurfaceSourceFromScene(
+  scene?: PreviewSurfaceSceneState | null
+): PreviewSurfaceSource {
+  if (
+    scene?.sources.some(
+      (source) => source.visible && (source.kind === 'screen' || source.kind === 'window')
+    )
+  ) {
     return 'screen'
   }
   if (scene?.sources.some((source) => source.visible && source.kind === 'camera')) {
@@ -502,7 +537,8 @@ function formatHostCommand(command: NativePreviewHostCommand): string {
     return command.kind
   }
   const { screenX, screenY, width, height, scaleFactor, screenHeight } = command.bounds
-  const screenHeightLabel = typeof screenHeight === 'number' ? ` screenH=${Math.round(screenHeight)}` : ''
+  const screenHeightLabel =
+    typeof screenHeight === 'number' ? ` screenH=${Math.round(screenHeight)}` : ''
   return (
     `${command.kind}@(${Math.round(screenX)},${Math.round(screenY)}) ` +
     `${Math.round(width)}x${Math.round(height)} scale=${Number(scaleFactor.toFixed(2))}${screenHeightLabel}`

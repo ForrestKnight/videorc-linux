@@ -10,6 +10,9 @@
     "dev:zerocopy": "VIDEORC_ZEROCOPY_SOURCES=1 pnpm --filter @videorc/desktop dev",
     "build": "pnpm --filter @videorc/desktop build",
     "typecheck": "pnpm --filter @videorc/desktop typecheck",
+    "lint": "eslint \"apps/desktop/**/*.{ts,tsx}\"",
+    "format": "prettier --write \"apps/desktop/**/*.{ts,tsx,css,json,html}\" \"*.{json,js,cjs,mjs}\" \".github/workflows/*.yml\"",
+    "format:check": "prettier --check \"apps/desktop/**/*.{ts,tsx,css,json,html}\" \"*.{json,js,cjs,mjs}\" \".github/workflows/*.yml\"",
     "ffmpeg:build:macos": "bash scripts/build-ffmpeg-macos.sh",
     "package:backend": "cargo build --release -p videorc-backend",
     "package:desktop": "pnpm package:backend && pnpm ffmpeg:build:macos && pnpm --filter @videorc/desktop package",
@@ -76,5 +79,12 @@
       "electron-winstaller",
       "esbuild"
     ]
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.4.1",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "prettier": "^3.8.4",
+    "typescript-eslint": "^8.61.0"
   }
 }

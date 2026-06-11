@@ -16,11 +16,7 @@ import { PanelSection } from '@/components/panel-section'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger
-} from '@/components/ui/collapsible'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Empty, EmptyDescription, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
 import { Field, FieldContent, FieldDescription, FieldLabel } from '@/components/ui/field'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -52,8 +48,15 @@ export function AiTab({
   selectedSessionId: string | null
   setSelectedSessionId: (id: string | null) => void
 }): ReactElement {
-  const { sessions, aiConsent, setAiConsent, runAiWorkflow, exportPublishPack, aiRunningSessionId, exportRunningSessionId } =
-    useStudio()
+  const {
+    sessions,
+    aiConsent,
+    setAiConsent,
+    runAiWorkflow,
+    exportPublishPack,
+    aiRunningSessionId,
+    exportRunningSessionId
+  } = useStudio()
 
   useEffect(() => {
     if (!selectedSessionId && sessions.length > 0) {
@@ -72,7 +75,9 @@ export function AiTab({
             <Brain weight="duotone" />
           </EmptyMedia>
           <EmptyTitle>No sessions to analyze</EmptyTitle>
-          <EmptyDescription>Record a session first, then run transcript, summary, and chapters here.</EmptyDescription>
+          <EmptyDescription>
+            Record a session first, then run transcript, summary, and chapters here.
+          </EmptyDescription>
         </Empty>
       </div>
     )
@@ -82,76 +87,86 @@ export function AiTab({
     <div className="flex flex-col gap-5">
       <AiHeader />
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
-      <div className="flex flex-col gap-4">
-        <PanelSection description="Pick a recording, then run or review its AI artifacts." icon={Sparkle} title="Session">
-          <Field>
-            <FieldLabel htmlFor="ai-session">Recording</FieldLabel>
-            <Select value={selectedSessionId ?? ''} onValueChange={(value) => setSelectedSessionId(value)}>
-              <SelectTrigger className="w-full" id="ai-session">
-                <SelectValue placeholder="Select a session" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  {sessions.map((session) => (
-                    <SelectItem key={session.id} value={session.id}>
-                      {session.title} · {dayLabel(session.startedAt)}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          </Field>
+        <div className="flex flex-col gap-4">
+          <PanelSection
+            description="Pick a recording, then run or review its AI artifacts."
+            icon={Sparkle}
+            title="Session"
+          >
+            <Field>
+              <FieldLabel htmlFor="ai-session">Recording</FieldLabel>
+              <Select
+                value={selectedSessionId ?? ''}
+                onValueChange={(value) => setSelectedSessionId(value)}
+              >
+                <SelectTrigger className="w-full" id="ai-session">
+                  <SelectValue placeholder="Select a session" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {sessions.map((session) => (
+                      <SelectItem key={session.id} value={session.id}>
+                        {session.title} · {dayLabel(session.startedAt)}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </Field>
 
-          {selected ? <SessionActions session={selected} /> : null}
+            {selected ? <SessionActions session={selected} /> : null}
+          </PanelSection>
+
+          <PanelSection icon={ShieldCheck} title="Cloud AI consent">
+            <Alert variant="warning">
+              <ShieldCheck weight="fill" />
+              <AlertTitle>Recordings stay local by default</AlertTitle>
+              <AlertDescription>
+                Without consent, Videorc only extracts local audio. Uses OPENAI_API_KEY when
+                present; artifacts are stored locally with each session.
+              </AlertDescription>
+            </Alert>
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="ai-consent">Allow cloud upload</FieldLabel>
+                <FieldDescription>
+                  Upload extracted audio and transcript for summaries, chapters, highlights, and
+                  suggestions.
+                </FieldDescription>
+              </FieldContent>
+              <Switch checked={aiConsent} id="ai-consent" onCheckedChange={setAiConsent} />
+            </Field>
+          </PanelSection>
+        </div>
+
+        <PanelSection icon={Brain} title="Publish & intelligence">
+          {selected ? (
+            <ArtifactView session={selected} />
+          ) : (
+            <Empty className="border-0 py-6">
+              <EmptyTitle>No session selected</EmptyTitle>
+            </Empty>
+          )}
         </PanelSection>
-
-        <PanelSection icon={ShieldCheck} title="Cloud AI consent">
-          <Alert variant="warning">
-            <ShieldCheck weight="fill" />
-            <AlertTitle>Recordings stay local by default</AlertTitle>
-            <AlertDescription>
-              Without consent, Videorc only extracts local audio. Uses OPENAI_API_KEY when present; artifacts are stored
-              locally with each session.
-            </AlertDescription>
-          </Alert>
-          <Field orientation="horizontal">
-            <FieldContent>
-              <FieldLabel htmlFor="ai-consent">Allow cloud upload</FieldLabel>
-              <FieldDescription>
-                Upload extracted audio and transcript for summaries, chapters, highlights, and suggestions.
-              </FieldDescription>
-            </FieldContent>
-            <Switch checked={aiConsent} id="ai-consent" onCheckedChange={setAiConsent} />
-          </Field>
-        </PanelSection>
-      </div>
-
-      <PanelSection icon={Brain} title="Publish & intelligence">
-        {selected ? (
-          <ArtifactView session={selected} />
-        ) : (
-          <Empty className="border-0 py-6">
-            <EmptyTitle>No session selected</EmptyTitle>
-          </Empty>
-        )}
-      </PanelSection>
       </div>
     </div>
   )
 
-function AiHeader(): ReactElement {
-  return (
-    <div className="flex flex-col gap-1">
-      <h1 className="text-xl font-semibold tracking-tight">AI</h1>
-      <p className="max-w-2xl text-sm text-muted-foreground">
-        Turn a recording into a transcript, summary, chapters, and a publish pack.
-      </p>
-    </div>
-  )
-}
+  function AiHeader(): ReactElement {
+    return (
+      <div className="flex flex-col gap-1">
+        <h1 className="text-xl font-semibold tracking-tight">AI</h1>
+        <p className="max-w-2xl text-sm text-muted-foreground">
+          Turn a recording into a transcript, summary, chapters, and a publish pack.
+        </p>
+      </div>
+    )
+  }
 
   function SessionActions({ session }: { session: SessionSummary }): ReactElement {
-    const canRunAi = Boolean(session.status === 'completed' && (session.mp4Path || session.outputPath))
+    const canRunAi = Boolean(
+      session.status === 'completed' && (session.mp4Path || session.outputPath)
+    )
     const canExportPublishPack = session.aiArtifacts.some(
       (artifact) => artifact.status === 'ready' && artifact.kind !== 'audio-extract'
     )
@@ -200,7 +215,9 @@ function ArtifactView({ session }: { session: SessionSummary }): ReactElement {
     return (
       <Empty className="border-0 py-6">
         <EmptyTitle>No artifacts yet</EmptyTitle>
-        <EmptyDescription>Run the AI workflow to generate transcript, summary, chapters, and creator intelligence.</EmptyDescription>
+        <EmptyDescription>
+          Run the AI workflow to generate transcript, summary, chapters, and creator intelligence.
+        </EmptyDescription>
       </Empty>
     )
   }
@@ -224,7 +241,9 @@ function ArtifactView({ session }: { session: SessionSummary }): ReactElement {
             <ol className="flex flex-col gap-1.5">
               {chapterItems.map((chapter) => (
                 <li className="flex gap-3 text-sm" key={`${chapter.timestamp}-${chapter.title}`}>
-                  <time className="font-mono text-xs text-muted-foreground tabular-nums">{chapter.timestamp}</time>
+                  <time className="font-mono text-xs text-muted-foreground tabular-nums">
+                    {chapter.timestamp}
+                  </time>
                   <span>{chapter.title}</span>
                 </li>
               ))}
@@ -304,7 +323,9 @@ function ArtifactView({ session }: { session: SessionSummary }): ReactElement {
         ) : null}
         {transcript ? (
           <ArtifactSection title="Transcript">
-            <p className="text-sm whitespace-pre-line text-muted-foreground">{artifactText(transcript)}</p>
+            <p className="text-sm whitespace-pre-line text-muted-foreground">
+              {artifactText(transcript)}
+            </p>
           </ArtifactSection>
         ) : null}
       </div>
@@ -332,7 +353,10 @@ function InsightList({
         const badge = badgeField ? objectField(item, badgeField) : ''
 
         return (
-          <li className="flex gap-3 rounded-lg border bg-muted/30 px-3 py-2" key={`${title}-${index}`}>
+          <li
+            className="flex gap-3 rounded-lg border bg-muted/30 px-3 py-2"
+            key={`${title}-${index}`}
+          >
             <LeadingIcon className="mt-0.5 shrink-0 text-muted-foreground" weight="duotone" />
             <div className="flex min-w-0 flex-1 flex-col gap-1">
               <div className="flex items-start justify-between gap-2">

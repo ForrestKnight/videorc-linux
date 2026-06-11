@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { PreviewSurfaceBounds } from './backend'
-import {
-  normalizePreviewSurfaceBounds,
-  previewSurfaceBoundsChanged
-} from './native-preview-bounds'
+import { normalizePreviewSurfaceBounds, previewSurfaceBoundsChanged } from './native-preview-bounds'
 
 type FuturePreviewSurfaceBounds = PreviewSurfaceBounds & { futurePlacementToken: string }
 

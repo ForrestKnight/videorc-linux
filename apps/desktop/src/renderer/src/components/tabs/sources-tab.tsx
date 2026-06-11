@@ -1,10 +1,17 @@
-import { ArrowsClockwise, Monitor, SpeakerHigh, SpeakerSlash, Warning, Waveform } from '@phosphor-icons/react'
+import {
+  ArrowsClockwise,
+  Monitor,
+  SpeakerHigh,
+  SpeakerSlash,
+  Warning,
+  Waveform
+} from '@phosphor-icons/react'
 import { useEffect, useState, type ReactElement } from 'react'
 
 import { PanelSection } from '@/components/panel-section'
 import { SourceSelect } from '@/components/source-select'
 import { StatusBadge, type StatusTone } from '@/components/status-badge'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Alert, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Empty, EmptyDescription, EmptyTitle } from '@/components/ui/empty'
 import { Input } from '@/components/ui/input'
@@ -66,7 +73,11 @@ function sourceRuntimeChip({
   }
 }
 
-function RuntimeChip({ chip }: { chip: { label: string; tone: StatusTone; hint?: string } | null }): ReactElement | null {
+function RuntimeChip({
+  chip
+}: {
+  chip: { label: string; tone: StatusTone; hint?: string } | null
+}): ReactElement | null {
   if (!chip) {
     return null
   }
@@ -97,7 +108,9 @@ export function SourcesTab(): ReactElement {
     previewScreenStatus
   } = useStudio()
 
-  const captureDevices = deviceList.devices.filter((device) => ['screen', 'window'].includes(device.kind))
+  const captureDevices = deviceList.devices.filter((device) =>
+    ['screen', 'window'].includes(device.kind)
+  )
   const cameras = deviceList.devices.filter((device) => device.kind === 'camera')
   const microphones = deviceList.devices.filter((device) => device.kind === 'microphone')
   const syncOffsetMs = captureConfig.audio.microphoneSyncOffsetMs
@@ -157,26 +170,28 @@ export function SourcesTab(): ReactElement {
         <div className="grid gap-4 md:grid-cols-2">
           <div className="flex flex-col gap-1.5">
             <SourceSelect
-            devices={captureDevices}
-            disabled={isSessionActive}
-            label="Screen / window"
-            value={selectedCaptureId}
-            onChange={(captureId) =>
-              setCaptureConfig((current) => {
-                const selectedDevice = captureDevices.find((device) => device.id === captureId)
+              devices={captureDevices}
+              disabled={isSessionActive}
+              label="Screen / window"
+              value={selectedCaptureId}
+              onChange={(captureId) =>
+                setCaptureConfig((current) => {
+                  const selectedDevice = captureDevices.find((device) => device.id === captureId)
 
-                return {
-                  ...current,
-                  sources: {
-                    ...current.sources,
-                    screenId: selectedDevice?.kind === 'screen' ? captureId : undefined,
-                    screenName: selectedDevice?.kind === 'screen' ? selectedDevice.name : undefined,
-                    windowId: selectedDevice?.kind === 'window' ? captureId : undefined,
-                    windowName: selectedDevice?.kind === 'window' ? selectedDevice.name : undefined
+                  return {
+                    ...current,
+                    sources: {
+                      ...current.sources,
+                      screenId: selectedDevice?.kind === 'screen' ? captureId : undefined,
+                      screenName:
+                        selectedDevice?.kind === 'screen' ? selectedDevice.name : undefined,
+                      windowId: selectedDevice?.kind === 'window' ? captureId : undefined,
+                      windowName:
+                        selectedDevice?.kind === 'window' ? selectedDevice.name : undefined
+                    }
                   }
-                }
-              })
-            }
+                })
+              }
             />
             <RuntimeChip
               chip={
@@ -192,24 +207,24 @@ export function SourcesTab(): ReactElement {
           </div>
           <div className="flex flex-col gap-1.5">
             <SourceSelect
-            allowNone
-            devices={cameras}
-            disabled={isSessionActive}
-            label="Camera"
-            value={captureConfig.sources.cameraId}
-            onChange={(cameraId) =>
-              setCaptureConfig((current) => {
-                const selectedCamera = cameras.find((device) => device.id === cameraId)
-                return {
-                  ...current,
-                  sources: {
-                    ...current.sources,
-                    cameraId,
-                    cameraName: selectedCamera?.name
+              allowNone
+              devices={cameras}
+              disabled={isSessionActive}
+              label="Camera"
+              value={captureConfig.sources.cameraId}
+              onChange={(cameraId) =>
+                setCaptureConfig((current) => {
+                  const selectedCamera = cameras.find((device) => device.id === cameraId)
+                  return {
+                    ...current,
+                    sources: {
+                      ...current.sources,
+                      cameraId,
+                      cameraName: selectedCamera?.name
+                    }
                   }
-                }
-              })
-            }
+                })
+              }
             />
             <RuntimeChip
               chip={
@@ -226,7 +241,9 @@ export function SourcesTab(): ReactElement {
           </div>
         </div>
         {isSessionActive ? (
-          <p className="text-xs text-muted-foreground">Devices are locked while a session is live.</p>
+          <p className="text-xs text-muted-foreground">
+            Devices are locked while a session is live.
+          </p>
         ) : null}
 
         {import.meta.env.DEV ? (
@@ -291,7 +308,11 @@ export function SourcesTab(): ReactElement {
                 audioMeter?.status === 'ready'
                   ? { label: 'Live', tone: 'good' }
                   : audioMeter?.status === 'silent'
-                    ? { label: 'Silent', tone: 'warn', hint: 'The mic delivered only silence on the last check.' }
+                    ? {
+                        label: 'Silent',
+                        tone: 'warn',
+                        hint: 'The mic delivered only silence on the last check.'
+                      }
                     : audioMeter?.status === 'permission-required'
                       ? { label: 'Permission needed', tone: 'warn' }
                       : null

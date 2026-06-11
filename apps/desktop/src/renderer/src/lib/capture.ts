@@ -6,7 +6,6 @@ import type {
   LayoutPreset,
   LayoutSettings,
   RtmpPreset,
-  SideBySideCameraSide,
   SideBySideSplit,
   SourceSelection,
   StreamingSettings,
@@ -200,7 +199,9 @@ export interface VideoProfileCompatibility {
   warning: string | null
 }
 
-export function videoProfileCompatibility(config: Pick<CaptureConfig, 'recordEnabled' | 'streamEnabled' | 'video'>): VideoProfileCompatibility {
+export function videoProfileCompatibility(
+  config: Pick<CaptureConfig, 'recordEnabled' | 'streamEnabled' | 'video'>
+): VideoProfileCompatibility {
   const { recordEnabled, streamEnabled, video } = config
 
   if (streamEnabled && (video.width > 1920 || video.height > 1080)) {
@@ -305,7 +306,10 @@ export function loadJson<T>(key: string, fallback: T): T {
 }
 
 export function loadCaptureConfig(): CaptureConfig {
-  const loaded = loadJson(STORAGE_KEYS.captureConfig, defaultCaptureConfig) as Partial<CaptureConfig>
+  const loaded = loadJson(
+    STORAGE_KEYS.captureConfig,
+    defaultCaptureConfig
+  ) as Partial<CaptureConfig>
 
   return {
     ...defaultCaptureConfig,
@@ -315,9 +319,13 @@ export function loadCaptureConfig(): CaptureConfig {
     audio: normalizeAudioSettings(loaded.audio),
     video: normalizeVideoSettings(loaded.video),
     recordEnabled:
-      typeof loaded.recordEnabled === 'boolean' ? loaded.recordEnabled : defaultCaptureConfig.recordEnabled,
+      typeof loaded.recordEnabled === 'boolean'
+        ? loaded.recordEnabled
+        : defaultCaptureConfig.recordEnabled,
     streamEnabled:
-      typeof loaded.streamEnabled === 'boolean' ? loaded.streamEnabled : defaultCaptureConfig.streamEnabled,
+      typeof loaded.streamEnabled === 'boolean'
+        ? loaded.streamEnabled
+        : defaultCaptureConfig.streamEnabled,
     rtmpPreset: loaded.rtmpPreset ?? defaultCaptureConfig.rtmpPreset,
     rtmpServerUrl: loaded.rtmpServerUrl ?? defaultCaptureConfig.rtmpServerUrl,
     streamKey: loaded.streamKey ?? defaultCaptureConfig.streamKey,
@@ -351,7 +359,12 @@ export function normalizeAudioSettings(audio: unknown): AudioSettings {
     : defaultCaptureConfig.audio.microphoneSyncOffsetMs
 
   return {
-    microphoneGainDb: clampNumber(candidate.microphoneGainDb, defaultCaptureConfig.audio.microphoneGainDb, -24, 24),
+    microphoneGainDb: clampNumber(
+      candidate.microphoneGainDb,
+      defaultCaptureConfig.audio.microphoneGainDb,
+      -24,
+      24
+    ),
     microphoneMuted:
       typeof candidate.microphoneMuted === 'boolean'
         ? candidate.microphoneMuted
@@ -410,7 +423,11 @@ function normalizeCameraTransform(value: unknown): CameraTransform | null {
   const y = Number(candidate.y)
   const width = Number(candidate.width)
   const height = Number(candidate.height)
-  if (![x, y, width, height].every((entry) => Number.isFinite(entry)) || width <= 0 || height <= 0) {
+  if (
+    ![x, y, width, height].every((entry) => Number.isFinite(entry)) ||
+    width <= 0 ||
+    height <= 0
+  ) {
     return null
   }
 
@@ -431,12 +448,29 @@ export function normalizeLayoutSettings(layout: unknown): LayoutSettings {
       : defaultCaptureConfig.layout.layoutPreset,
     cameraTransformMode,
     cameraTransform: cameraTransformMode === 'custom' ? cameraTransform : null,
-    cameraMargin: clampNumber(candidate.cameraMargin, defaultCaptureConfig.layout.cameraMargin, 8, 96),
+    cameraMargin: clampNumber(
+      candidate.cameraMargin,
+      defaultCaptureConfig.layout.cameraMargin,
+      8,
+      96
+    ),
     cameraZoom: clampNumber(candidate.cameraZoom, defaultCaptureConfig.layout.cameraZoom, 100, 200),
-    cameraOffsetX: clampNumber(candidate.cameraOffsetX, defaultCaptureConfig.layout.cameraOffsetX, -100, 100),
-    cameraOffsetY: clampNumber(candidate.cameraOffsetY, defaultCaptureConfig.layout.cameraOffsetY, -100, 100),
+    cameraOffsetX: clampNumber(
+      candidate.cameraOffsetX,
+      defaultCaptureConfig.layout.cameraOffsetX,
+      -100,
+      100
+    ),
+    cameraOffsetY: clampNumber(
+      candidate.cameraOffsetY,
+      defaultCaptureConfig.layout.cameraOffsetY,
+      -100,
+      100
+    ),
     cameraMirror:
-      typeof candidate.cameraMirror === 'boolean' ? candidate.cameraMirror : defaultCaptureConfig.layout.cameraMirror,
+      typeof candidate.cameraMirror === 'boolean'
+        ? candidate.cameraMirror
+        : defaultCaptureConfig.layout.cameraMirror,
     cameraFit:
       candidate.cameraFit === 'fit' || candidate.cameraFit === 'fill'
         ? candidate.cameraFit
@@ -492,7 +526,8 @@ function normalizeStreamTarget(
     accountLabel: typeof saved.accountLabel === 'string' ? saved.accountLabel : undefined,
     platformBroadcastId:
       typeof saved.platformBroadcastId === 'string' ? saved.platformBroadcastId : undefined,
-    platformStreamId: typeof saved.platformStreamId === 'string' ? saved.platformStreamId : undefined,
+    platformStreamId:
+      typeof saved.platformStreamId === 'string' ? saved.platformStreamId : undefined,
     createdAt: typeof saved.createdAt === 'string' ? saved.createdAt : base.createdAt,
     updatedAt: typeof saved.updatedAt === 'string' ? saved.updatedAt : base.updatedAt
   }
@@ -506,21 +541,26 @@ export function normalizeStreamingSettings(value: unknown): StreamingSettings {
     const base = makeStreamTarget(platform, now)
     const saved = persisted.find(
       (target) =>
-        target && typeof target === 'object' && (target.id === platform || target.platform === platform)
+        target &&
+        typeof target === 'object' &&
+        (target.id === platform || target.platform === platform)
     )
     return saved ? normalizeStreamTarget(base, saved) : base
   })
   const enabledTargetIds = targets.filter((target) => target.enabled).map((target) => target.id)
   const defaultOutputPreset: VideoPreset =
-    typeof candidate.defaultOutputPreset === 'string' && candidate.defaultOutputPreset in videoPresets
+    typeof candidate.defaultOutputPreset === 'string' &&
+    candidate.defaultOutputPreset in videoPresets
       ? (candidate.defaultOutputPreset as VideoPreset)
       : 'tutorial-1080p30'
 
   return {
-    enabled: typeof candidate.enabled === 'boolean' ? candidate.enabled : enabledTargetIds.length > 0,
+    enabled:
+      typeof candidate.enabled === 'boolean' ? candidate.enabled : enabledTargetIds.length > 0,
     mode: enabledTargetIds.length > 1 ? 'multi' : 'single',
     targets,
-    selectedTargetId: typeof candidate.selectedTargetId === 'string' ? candidate.selectedTargetId : undefined,
+    selectedTargetId:
+      typeof candidate.selectedTargetId === 'string' ? candidate.selectedTargetId : undefined,
     defaultOutputPreset,
     defaultBitrateKbps: clampNumber(candidate.defaultBitrateKbps, 6000, 1000, 50000),
     enabledTargetIds
@@ -538,7 +578,9 @@ export function migrateStreamingSettings(loaded: Partial<CaptureConfig>): Stream
   // a YouTube key can never overwrite a Twitch/X key.
   const now = new Date().toISOString()
   const targets = defaultStreamTargets(now)
-  const legacyPlatform: StreamPlatform = isStreamPlatform(loaded.rtmpPreset) ? loaded.rtmpPreset : 'youtube'
+  const legacyPlatform: StreamPlatform = isStreamPlatform(loaded.rtmpPreset)
+    ? loaded.rtmpPreset
+    : 'youtube'
   const legacyKey = typeof loaded.streamKey === 'string' ? loaded.streamKey : ''
   const legacyServer = typeof loaded.rtmpServerUrl === 'string' ? loaded.rtmpServerUrl.trim() : ''
   const enabled = typeof loaded.streamEnabled === 'boolean' ? loaded.streamEnabled : false
@@ -565,12 +607,20 @@ export function migrateStreamingSettings(loaded: Partial<CaptureConfig>): Stream
 
 export function isStreamTargetReady(target: StreamTargetSettings): boolean {
   if (target.urlMode === 'full-url') {
-    return target.serverUrl.trim().length > 0 || Boolean(target.streamKeySecretRef) || target.streamKeyPresent
+    return (
+      target.serverUrl.trim().length > 0 ||
+      Boolean(target.streamKeySecretRef) ||
+      target.streamKeyPresent
+    )
   }
   if (!target.serverUrl.trim()) {
     return false
   }
-  return target.streamKey.trim().length > 0 || Boolean(target.streamKeySecretRef) || target.streamKeyPresent
+  return (
+    target.streamKey.trim().length > 0 ||
+    Boolean(target.streamKeySecretRef) ||
+    target.streamKeyPresent
+  )
 }
 
 export function isStreamTargetStartReady(target: StreamTargetSettings): boolean {
@@ -653,7 +703,12 @@ export function patchStreamTargetForEdit(
     }
   }
   if (patch.urlMode && patch.urlMode !== target.urlMode) {
-    next.serverUrl = patch.urlMode === 'full-url' ? '' : (target.platform === 'custom' ? rtmpDefaults.custom : target.serverUrl)
+    next.serverUrl =
+      patch.urlMode === 'full-url'
+        ? ''
+        : target.platform === 'custom'
+          ? rtmpDefaults.custom
+          : target.serverUrl
     next.streamKey = ''
     next.streamKeySecretRef = undefined
     next.streamKeyPresent = false
@@ -676,7 +731,9 @@ export function patchPreparedStreamTarget(
   }
 }
 
-export function preparedYouTubeActivationTargets(streaming: StreamingSettings): StreamTargetSettings[] {
+export function preparedYouTubeActivationTargets(
+  streaming: StreamingSettings
+): StreamTargetSettings[] {
   return streaming.targets.filter(
     (target) =>
       target.enabled &&
@@ -687,7 +744,9 @@ export function preparedYouTubeActivationTargets(streaming: StreamingSettings): 
   )
 }
 
-export function preparedYouTubeCompletionTargets(streaming: StreamingSettings): StreamTargetSettings[] {
+export function preparedYouTubeCompletionTargets(
+  streaming: StreamingSettings
+): StreamTargetSettings[] {
   return streaming.targets.filter(
     (target) =>
       target.enabled &&
@@ -721,25 +780,36 @@ function sourceIdentityFor(device: Device | undefined): { id?: string; name?: st
   return { id: device?.id, name: device?.name }
 }
 
-export function reconcileSourceSelection(sources: SourceSelection, devices: Device[]): SourceSelection {
+export function reconcileSourceSelection(
+  sources: SourceSelection,
+  devices: Device[]
+): SourceSelection {
   const nextSources = { ...sources }
   const captureDevices = devices.filter(
     (device) => ['screen', 'window'].includes(device.kind) && device.status === 'available'
   )
-  const cameras = devices.filter((device) => device.kind === 'camera' && device.status === 'available')
-  const microphones = devices.filter((device) => device.kind === 'microphone' && device.status === 'available')
+  const cameras = devices.filter(
+    (device) => device.kind === 'camera' && device.status === 'available'
+  )
+  const microphones = devices.filter(
+    (device) => device.kind === 'microphone' && device.status === 'available'
+  )
 
   const selectedCapture = nextSources.windowId
-    ? (findRememberedSource(nextSources.windowId, nextSources.windowName, captureDevices) ?? captureDevices[0])
-    : (findRememberedSource(nextSources.screenId, nextSources.screenName, captureDevices) ?? captureDevices[0])
+    ? (findRememberedSource(nextSources.windowId, nextSources.windowName, captureDevices) ??
+      captureDevices[0])
+    : (findRememberedSource(nextSources.screenId, nextSources.screenName, captureDevices) ??
+      captureDevices[0])
   nextSources.screenId = selectedCapture?.kind === 'screen' ? selectedCapture.id : undefined
   nextSources.screenName = selectedCapture?.kind === 'screen' ? selectedCapture.name : undefined
   nextSources.windowId = selectedCapture?.kind === 'window' ? selectedCapture.id : undefined
   nextSources.windowName = selectedCapture?.kind === 'window' ? selectedCapture.name : undefined
 
-  const selectedCamera = findRememberedSource(nextSources.cameraId, nextSources.cameraName, cameras) ?? cameras[0]
+  const selectedCamera =
+    findRememberedSource(nextSources.cameraId, nextSources.cameraName, cameras) ?? cameras[0]
   const selectedMicrophone =
-    findRememberedSource(nextSources.microphoneId, nextSources.microphoneName, microphones) ?? microphones[0]
+    findRememberedSource(nextSources.microphoneId, nextSources.microphoneName, microphones) ??
+    microphones[0]
 
   const cameraIdentity = sourceIdentityFor(selectedCamera)
   nextSources.cameraId = cameraIdentity.id
@@ -751,7 +821,10 @@ export function reconcileSourceSelection(sources: SourceSelection, devices: Devi
   return nextSources
 }
 
-export function sourceSelectionChangeMessages(previous: SourceSelection, next: SourceSelection): string[] {
+export function sourceSelectionChangeMessages(
+  previous: SourceSelection,
+  next: SourceSelection
+): string[] {
   const messages = [
     sourceChangeMessage(
       'Capture source',
@@ -760,7 +833,13 @@ export function sourceSelectionChangeMessages(previous: SourceSelection, next: S
       next.windowId ?? next.screenId,
       next.windowName ?? next.screenName
     ),
-    sourceChangeMessage('Camera', previous.cameraId, previous.cameraName, next.cameraId, next.cameraName),
+    sourceChangeMessage(
+      'Camera',
+      previous.cameraId,
+      previous.cameraName,
+      next.cameraId,
+      next.cameraName
+    ),
     sourceChangeMessage(
       'Microphone',
       previous.microphoneId,

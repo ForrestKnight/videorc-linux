@@ -43,7 +43,9 @@ export function loadNativePreviewRealSurfaceDriver(
   return { driver }
 }
 
-function nativePreviewRealSurfaceDriverFromModule(moduleValue: unknown): NativePreviewRealSurfaceDriver | null {
+function nativePreviewRealSurfaceDriverFromModule(
+  moduleValue: unknown
+): NativePreviewRealSurfaceDriver | null {
   if (isNativePreviewRealSurfaceDriver(moduleValue)) {
     return moduleValue
   }

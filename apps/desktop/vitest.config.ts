@@ -7,11 +7,11 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig({
   resolve: {
     alias: {
-      '@': fileURLToPath(new URL('./src/renderer/src', import.meta.url)),
-    },
+      '@': fileURLToPath(new URL('./src/renderer/src', import.meta.url))
+    }
   },
   test: {
     environment: 'node',
-    include: ['src/main/**/*.test.ts', 'src/renderer/src/**/*.test.ts', 'src/shared/**/*.test.ts'],
-  },
+    include: ['src/main/**/*.test.ts', 'src/renderer/src/**/*.test.ts', 'src/shared/**/*.test.ts']
+  }
 })

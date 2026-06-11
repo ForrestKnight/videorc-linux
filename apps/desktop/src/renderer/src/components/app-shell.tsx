@@ -24,8 +24,15 @@ import { useStudio } from '@/hooks/use-studio'
 import { ONBOARDING_VERSION, STORAGE_KEYS } from '@/lib/capture'
 
 export function AppShell(): ReactElement {
-  const { connection, wsStatus, recording, refreshBackend, previewWindow, openPreviewWindow, closePreviewWindow } =
-    useStudio()
+  const {
+    connection,
+    wsStatus,
+    recording,
+    refreshBackend,
+    previewWindow,
+    openPreviewWindow,
+    closePreviewWindow
+  } = useStudio()
   const [active, setActive] = useState<WorkspaceTab>('studio')
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
   const [commandOpen, setCommandOpen] = useState(false)
@@ -99,7 +106,10 @@ export function AppShell(): ReactElement {
         closeStudioPanel
       }}
     >
-      <div className="flex min-h-screen bg-background text-foreground" data-videorc-active-tab={active}>
+      <div
+        className="flex min-h-screen bg-background text-foreground"
+        data-videorc-active-tab={active}
+      >
         <Sidebar
           active={active}
           activeStudioPanel={isStudioPanel(active) ? active : null}
@@ -126,7 +136,10 @@ export function AppShell(): ReactElement {
             {active === 'recording' ? <RecordingTab /> : null}
             {active === 'library' ? <LibraryTab onOpenInAi={openInAi} /> : null}
             {active === 'ai' ? (
-              <AiTab selectedSessionId={selectedSessionId} setSelectedSessionId={setSelectedSessionId} />
+              <AiTab
+                selectedSessionId={selectedSessionId}
+                setSelectedSessionId={setSelectedSessionId}
+              />
             ) : null}
             {active === 'diagnostics' ? <DiagnosticsTab /> : null}
             {active === 'settings' ? <SettingsTab onResetOnboarding={resetOnboarding} /> : null}

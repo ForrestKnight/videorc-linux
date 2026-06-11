@@ -11,7 +11,8 @@ import type {
 
 const MACOS_PERMISSION_URLS: Record<SystemPermissionPane, string> = {
   privacy: 'x-apple.systempreferences:com.apple.preference.security',
-  'screen-recording': 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
+  'screen-recording':
+    'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
   camera: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Camera',
   microphone: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone'
 }
@@ -59,7 +60,8 @@ const api: VideorcApi = {
   getRuntimeInfo: () => Promise.resolve(runtimeInfo()),
   pickScreenImage: () => ipcRenderer.invoke('screens:pick-image'),
   openOAuthUrl: (authUrl) => ipcRenderer.invoke('oauth:open-url', authUrl),
-  getOAuthCallbackRedirectUri: (platform) => ipcRenderer.invoke('oauth:callback-redirect-uri', platform),
+  getOAuthCallbackRedirectUri: (platform) =>
+    ipcRenderer.invoke('oauth:callback-redirect-uri', platform),
   getNativePreviewSurfaceMode: () => ipcRenderer.invoke('preview-surface:mode'),
   openPreviewWindow: () => ipcRenderer.invoke('preview-window:open'),
   closePreviewWindow: () => ipcRenderer.invoke('preview-window:close'),
@@ -69,15 +71,20 @@ const api: VideorcApi = {
   setPreviewWindowAspectRatio: (width, height) =>
     ipcRenderer.invoke('preview-window:set-aspect-ratio', width, height),
   onPreviewWindowState: (callback) => {
-    const listener = (_event: Electron.IpcRendererEvent, state: PreviewWindowState): void => callback(state)
+    const listener = (_event: Electron.IpcRendererEvent, state: PreviewWindowState): void =>
+      callback(state)
     ipcRenderer.on('preview-window:state', listener)
     return () => ipcRenderer.removeListener('preview-window:state', listener)
   },
   createNativePreviewSurface: (bounds) => ipcRenderer.invoke('preview-surface:create', bounds),
-  updateNativePreviewSurfaceBounds: (bounds) => ipcRenderer.invoke('preview-surface:update-bounds', bounds),
-  applyNativePreviewHostCommands: (commands) => ipcRenderer.invoke('preview-surface:apply-host-commands', commands),
-  updateNativePreviewSurfaceScene: (scene) => ipcRenderer.invoke('preview-surface:update-scene', scene),
-  updateNativePreviewSurfaceCompositor: (status) => ipcRenderer.invoke('preview-surface:update-compositor', status),
+  updateNativePreviewSurfaceBounds: (bounds) =>
+    ipcRenderer.invoke('preview-surface:update-bounds', bounds),
+  applyNativePreviewHostCommands: (commands) =>
+    ipcRenderer.invoke('preview-surface:apply-host-commands', commands),
+  updateNativePreviewSurfaceScene: (scene) =>
+    ipcRenderer.invoke('preview-surface:update-scene', scene),
+  updateNativePreviewSurfaceCompositor: (status) =>
+    ipcRenderer.invoke('preview-surface:update-compositor', status),
   setNativePreviewSurfaceFramePollingSuppressed: (suppressed) =>
     ipcRenderer.invoke('preview-surface:set-frame-polling-suppressed', suppressed),
   destroyNativePreviewSurface: () => ipcRenderer.invoke('preview-surface:destroy'),

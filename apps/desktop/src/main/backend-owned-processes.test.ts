@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import { OwnedProcessRegistry, ownedProcessLedgerPath, type OwnedProcessRecord } from './backend-owned-processes'
+import {
+  OwnedProcessRegistry,
+  ownedProcessLedgerPath,
+  type OwnedProcessRecord
+} from './backend-owned-processes'
 
 describe('OwnedProcessRegistry', () => {
   it('records and removes owned child processes in a workspace-scoped ledger', () => {
@@ -67,8 +71,14 @@ describe('OwnedProcessRegistry', () => {
   })
 
   it('uses different ledger files for different worktrees', () => {
-    const first = ownedProcessLedgerPath('/Users/orc/Library/Application Support/Videorc', '/repo/one')
-    const second = ownedProcessLedgerPath('/Users/orc/Library/Application Support/Videorc', '/repo/two')
+    const first = ownedProcessLedgerPath(
+      '/Users/orc/Library/Application Support/Videorc',
+      '/repo/one'
+    )
+    const second = ownedProcessLedgerPath(
+      '/Users/orc/Library/Application Support/Videorc',
+      '/repo/two'
+    )
 
     expect(first).not.toEqual(second)
     expect(first).toContain('owned-processes')

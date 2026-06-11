@@ -28,7 +28,10 @@ export function accountSkippedPreviewFrame(
 function compositorLag(
   status: Pick<PreviewSurfaceStatus, 'framesRendered' | 'presentedFrameId'>
 ): number {
-  return Math.max(0, nonNegativeInteger(status.framesRendered) - nonNegativeInteger(status.presentedFrameId))
+  return Math.max(
+    0,
+    nonNegativeInteger(status.framesRendered) - nonNegativeInteger(status.presentedFrameId)
+  )
 }
 
 function nonNegativeInteger(value: unknown): number {

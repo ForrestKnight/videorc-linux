@@ -63,12 +63,20 @@ describe('native-preview-host-driver', () => {
   })
 
   it('rejects incomplete or non-positive IOSurface handoff metadata', () => {
-    expect(compositorStatusMetalTargetHandoff(compositorStatus({ metalTargetIosurfaceId: undefined }))).toBeNull()
-    expect(compositorStatusMetalTargetHandoff(compositorStatus({ metalTargetIosurfaceId: 0 }))).toBeNull()
+    expect(
+      compositorStatusMetalTargetHandoff(compositorStatus({ metalTargetIosurfaceId: undefined }))
+    ).toBeNull()
+    expect(
+      compositorStatusMetalTargetHandoff(compositorStatus({ metalTargetIosurfaceId: 0 }))
+    ).toBeNull()
     expect(compositorStatusMetalTargetHandoff(compositorStatus({ metalTargetWidth: 0 }))).toBeNull()
-    expect(compositorStatusMetalTargetHandoff(compositorStatus({ metalTargetHeight: -1 }))).toBeNull()
+    expect(
+      compositorStatusMetalTargetHandoff(compositorStatus({ metalTargetHeight: -1 }))
+    ).toBeNull()
     expect(compositorStatusMetalTargetHandoff(compositorStatus({ framesRendered: 0 }))).toBeNull()
-    expect(compositorStatusMetalTargetHandoff(compositorStatus({ metalTargetIosurfaceId: 7.5 }))).toBeNull()
+    expect(
+      compositorStatusMetalTargetHandoff(compositorStatus({ metalTargetIosurfaceId: 7.5 }))
+    ).toBeNull()
   })
 
   it('rejects stale IOSurface handoff metadata when an age gate is provided', () => {
@@ -112,12 +120,25 @@ describe('native-preview-host-driver', () => {
     expect(handoff).not.toBeNull()
     expect(nativeCametalLayerStatusMatchesHandoff(previewStatus(), handoff!)).toBe(true)
     expect(
-      nativeCametalLayerStatusMatchesHandoff(previewStatus({ transport: 'electron-proof-surface' }), handoff!)
+      nativeCametalLayerStatusMatchesHandoff(
+        previewStatus({ transport: 'electron-proof-surface' }),
+        handoff!
+      )
     ).toBe(false)
-    expect(nativeCametalLayerStatusMatchesHandoff(previewStatus({ backing: 'electron-browser-window' }), handoff!)).toBe(
-      false
-    )
-    expect(nativeCametalLayerStatusMatchesHandoff(previewStatus({ presentedFrameId: 41 }), handoff!)).toBe(false)
-    expect(nativeCametalLayerStatusMatchesHandoff(previewStatus({ sourcePixelsPresent: false }), handoff!)).toBe(false)
+    expect(
+      nativeCametalLayerStatusMatchesHandoff(
+        previewStatus({ backing: 'electron-browser-window' }),
+        handoff!
+      )
+    ).toBe(false)
+    expect(
+      nativeCametalLayerStatusMatchesHandoff(previewStatus({ presentedFrameId: 41 }), handoff!)
+    ).toBe(false)
+    expect(
+      nativeCametalLayerStatusMatchesHandoff(
+        previewStatus({ sourcePixelsPresent: false }),
+        handoff!
+      )
+    ).toBe(false)
   })
 })

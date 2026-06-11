@@ -231,15 +231,17 @@ function StreamFailureBanner({
           <span className="font-medium">Some destinations aren’t live</span>
           {failed.length ? (
             <span className="text-muted-foreground">
-              Stopped: {failed.map((target) => target.label).join(', ')}. The other destinations keep
-              streaming.
+              Stopped: {failed.map((target) => target.label).join(', ')}. The other destinations
+              keep streaming.
             </span>
           ) : null}
           {skipped.length ? (
             <span className="text-muted-foreground">
               Skipped:{' '}
               {skipped
-                .map((target) => (target.message ? `${target.label} (${target.message})` : target.label))
+                .map((target) =>
+                  target.message ? `${target.label} (${target.message})` : target.label
+                )
                 .join(', ')}
               .
             </span>
@@ -326,7 +328,9 @@ function DestinationCard({
   // While a session is live the runtime status (on air / stopped / skipped) takes
   // over the badge; otherwise it reflects the saved-credential readiness.
   const savedStatusBadge = target.status ? streamTargetStatusBadge(target.status.state) : null
-  const badge = runtime ? runtimeBadge(runtime) : (savedStatusBadge ?? configuredBadge(target.enabled, ready))
+  const badge = runtime
+    ? runtimeBadge(runtime)
+    : (savedStatusBadge ?? configuredBadge(target.enabled, ready))
   const statusMessage = runtime?.message ?? target.status?.message
   const [manualStreamKeyDraft, setManualStreamKeyDraft] = useState(target.streamKey)
   const [fullUrlDraft, setFullUrlDraft] = useState(target.serverUrl)
@@ -369,7 +373,9 @@ function DestinationCard({
             type="single"
             value={target.urlMode ?? 'server-and-key'}
             variant="outline"
-            onValueChange={(value) => value && onPatch(target.id, { urlMode: value as StreamUrlMode })}
+            onValueChange={(value) =>
+              value && onPatch(target.id, { urlMode: value as StreamUrlMode })
+            }
           >
             <ToggleGroupItem value="server-and-key">Server + key</ToggleGroupItem>
             <ToggleGroupItem value="full-url">Full URL</ToggleGroupItem>
@@ -386,7 +392,9 @@ function DestinationCard({
             type="single"
             value={target.authMode}
             variant="outline"
-            onValueChange={(value) => value && onPatch(target.id, { authMode: value as StreamAuthMode })}
+            onValueChange={(value) =>
+              value && onPatch(target.id, { authMode: value as StreamAuthMode })
+            }
           >
             <ToggleGroupItem value="oauth">OAuth</ToggleGroupItem>
             <ToggleGroupItem value="manual-rtmp">Manual RTMP</ToggleGroupItem>
@@ -415,7 +423,9 @@ function DestinationCard({
       ) : (
         <>
           <Field>
-            <FieldLabel htmlFor={`${target.id}-server`}>{fullUrl ? 'Full RTMP URL' : 'RTMP server'}</FieldLabel>
+            <FieldLabel htmlFor={`${target.id}-server`}>
+              {fullUrl ? 'Full RTMP URL' : 'RTMP server'}
+            </FieldLabel>
             <div className="flex gap-2">
               <Input
                 disabled={disabled}
@@ -569,7 +579,12 @@ function OAuthAccountPanel({
       <div className="flex flex-col gap-2 rounded-lg border bg-muted/30 p-3">
         <div className="flex items-center justify-between gap-3">
           <span className="text-sm font-medium">No account connected</span>
-          <Button disabled={connectDisabled} size="sm" variant="secondary" onClick={() => onConnect(platform)}>
+          <Button
+            disabled={connectDisabled}
+            size="sm"
+            variant="secondary"
+            onClick={() => onConnect(platform)}
+          >
             <LinkSimple data-icon="inline-start" weight="bold" />
             Connect
           </Button>
@@ -587,7 +602,8 @@ function OAuthAccountPanel({
   }
 
   const youtubeChannelOptions =
-    platform === 'youtube' && !youtubeChannels.some((channel) => channel.channelId === account.accountId)
+    platform === 'youtube' &&
+    !youtubeChannels.some((channel) => channel.channelId === account.accountId)
       ? [
           {
             channelId: account.accountId,
@@ -638,10 +654,14 @@ function OAuthAccountPanel({
             <Select
               disabled={disabled || youtubeChannelsLoading || youtubeChannelOptions.length === 0}
               value={account.accountId}
-              onValueChange={(channelId) => void onSelectYouTubeChannel(channelId, account.accountId)}
+              onValueChange={(channelId) =>
+                void onSelectYouTubeChannel(channelId, account.accountId)
+              }
             >
               <SelectTrigger className="min-w-0 flex-1">
-                <SelectValue placeholder={youtubeChannelsLoading ? 'Loading channels' : 'Select channel'} />
+                <SelectValue
+                  placeholder={youtubeChannelsLoading ? 'Loading channels' : 'Select channel'}
+                />
               </SelectTrigger>
               <SelectContent>
                 {youtubeChannelOptions.map((channel) => (
@@ -672,7 +692,10 @@ function OAuthAccountPanel({
       {platform === 'x' ? (
         <div className="flex flex-col gap-2 rounded-md bg-background/60 px-2 py-1.5">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <Badge className="w-fit" variant={xNativeCapability?.nativeAvailable ? 'success' : 'warning'}>
+            <Badge
+              className="w-fit"
+              variant={xNativeCapability?.nativeAvailable ? 'success' : 'warning'}
+            >
               {xNativeCapability?.nativeAvailable ? 'Native ready' : 'Partner API required'}
             </Badge>
             <Button
@@ -712,7 +735,13 @@ function OAuthAccountPanel({
           ) : null}
           {xNativeCapability && !xNativeCapability.nativeAvailable ? (
             <div className="flex flex-col gap-1.5">
-              <Button className="w-fit" disabled={disabled} size="sm" variant="secondary" onClick={onUseManualRtmp}>
+              <Button
+                className="w-fit"
+                disabled={disabled}
+                size="sm"
+                variant="secondary"
+                onClick={onUseManualRtmp}
+              >
                 Switch to Manual RTMP
               </Button>
               <span className="text-xs text-muted-foreground">
@@ -723,7 +752,12 @@ function OAuthAccountPanel({
           ) : null}
         </div>
       ) : null}
-      <Button disabled={disabled} size="sm" variant="outline" onClick={() => onDisconnect(platform)}>
+      <Button
+        disabled={disabled}
+        size="sm"
+        variant="outline"
+        onClick={() => onDisconnect(platform)}
+      >
         <SignOut data-icon="inline-start" weight="bold" />
         Disconnect
       </Button>
@@ -742,7 +776,10 @@ function credentialSourceLabel(credentials: OAuthProviderCredentialStatus): stri
   }
 }
 
-function validationBadge(validation: PlatformAccountValidation): { tone: BadgeTone; label: string } {
+function validationBadge(validation: PlatformAccountValidation): {
+  tone: BadgeTone
+  label: string
+} {
   switch (validation.state) {
     case 'valid':
       return { tone: 'success', label: 'Validated' }
@@ -811,7 +848,9 @@ function MetadataEditor({
               value={draft.title}
               onChange={(event) => onPatchDraft({ title: event.target.value })}
             />
-            {globalTitleIssue ? <FieldDescription>{globalTitleIssue.message}</FieldDescription> : null}
+            {globalTitleIssue ? (
+              <FieldDescription>{globalTitleIssue.message}</FieldDescription>
+            ) : null}
           </Field>
 
           <Field>
@@ -866,7 +905,8 @@ function MetadataEditor({
 
           {validation && !validation.valid ? (
             <div className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-xs text-muted-foreground">
-              {validation.issues.length} metadata warning{validation.issues.length === 1 ? '' : 's'} before Go Live.
+              {validation.issues.length} metadata warning{validation.issues.length === 1 ? '' : 's'}{' '}
+              before Go Live.
             </div>
           ) : (
             <Badge className="w-fit" variant="success">
@@ -907,7 +947,9 @@ function MetadataOverride({
   const x = override.platform === 'x'
   const [twitchCategoryQuery, setTwitchCategoryQuery] = useState(override.twitchCategoryName ?? '')
   const twitchCategoryOptions =
-    twitch && override.twitchCategoryId && !twitchCategories.some((category) => category.id === override.twitchCategoryId)
+    twitch &&
+    override.twitchCategoryId &&
+    !twitchCategories.some((category) => category.id === override.twitchCategoryId)
       ? [
           {
             id: override.twitchCategoryId,
@@ -957,11 +999,15 @@ function MetadataOverride({
           className="min-h-20 w-full resize-y rounded-lg border border-transparent bg-input/50 px-3 py-2 text-sm outline-none transition-[border-color,box-shadow] focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30 disabled:cursor-not-allowed disabled:opacity-50"
           disabled={fieldsDisabled || twitch}
           id={`${override.platform}-metadata-description`}
-          placeholder={twitch ? 'Not supported by Twitch' : draft.description || 'Inherits global description'}
+          placeholder={
+            twitch ? 'Not supported by Twitch' : draft.description || 'Inherits global description'
+          }
           value={twitch ? '' : override.description}
           onChange={(event) => onPatch({ description: event.target.value })}
         />
-        {twitch ? <FieldDescription>Twitch supports title, category, and language.</FieldDescription> : null}
+        {twitch ? (
+          <FieldDescription>Twitch supports title, category, and language.</FieldDescription>
+        ) : null}
       </Field>
 
       {youtube ? (
@@ -1016,7 +1062,11 @@ function MetadataOverride({
                 }}
               />
               <Button
-                disabled={fieldsDisabled || twitchCategorySearchPending || twitchCategoryQuery.trim().length < 2}
+                disabled={
+                  fieldsDisabled ||
+                  twitchCategorySearchPending ||
+                  twitchCategoryQuery.trim().length < 2
+                }
                 size="sm"
                 variant="outline"
                 onClick={() => void onSearchTwitchCategories(twitchCategoryQuery)}
@@ -1134,7 +1184,9 @@ function StreamingReadiness({
   return (
     <PanelSection icon={Gauge} title="Multistream readiness">
       <ChecklistRow
-        detail={enabled.length ? `${readyCount}/${enabled.length} ready` : 'No destinations enabled'}
+        detail={
+          enabled.length ? `${readyCount}/${enabled.length} ready` : 'No destinations enabled'
+        }
         label="Destination credentials saved"
         ok={allReady}
       />
@@ -1143,7 +1195,11 @@ function StreamingReadiness({
         label="Output preset compatible"
         ok={presetOk}
       />
-      <ChecklistRow detail={ffmpegReady ? 'ready' : 'check Settings'} label="FFmpeg available" ok={ffmpegReady} />
+      <ChecklistRow
+        detail={ffmpegReady ? 'ready' : 'check Settings'}
+        label="FFmpeg available"
+        ok={ffmpegReady}
+      />
       <InfoRow
         detail={
           enabled.length
@@ -1162,7 +1218,15 @@ function StreamingReadiness({
   )
 }
 
-function ChecklistRow({ label, detail, ok }: { label: string; detail: string; ok: boolean }): ReactElement {
+function ChecklistRow({
+  label,
+  detail,
+  ok
+}: {
+  label: string
+  detail: string
+  ok: boolean
+}): ReactElement {
   return (
     <div className="flex items-start justify-between gap-3 text-sm">
       <div className="flex items-center gap-2">

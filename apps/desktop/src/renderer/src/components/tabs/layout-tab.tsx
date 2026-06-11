@@ -55,7 +55,6 @@ export function LayoutTab(): ReactElement {
     setSelectedSceneSourceId,
     resetSceneSource,
     nudgeSceneSource,
-    commitCameraTransform,
     applyCameraPreset,
     setSceneSourceVisible,
     moveSceneSource,
@@ -132,7 +131,11 @@ export function LayoutTab(): ReactElement {
             <FieldContent>
               <FieldLabel htmlFor="layout-edit-mode">Edit transforms</FieldLabel>
             </FieldContent>
-            <Switch checked={sceneEditMode} id="layout-edit-mode" onCheckedChange={setSceneEditMode} />
+            <Switch
+              checked={sceneEditMode}
+              id="layout-edit-mode"
+              onCheckedChange={setSceneEditMode}
+            />
           </Field>
 
           {isSessionActive ? (
@@ -160,7 +163,9 @@ export function LayoutTab(): ReactElement {
                 />
               ))
             ) : (
-              <p className="text-sm text-muted-foreground">Scene sources will appear after capture sources are selected.</p>
+              <p className="text-sm text-muted-foreground">
+                Scene sources will appear after capture sources are selected.
+              </p>
             )}
           </div>
 
@@ -171,7 +176,9 @@ export function LayoutTab(): ReactElement {
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
                   <div className="truncate text-sm font-semibold">{selectedSource.name}</div>
-                  <div className="text-xs text-muted-foreground">{transformLabel(selectedSource)}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {transformLabel(selectedSource)}
+                  </div>
                 </div>
                 <Button
                   disabled={isSessionActive}
@@ -230,7 +237,8 @@ export function LayoutTab(): ReactElement {
       <PanelSection icon={SlidersHorizontal} title="Camera framing">
         {isScreenOnly ? (
           <p className="text-sm text-muted-foreground">
-            Screen only records just the screen or window — no camera is captured, so there is nothing to frame.
+            Screen only records just the screen or window — no camera is captured, so there is
+            nothing to frame.
           </p>
         ) : (
           <>
@@ -243,7 +251,9 @@ export function LayoutTab(): ReactElement {
                     type="single"
                     value={layout.sideBySideSplit}
                     variant="outline"
-                    onValueChange={(value) => value && applyCameraPreset({ sideBySideSplit: value as SideBySideSplit })}
+                    onValueChange={(value) =>
+                      value && applyCameraPreset({ sideBySideSplit: value as SideBySideSplit })
+                    }
                   >
                     <ToggleGroupItem value="50-50">50/50</ToggleGroupItem>
                     <ToggleGroupItem value="60-40">60/40</ToggleGroupItem>
@@ -258,7 +268,8 @@ export function LayoutTab(): ReactElement {
                     value={layout.sideBySideCameraSide}
                     variant="outline"
                     onValueChange={(value) =>
-                      value && applyCameraPreset({ sideBySideCameraSide: value as SideBySideCameraSide })
+                      value &&
+                      applyCameraPreset({ sideBySideCameraSide: value as SideBySideCameraSide })
                     }
                   >
                     <ToggleGroupItem value="left">Camera left</ToggleGroupItem>
@@ -270,8 +281,8 @@ export function LayoutTab(): ReactElement {
 
             {isCameraOnly ? (
               <p className="text-sm text-muted-foreground">
-                Camera only fills the frame as a rectangle. Corner, size, and shape do not apply — use fit, mirror,
-                zoom, and pan.
+                Camera only fills the frame as a rectangle. Corner, size, and shape do not apply —
+                use fit, mirror, zoom, and pan.
               </p>
             ) : null}
 
@@ -284,7 +295,9 @@ export function LayoutTab(): ReactElement {
                     type="single"
                     value={layout.cameraTransformMode === 'custom' ? '' : layout.cameraCorner}
                     variant="outline"
-                    onValueChange={(value) => value && applyCameraPreset({ cameraCorner: value as CameraCorner })}
+                    onValueChange={(value) =>
+                      value && applyCameraPreset({ cameraCorner: value as CameraCorner })
+                    }
                   >
                     <ToggleGroupItem value="top-left">Top L</ToggleGroupItem>
                     <ToggleGroupItem value="top-right">Top R</ToggleGroupItem>
@@ -300,7 +313,9 @@ export function LayoutTab(): ReactElement {
                       type="single"
                       value={layout.cameraSize}
                       variant="outline"
-                      onValueChange={(value) => value && applyCameraPreset({ cameraSize: value as CameraSize })}
+                      onValueChange={(value) =>
+                        value && applyCameraPreset({ cameraSize: value as CameraSize })
+                      }
                     >
                       <ToggleGroupItem value="small">S</ToggleGroupItem>
                       <ToggleGroupItem value="medium">M</ToggleGroupItem>
@@ -313,7 +328,9 @@ export function LayoutTab(): ReactElement {
                       type="single"
                       value={layout.cameraShape}
                       variant="outline"
-                      onValueChange={(value) => value && patchLayout({ cameraShape: value as CameraShape })}
+                      onValueChange={(value) =>
+                        value && patchLayout({ cameraShape: value as CameraShape })
+                      }
                     >
                       <ToggleGroupItem value="rectangle">Rect</ToggleGroupItem>
                       <ToggleGroupItem value="circle">Circle</ToggleGroupItem>
@@ -414,7 +431,11 @@ function SourceRow({
         selected && 'border-primary bg-primary/10'
       )}
     >
-      <button className="min-w-0 flex-1 text-left" type="button" onClick={() => onSelect(source.id)}>
+      <button
+        className="min-w-0 flex-1 text-left"
+        type="button"
+        onClick={() => onSelect(source.id)}
+      >
         <div className="truncate text-sm font-medium">{source.name}</div>
         <div className="text-xs text-muted-foreground capitalize">
           {source.kind}
@@ -489,7 +510,13 @@ function SliderField({
           {suffix}
         </span>
       </div>
-      <Slider max={max} min={min} step={step} value={[value]} onValueChange={([next]) => onChange(next)} />
+      <Slider
+        max={max}
+        min={min}
+        step={step}
+        value={[value]}
+        onValueChange={([next]) => onChange(next)}
+      />
     </Field>
   )
 }

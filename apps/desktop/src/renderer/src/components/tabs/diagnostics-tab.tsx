@@ -49,7 +49,9 @@ export function DiagnosticsTab(): ReactElement {
   const [dismissed, setDismissed] = useState<Set<string>>(() => new Set())
   const activeSession =
     sessions.find((session) => session.id === recording.sessionId) ?? sessions[0] ?? null
-  const actionableEvents = healthEvents.filter((event) => event.permissionPane && !dismissed.has(event.id))
+  const actionableEvents = healthEvents.filter(
+    (event) => event.permissionPane && !dismissed.has(event.id)
+  )
   const sessionLogs = activeSession?.sessionLogs ?? []
 
   const bottleneck = useMemo(
@@ -80,15 +82,24 @@ export function DiagnosticsTab(): ReactElement {
       previewSurfaceStatus
     ]
   )
-  const qualityWarning = useMemo(() => recordingQualityWarning(diagnosticStats.bottleneck), [diagnosticStats.bottleneck])
+  const qualityWarning = useMemo(
+    () => recordingQualityWarning(diagnosticStats.bottleneck),
+    [diagnosticStats.bottleneck]
+  )
   const sourceSummary = useMemo(
     () => sourceSummaryCopy(diagnosticStats, previewCameraStatus, previewScreenStatus),
     [diagnosticStats, previewCameraStatus, previewScreenStatus]
   )
   const compositorSummary = useMemo(() => compositorSummaryCopy(diagnosticStats), [diagnosticStats])
-  const encoderSummary = useMemo(() => encoderSummaryCopy(diagnosticStats, streamHealth), [diagnosticStats, streamHealth])
+  const encoderSummary = useMemo(
+    () => encoderSummaryCopy(diagnosticStats, streamHealth),
+    [diagnosticStats, streamHealth]
+  )
   const repairSummary = useMemo(() => repairSummaryCopy(diagnosticStats), [diagnosticStats])
-  const memorySummary = useMemo(() => memorySummaryCopy(diagnosticStats.backendRssBytes), [diagnosticStats.backendRssBytes])
+  const memorySummary = useMemo(
+    () => memorySummaryCopy(diagnosticStats.backendRssBytes),
+    [diagnosticStats.backendRssBytes]
+  )
   const networkSummary = useMemo(() => networkSummaryCopy(streamTargets), [streamTargets])
 
   return (
@@ -100,39 +111,136 @@ export function DiagnosticsTab(): ReactElement {
           title="Live stats"
         >
           <div className="grid gap-2 sm:grid-cols-2">
-            <DiagnosticMetric label="Output mode" value={diagnosticStats.activeOutputMode ?? 'Idle'} />
+            <DiagnosticMetric
+              label="Output mode"
+              value={diagnosticStats.activeOutputMode ?? 'Idle'}
+            />
             <DiagnosticMetric
               label="Scene revision"
-              value={diagnosticStats.activeSceneRevision == null ? 'None' : diagnosticStats.activeSceneRevision.toString()}
+              value={
+                diagnosticStats.activeSceneRevision == null
+                  ? 'None'
+                  : diagnosticStats.activeSceneRevision.toString()
+              }
             />
-            <DiagnosticMetric label="Capture FPS" value={formatMetric(diagnosticStats.captureFps ?? streamHealth?.fps, 'fps')} />
-            <DiagnosticMetric label="Render FPS" value={formatMetric(diagnosticStats.renderFps ?? streamHealth?.fps, 'fps')} />
-            <DiagnosticMetric label="Skipped frames" value={diagnosticStats.skippedFrames.toString()} />
-            <DiagnosticMetric label="Dropped frames" value={formatDroppedFrames(diagnosticStats.droppedFrames || streamHealth?.droppedFrames)} />
-            <DiagnosticMetric label="Encoder speed" value={formatMetric(diagnosticStats.encoderSpeed ?? streamHealth?.speed, 'x')} />
-            <DiagnosticMetric label="Bridge queue" value={diagnosticStats.encoderBridgeQueueDepth.toString()} />
-            <DiagnosticMetric label="Bridge FPS" value={formatMetric(diagnosticStats.encoderBridgeInputFps, 'fps')} />
-            <DiagnosticMetric label="Bridge drops" value={diagnosticStats.encoderBridgeDroppedFrames.toString()} />
-            <DiagnosticMetric label="Bridge error" value={diagnosticStats.encoderBridgeError ?? 'None'} />
-            <DiagnosticMetric label="Preview mode" value={formatPreviewTransport(diagnosticStats.previewTransport)} />
-            <DiagnosticMetric label="Compositor backend" value={formatCompositorBackend(diagnosticStats)} />
-            <DiagnosticMetric label="Preview source FPS" value={formatSourceFps(diagnosticStats.previewSourceFps)} />
-            <DiagnosticMetric label="Preview present FPS" value={formatMetric(diagnosticStats.previewPresentFps, 'fps')} />
-            <DiagnosticMetric label="Preview target" value={formatMetric(diagnosticStats.previewTargetFps, 'fps')} />
-            <DiagnosticMetric label="Preview cadence" value={formatMs(diagnosticStats.previewLatencyMs)} />
-            <DiagnosticMetric label="Preview age" value={formatMs(diagnosticStats.previewFrameAgeMs)} />
-            <DiagnosticMetric label="Input to present" value={formatMs(diagnosticStats.previewInputToPresentLatencyMs)} />
-            <DiagnosticMetric label="Render p95" value={formatMs(diagnosticStats.previewRenderFrameTimeP95Ms)} />
-            <DiagnosticMetric label="Tick gap p95" value={formatMs(diagnosticStats.compositorTickGapP95Ms)} />
-            <DiagnosticMetric label="Tick gap max" value={formatMs(diagnosticStats.compositorTickGapMaxMs)} />
-            <DiagnosticMetric label="Source fetch p95" value={formatMs(diagnosticStats.compositorSourceFetchP95Ms)} />
-            <DiagnosticMetric label="Metal p95" value={formatMs(diagnosticStats.compositorGpuTotalP95Ms)} />
-            <DiagnosticMetric label="Preview lag" value={formatFrameLag(diagnosticStats.previewCompositorFrameLag)} />
-            <DiagnosticMetric label="Preview drops" value={diagnosticStats.previewDroppedFrames.toString()} />
-            <DiagnosticMetric label="Camera age" value={formatMs(diagnosticStats.previewCameraFrameAgeMs ?? previewCameraStatus.frameAgeMs)} />
-            <DiagnosticMetric label="Screen age" value={formatMs(diagnosticStats.previewScreenFrameAgeMs ?? previewScreenStatus.frameAgeMs)} />
-            <DiagnosticMetric label="Repeated frames" value={diagnosticStats.previewRepeatedFrames.toString()} />
-            <DiagnosticMetric label="Surface resizes" value={diagnosticStats.previewSurfaceResizeCount.toString()} />
+            <DiagnosticMetric
+              label="Capture FPS"
+              value={formatMetric(diagnosticStats.captureFps ?? streamHealth?.fps, 'fps')}
+            />
+            <DiagnosticMetric
+              label="Render FPS"
+              value={formatMetric(diagnosticStats.renderFps ?? streamHealth?.fps, 'fps')}
+            />
+            <DiagnosticMetric
+              label="Skipped frames"
+              value={diagnosticStats.skippedFrames.toString()}
+            />
+            <DiagnosticMetric
+              label="Dropped frames"
+              value={formatDroppedFrames(
+                diagnosticStats.droppedFrames || streamHealth?.droppedFrames
+              )}
+            />
+            <DiagnosticMetric
+              label="Encoder speed"
+              value={formatMetric(diagnosticStats.encoderSpeed ?? streamHealth?.speed, 'x')}
+            />
+            <DiagnosticMetric
+              label="Bridge queue"
+              value={diagnosticStats.encoderBridgeQueueDepth.toString()}
+            />
+            <DiagnosticMetric
+              label="Bridge FPS"
+              value={formatMetric(diagnosticStats.encoderBridgeInputFps, 'fps')}
+            />
+            <DiagnosticMetric
+              label="Bridge drops"
+              value={diagnosticStats.encoderBridgeDroppedFrames.toString()}
+            />
+            <DiagnosticMetric
+              label="Bridge error"
+              value={diagnosticStats.encoderBridgeError ?? 'None'}
+            />
+            <DiagnosticMetric
+              label="Preview mode"
+              value={formatPreviewTransport(diagnosticStats.previewTransport)}
+            />
+            <DiagnosticMetric
+              label="Compositor backend"
+              value={formatCompositorBackend(diagnosticStats)}
+            />
+            <DiagnosticMetric
+              label="Preview source FPS"
+              value={formatSourceFps(diagnosticStats.previewSourceFps)}
+            />
+            <DiagnosticMetric
+              label="Preview present FPS"
+              value={formatMetric(diagnosticStats.previewPresentFps, 'fps')}
+            />
+            <DiagnosticMetric
+              label="Preview target"
+              value={formatMetric(diagnosticStats.previewTargetFps, 'fps')}
+            />
+            <DiagnosticMetric
+              label="Preview cadence"
+              value={formatMs(diagnosticStats.previewLatencyMs)}
+            />
+            <DiagnosticMetric
+              label="Preview age"
+              value={formatMs(diagnosticStats.previewFrameAgeMs)}
+            />
+            <DiagnosticMetric
+              label="Input to present"
+              value={formatMs(diagnosticStats.previewInputToPresentLatencyMs)}
+            />
+            <DiagnosticMetric
+              label="Render p95"
+              value={formatMs(diagnosticStats.previewRenderFrameTimeP95Ms)}
+            />
+            <DiagnosticMetric
+              label="Tick gap p95"
+              value={formatMs(diagnosticStats.compositorTickGapP95Ms)}
+            />
+            <DiagnosticMetric
+              label="Tick gap max"
+              value={formatMs(diagnosticStats.compositorTickGapMaxMs)}
+            />
+            <DiagnosticMetric
+              label="Source fetch p95"
+              value={formatMs(diagnosticStats.compositorSourceFetchP95Ms)}
+            />
+            <DiagnosticMetric
+              label="Metal p95"
+              value={formatMs(diagnosticStats.compositorGpuTotalP95Ms)}
+            />
+            <DiagnosticMetric
+              label="Preview lag"
+              value={formatFrameLag(diagnosticStats.previewCompositorFrameLag)}
+            />
+            <DiagnosticMetric
+              label="Preview drops"
+              value={diagnosticStats.previewDroppedFrames.toString()}
+            />
+            <DiagnosticMetric
+              label="Camera age"
+              value={formatMs(
+                diagnosticStats.previewCameraFrameAgeMs ?? previewCameraStatus.frameAgeMs
+              )}
+            />
+            <DiagnosticMetric
+              label="Screen age"
+              value={formatMs(
+                diagnosticStats.previewScreenFrameAgeMs ?? previewScreenStatus.frameAgeMs
+              )}
+            />
+            <DiagnosticMetric
+              label="Repeated frames"
+              value={diagnosticStats.previewRepeatedFrames.toString()}
+            />
+            <DiagnosticMetric
+              label="Surface resizes"
+              value={diagnosticStats.previewSurfaceResizeCount.toString()}
+            />
             <DiagnosticMetric
               label="Camera source"
               value={formatPreviewSourceStatus(
@@ -149,29 +257,76 @@ export function DiagnosticsTab(): ReactElement {
                 diagnosticStats.previewScreenDroppedFrames ?? previewScreenStatus.droppedFrames
               )}
             />
-            <DiagnosticMetric label="Surface state" value={`${previewSurfaceStatus.state} (${previewSurfaceStatus.framesRendered} frames)`} />
+            <DiagnosticMetric
+              label="Surface state"
+              value={`${previewSurfaceStatus.state} (${previewSurfaceStatus.framesRendered} frames)`}
+            />
             <DiagnosticMetric
               label="Surface backing"
-              value={formatPreviewSurfaceBacking(diagnosticStats.previewSurfaceBacking ?? previewSurfaceStatus.backing)}
+              value={formatPreviewSurfaceBacking(
+                diagnosticStats.previewSurfaceBacking ?? previewSurfaceStatus.backing
+              )}
             />
-            <DiagnosticMetric label="Mic drops" value={diagnosticStats.micDroppedFrames.toString()} />
-            <DiagnosticMetric label="Mic coverage" value={formatCoverage(diagnosticStats.micCaptureCoverage)} />
-            <DiagnosticMetric label="Encode backend" value={formatEncodeBackend(diagnosticStats.encodeBackend)} />
-            <DiagnosticMetric label="Recording repeats" value={diagnosticStats.encoderBridgeRepeatedFrames.toString()} />
-            <DiagnosticMetric label="Repeat bursts" value={diagnosticStats.encoderBridgeRepeatedFrameBursts.toString()} />
-            <DiagnosticMetric label="Repeat max run" value={diagnosticStats.encoderBridgeMaxRepeatedFrameRun.toString()} />
-            <DiagnosticMetric label="Synthetic frames" value={diagnosticStats.encoderBridgeSyntheticFrames.toString()} />
-            <DiagnosticMetric label="Bridge src age" value={formatMs(diagnosticStats.encoderBridgeSourceAgeMs)} />
-            <DiagnosticMetric label="Src age p95" value={formatMs(diagnosticStats.encoderBridgeSourceAgeP95Ms)} />
-            <DiagnosticMetric label="Repeat age p95" value={formatMs(diagnosticStats.encoderBridgeRepeatedFrameAgeP95Ms)} />
-            <DiagnosticMetric label="Bridge wait p95" value={formatMs(diagnosticStats.encoderBridgeCompositorWaitP95Ms)} />
-            <DiagnosticMetric label="Writer total p95" value={formatMs(diagnosticStats.encoderBridgeWriterLoopP95Ms)} />
-            <DiagnosticMetric label="Writer active p95" value={formatMs(diagnosticStats.encoderBridgeWriterActiveP95Ms)} />
+            <DiagnosticMetric
+              label="Mic drops"
+              value={diagnosticStats.micDroppedFrames.toString()}
+            />
+            <DiagnosticMetric
+              label="Mic coverage"
+              value={formatCoverage(diagnosticStats.micCaptureCoverage)}
+            />
+            <DiagnosticMetric
+              label="Encode backend"
+              value={formatEncodeBackend(diagnosticStats.encodeBackend)}
+            />
+            <DiagnosticMetric
+              label="Recording repeats"
+              value={diagnosticStats.encoderBridgeRepeatedFrames.toString()}
+            />
+            <DiagnosticMetric
+              label="Repeat bursts"
+              value={diagnosticStats.encoderBridgeRepeatedFrameBursts.toString()}
+            />
+            <DiagnosticMetric
+              label="Repeat max run"
+              value={diagnosticStats.encoderBridgeMaxRepeatedFrameRun.toString()}
+            />
+            <DiagnosticMetric
+              label="Synthetic frames"
+              value={diagnosticStats.encoderBridgeSyntheticFrames.toString()}
+            />
+            <DiagnosticMetric
+              label="Bridge src age"
+              value={formatMs(diagnosticStats.encoderBridgeSourceAgeMs)}
+            />
+            <DiagnosticMetric
+              label="Src age p95"
+              value={formatMs(diagnosticStats.encoderBridgeSourceAgeP95Ms)}
+            />
+            <DiagnosticMetric
+              label="Repeat age p95"
+              value={formatMs(diagnosticStats.encoderBridgeRepeatedFrameAgeP95Ms)}
+            />
+            <DiagnosticMetric
+              label="Bridge wait p95"
+              value={formatMs(diagnosticStats.encoderBridgeCompositorWaitP95Ms)}
+            />
+            <DiagnosticMetric
+              label="Writer total p95"
+              value={formatMs(diagnosticStats.encoderBridgeWriterLoopP95Ms)}
+            />
+            <DiagnosticMetric
+              label="Writer active p95"
+              value={formatMs(diagnosticStats.encoderBridgeWriterActiveP95Ms)}
+            />
             <DiagnosticMetric
               label="Deadline lag"
               value={`${formatMs(diagnosticStats.encoderBridgeDeadlineLagP95Ms)} / ${diagnosticStats.encoderBridgeLateDeadlineTicks}`}
             />
-            <DiagnosticMetric label="Metal targets" value={diagnosticStats.encoderBridgeMetalTargetFrames.toString()} />
+            <DiagnosticMetric
+              label="Metal targets"
+              value={diagnosticStats.encoderBridgeMetalTargetFrames.toString()}
+            />
             <DiagnosticMetric
               label="VT probe"
               value={`${diagnosticStats.encoderBridgeVideoToolboxProbeFrames} / ${formatBytes(diagnosticStats.encoderBridgeVideoToolboxProbeBytes)}`}
@@ -180,14 +335,35 @@ export function DiagnosticsTab(): ReactElement {
               label="VT output"
               value={`${diagnosticStats.encoderBridgeVideoToolboxOutputFrames} / ${formatBytes(diagnosticStats.encoderBridgeVideoToolboxOutputBytes)}`}
             />
-            <DiagnosticMetric label="VT encode max" value={formatMs(diagnosticStats.encoderBridgeVideoToolboxOutputEncodeMs)} />
-            <DiagnosticMetric label="Image polls" value={formatImagePolls(diagnosticStats.previewImagePollCounts)} />
-            <DiagnosticMetric label="Device state" value={diagnosticStats.deviceDisconnected ? 'Disconnected' : 'Connected'} />
+            <DiagnosticMetric
+              label="VT encode max"
+              value={formatMs(diagnosticStats.encoderBridgeVideoToolboxOutputEncodeMs)}
+            />
+            <DiagnosticMetric
+              label="Image polls"
+              value={formatImagePolls(diagnosticStats.previewImagePollCounts)}
+            />
+            <DiagnosticMetric
+              label="Device state"
+              value={diagnosticStats.deviceDisconnected ? 'Disconnected' : 'Connected'}
+            />
             <DiagnosticMetric label="FFmpeg work" value={formatFfmpegWork(diagnosticStats)} />
-            <DiagnosticMetric label="FFmpeg procs" value={diagnosticStats.activeFfmpegProcesses.toString()} />
-            <DiagnosticMetric label="FFprobe procs" value={diagnosticStats.activeFfprobeProcesses.toString()} />
-            <DiagnosticMetric label="Backend RSS" value={formatBytes(diagnosticStats.backendRssBytes)} />
-            <DiagnosticMetric label="Duplicate capture" value={formatDuplicateCapture(diagnosticStats.duplicateCaptureSources)} />
+            <DiagnosticMetric
+              label="FFmpeg procs"
+              value={diagnosticStats.activeFfmpegProcesses.toString()}
+            />
+            <DiagnosticMetric
+              label="FFprobe procs"
+              value={diagnosticStats.activeFfprobeProcesses.toString()}
+            />
+            <DiagnosticMetric
+              label="Backend RSS"
+              value={formatBytes(diagnosticStats.backendRssBytes)}
+            />
+            <DiagnosticMetric
+              label="Duplicate capture"
+              value={formatDuplicateCapture(diagnosticStats.duplicateCaptureSources)}
+            />
             <DiagnosticMetric
               label="Source try-locks"
               value={formatSourceTryLocks(
@@ -199,29 +375,78 @@ export function DiagnosticsTab(): ReactElement {
               label="Source frame store"
               value={`${diagnosticStats.previewSourceFrameBufferCount} buffers, ${formatBytes(diagnosticStats.previewSourceFrameBytes)}, ${diagnosticStats.previewSourceFrameDroppedFrames} replaced`}
             />
-            <DiagnosticMetric label="Source registry" value={formatSourceRegistry(diagnosticStats.sourceRegistry)} />
+            <DiagnosticMetric
+              label="Source registry"
+              value={formatSourceRegistry(diagnosticStats.sourceRegistry)}
+            />
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <StatusBadge label="Likely bottleneck" tone={bottleneck.tone} value={bottleneck.label} />
-            <StatusBadge label="Preview bottleneck" tone={previewDiagnosis.tone} value={previewDiagnosis.label} />
+            <StatusBadge
+              label="Likely bottleneck"
+              tone={bottleneck.tone}
+              value={bottleneck.label}
+            />
+            <StatusBadge
+              label="Preview bottleneck"
+              tone={previewDiagnosis.tone}
+              value={previewDiagnosis.label}
+            />
             <StatusBadge label="Source" tone={sourceSummary.tone} value={sourceSummary.label} />
-            <StatusBadge label="Compositor" tone={compositorSummary.tone} value={compositorSummary.label} />
+            <StatusBadge
+              label="Compositor"
+              tone={compositorSummary.tone}
+              value={compositorSummary.label}
+            />
             <StatusBadge label="Encoder" tone={encoderSummary.tone} value={encoderSummary.label} />
             <StatusBadge label="Repair" tone={repairSummary.tone} value={repairSummary.label} />
             <StatusBadge label="Memory" tone={memorySummary.tone} value={memorySummary.label} />
             <StatusBadge label="Network" tone={networkSummary.tone} value={networkSummary.label} />
-            <StatusBadge label="Preview" tone={previewStatusTone(previewLiveStatus, previewCameraStatus, previewScreenStatus)} value={previewLiveStatus.state} />
+            <StatusBadge
+              label="Preview"
+              tone={previewStatusTone(previewLiveStatus, previewCameraStatus, previewScreenStatus)}
+              value={previewLiveStatus.state}
+            />
             <StatusBadge
               label="Preview path"
-              tone={previewPathBadge(diagnosticStats.previewTransport, diagnosticStats.previewSurfaceBacking).tone}
-              value={previewPathBadge(diagnosticStats.previewTransport, diagnosticStats.previewSurfaceBacking).label}
+              tone={
+                previewPathBadge(
+                  diagnosticStats.previewTransport,
+                  diagnosticStats.previewSurfaceBacking
+                ).tone
+              }
+              value={
+                previewPathBadge(
+                  diagnosticStats.previewTransport,
+                  diagnosticStats.previewSurfaceBacking
+                ).label
+              }
             />
-            <StatusBadge label="Recording" tone={recordingBadge(diagnosticStats).tone} value={recordingBadge(diagnosticStats).label} />
-            <StatusBadge label="Camera" tone={previewSourceTone(previewCameraStatus.state)} value={previewCameraStatus.state} />
-            <StatusBadge label="Screen" tone={previewSourceTone(previewScreenStatus.state)} value={previewScreenStatus.state} />
-            <StatusBadge label="Maintenance" tone={diagnosticStats.ffmpegMaintenanceRunning ? 'warn' : 'good'} value={diagnosticStats.ffmpegMaintenanceRunning ? 'Running' : 'Idle'} />
+            <StatusBadge
+              label="Recording"
+              tone={recordingBadge(diagnosticStats).tone}
+              value={recordingBadge(diagnosticStats).label}
+            />
+            <StatusBadge
+              label="Camera"
+              tone={previewSourceTone(previewCameraStatus.state)}
+              value={previewCameraStatus.state}
+            />
+            <StatusBadge
+              label="Screen"
+              tone={previewSourceTone(previewScreenStatus.state)}
+              value={previewScreenStatus.state}
+            />
+            <StatusBadge
+              label="Maintenance"
+              tone={diagnosticStats.ffmpegMaintenanceRunning ? 'warn' : 'good'}
+              value={diagnosticStats.ffmpegMaintenanceRunning ? 'Running' : 'Idle'}
+            />
             {diagnosticStats.duplicateCaptureSources.length ? (
-              <StatusBadge label="Duplicate capture" tone="warn" value={diagnosticStats.duplicateCaptureSources.length.toString()} />
+              <StatusBadge
+                label="Duplicate capture"
+                tone="warn"
+                value={diagnosticStats.duplicateCaptureSources.length.toString()}
+              />
             ) : null}
             {diagnosticStats.targetFps ? (
               <Badge variant="outline">Target {diagnosticStats.targetFps} FPS</Badge>
@@ -232,19 +457,24 @@ export function DiagnosticsTab(): ReactElement {
               Recording at risk: {diagnosticStats.recordingRiskReasons.join('; ')}
             </p>
           ) : null}
-          {qualityWarning ? (
-            <p className="text-sm text-warning">{qualityWarning}</p>
-          ) : null}
+          {qualityWarning ? <p className="text-sm text-warning">{qualityWarning}</p> : null}
         </PanelSection>
 
         <PanelSection icon={Pulse} title="Pipeline">
           {recording.pipeline ? (
             <div className="grid gap-2">
               {recording.pipeline.stages.map((stage) => (
-                <div key={stage.stage} className="flex items-center justify-between gap-3 rounded-lg bg-muted/40 px-3 py-2">
+                <div
+                  key={stage.stage}
+                  className="flex items-center justify-between gap-3 rounded-lg bg-muted/40 px-3 py-2"
+                >
                   <div className="min-w-0">
-                    <div className="text-sm font-medium capitalize">{stage.stage.replaceAll('-', ' ')}</div>
-                    {stage.detail ? <div className="truncate text-xs text-muted-foreground">{stage.detail}</div> : null}
+                    <div className="text-sm font-medium capitalize">
+                      {stage.stage.replaceAll('-', ' ')}
+                    </div>
+                    {stage.detail ? (
+                      <div className="truncate text-xs text-muted-foreground">{stage.detail}</div>
+                    ) : null}
                   </div>
                   <Badge variant={stageBadgeVariant(stage.state)}>{stage.state}</Badge>
                 </div>
@@ -290,15 +520,17 @@ export function DiagnosticsTab(): ReactElement {
           <ScrollArea className="h-64 pr-3">
             <div className="flex flex-col gap-1.5">
               {logs.length ? (
-                logs.slice(-80).map((log) => (
-                  <LogRow
-                    key={`${log.timestamp}-${log.message}`}
-                    code={log.level}
-                    createdAt={log.timestamp}
-                    level={log.level}
-                    message={log.message}
-                  />
-                ))
+                logs
+                  .slice(-80)
+                  .map((log) => (
+                    <LogRow
+                      key={`${log.timestamp}-${log.message}`}
+                      code={log.level}
+                      createdAt={log.timestamp}
+                      level={log.level}
+                      message={log.message}
+                    />
+                  ))
               ) : (
                 <p className="text-sm text-muted-foreground">No backend log lines yet.</p>
               )}
@@ -349,7 +581,13 @@ function ActionableWarning({
             <ArrowSquareOut />
           </Button>
         ) : null}
-        <Button aria-label="Dismiss warning" size="icon" title="Dismiss warning" variant="ghost" onClick={onDismiss}>
+        <Button
+          aria-label="Dismiss warning"
+          size="icon"
+          title="Dismiss warning"
+          variant="ghost"
+          onClick={onDismiss}
+        >
           <X />
         </Button>
       </div>
@@ -359,7 +597,9 @@ function ActionableWarning({
 
 function LogList({ entries }: { entries: SessionLogEntry[] }): ReactElement {
   if (!entries.length) {
-    return <p className="text-sm text-muted-foreground">No persisted logs for the selected session.</p>
+    return (
+      <p className="text-sm text-muted-foreground">No persisted logs for the selected session.</p>
+    )
   }
 
   return (
@@ -419,7 +659,9 @@ function stageBadgeVariant(
   return 'secondary'
 }
 
-function levelBadgeVariant(level: HealthLevel | string): 'default' | 'secondary' | 'destructive' | 'success' | 'warning' | 'outline' {
+function levelBadgeVariant(
+  level: HealthLevel | string
+): 'default' | 'secondary' | 'destructive' | 'success' | 'warning' | 'outline' {
   if (level === 'error') {
     return 'destructive'
   }
@@ -517,7 +759,10 @@ function compositorSummaryCopy(stats: DiagnosticStats): { label: string; tone: S
       return { label: 'Frame time high', tone: 'warn' }
     }
   }
-  return { label: stats.renderFps ? `${stats.renderFps.toFixed(1)} fps` : 'Idle', tone: stats.renderFps ? 'good' : 'neutral' }
+  return {
+    label: stats.renderFps ? `${stats.renderFps.toFixed(1)} fps` : 'Idle',
+    tone: stats.renderFps ? 'good' : 'neutral'
+  }
 }
 
 function encoderSummaryCopy(
@@ -532,7 +777,10 @@ function encoderSummaryCopy(
   if (typeof speed === 'number' && speed < 0.98) {
     return { label: `${speed.toFixed(2)}x`, tone: 'warn' }
   }
-  return { label: typeof speed === 'number' ? `${speed.toFixed(2)}x` : 'Idle', tone: typeof speed === 'number' ? 'good' : 'neutral' }
+  return {
+    label: typeof speed === 'number' ? `${speed.toFixed(2)}x` : 'Idle',
+    tone: typeof speed === 'number' ? 'good' : 'neutral'
+  }
 }
 
 function repairSummaryCopy(stats: DiagnosticStats): { label: string; tone: StatusTone } {
@@ -574,7 +822,9 @@ function networkSummaryCopy(targets: StreamTargetRuntime[]): { label: string; to
   if (live) {
     return { label: `${live}/${targets.length} live`, tone: 'good' }
   }
-  const waiting = targets.filter((target) => target.state === 'connecting' || target.state === 'warning').length
+  const waiting = targets.filter(
+    (target) => target.state === 'connecting' || target.state === 'warning'
+  ).length
   if (waiting) {
     return { label: `${waiting} waiting`, tone: 'warn' }
   }
@@ -605,7 +855,8 @@ function previewDiagnosisCopy({
   previewScreenStatus: PreviewScreenStatus
   previewSurfaceStatus: PreviewSurfaceStatus
 }): PreviewDiagnosis {
-  const syntheticNativeSurface = nativePreviewSurfaceEnabled && previewSurfaceStatus.source === 'synthetic'
+  const syntheticNativeSurface =
+    nativePreviewSurfaceEnabled && previewSurfaceStatus.source === 'synthetic'
   const shouldCheckCamera = expectsCamera && !syntheticNativeSurface
   const shouldCheckScreen = expectsScreen && !syntheticNativeSurface
   if (
@@ -624,16 +875,25 @@ function previewDiagnosisCopy({
     shouldCheckScreen &&
     (previewScreenStatus.state === 'failed' || previewScreenStatus.state === 'source-missing')
   ) {
-    return { label: 'Screen capture', tone: previewScreenStatus.state === 'failed' ? 'error' : 'warn' }
+    return {
+      label: 'Screen capture',
+      tone: previewScreenStatus.state === 'failed' ? 'error' : 'warn'
+    }
   }
   if (!nativePreviewSurfaceEnabled) {
-    return { label: 'Fallback', tone: diagnosticStats.previewTransport === 'unavailable' ? 'neutral' : 'warn' }
+    return {
+      label: 'Fallback',
+      tone: diagnosticStats.previewTransport === 'unavailable' ? 'neutral' : 'warn'
+    }
   }
   if (diagnosticStats.previewTransport === 'electron-proof-surface') {
     return { label: 'Proof surface', tone: 'warn' }
   }
   if (diagnosticStats.previewTransport !== 'native-surface') {
-    return { label: 'Fallback', tone: diagnosticStats.previewTransport === 'unavailable' ? 'neutral' : 'warn' }
+    return {
+      label: 'Fallback',
+      tone: diagnosticStats.previewTransport === 'unavailable' ? 'neutral' : 'warn'
+    }
   }
   if (diagnosticStats.previewSurfaceBacking !== 'cametal-layer') {
     return { label: 'Surface backing', tone: 'warn' }
@@ -659,7 +919,7 @@ function previewDiagnosisCopy({
   }
   if (
     typeof diagnosticStats.previewRenderFrameTimeP95Ms === 'number' &&
-    diagnosticStats.previewRenderFrameTimeP95Ms > 1000 / Math.max(1, targetFps) * 1.5
+    diagnosticStats.previewRenderFrameTimeP95Ms > (1000 / Math.max(1, targetFps)) * 1.5
   ) {
     return { label: 'Render', tone: 'warn' }
   }
@@ -692,13 +952,18 @@ function previewStatusTone(
   previewCameraStatus: PreviewCameraStatus,
   previewScreenStatus: PreviewScreenStatus
 ): StatusTone {
-  if (previewCameraStatus.state === 'permission-needed' || previewScreenStatus.state === 'permission-needed') {
+  if (
+    previewCameraStatus.state === 'permission-needed' ||
+    previewScreenStatus.state === 'permission-needed'
+  ) {
     return 'error'
   }
   return previewLiveStatus.state === 'live' ? 'good' : 'warn'
 }
 
-function previewSourceTone(state: PreviewCameraStatus['state'] | PreviewScreenStatus['state']): StatusTone {
+function previewSourceTone(
+  state: PreviewCameraStatus['state'] | PreviewScreenStatus['state']
+): StatusTone {
   if (state === 'live') {
     return 'good'
   }
@@ -841,7 +1106,10 @@ function formatImagePolls(counts?: DiagnosticStats['previewImagePollCounts']): s
 
 // The plan's "OBS-native preview" vs "Fallback preview" badge. Only the real Metal
 // layer may report native-surface; the Electron proof window stays explicitly non-native.
-function previewPathBadge(transport?: string, backing?: string): { label: string; tone: StatusTone } {
+function previewPathBadge(
+  transport?: string,
+  backing?: string
+): { label: string; tone: StatusTone } {
   switch (transport) {
     case 'native-surface':
       return backing === 'cametal-layer'

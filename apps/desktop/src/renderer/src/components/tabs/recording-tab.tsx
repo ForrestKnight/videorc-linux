@@ -40,8 +40,15 @@ const RESOLUTION_PRESETS = [
 ] as const
 
 export function RecordingTab(): ReactElement {
-  const { captureConfig, setCaptureConfig, patchVideo, applyVideoPreset, sessions, remuxSession, isSessionActive } =
-    useStudio()
+  const {
+    captureConfig,
+    setCaptureConfig,
+    patchVideo,
+    applyVideoPreset,
+    sessions,
+    remuxSession,
+    isSessionActive
+  } = useStudio()
   const { video } = captureConfig
   const compatibility = videoProfileCompatibility(captureConfig)
   const compatibilityMessage = compatibility.blockingReason ?? compatibility.warning
@@ -55,7 +62,9 @@ export function RecordingTab(): ReactElement {
             aria-label="Record MKV"
             checked={captureConfig.recordEnabled}
             disabled={isSessionActive}
-            onCheckedChange={(checked) => setCaptureConfig((current) => ({ ...current, recordEnabled: checked }))}
+            onCheckedChange={(checked) =>
+              setCaptureConfig((current) => ({ ...current, recordEnabled: checked }))
+            }
           />
         }
         description="Local recording exports MP4 into the recordings folder after capture finalizes."
@@ -70,7 +79,11 @@ export function RecordingTab(): ReactElement {
         <FieldGroup>
           <Field>
             <FieldLabel htmlFor="video-preset">Video preset</FieldLabel>
-            <Select disabled={isSessionActive} value={video.preset} onValueChange={(value) => applyVideoPreset(value as VideoPreset)}>
+            <Select
+              disabled={isSessionActive}
+              value={video.preset}
+              onValueChange={(value) => applyVideoPreset(value as VideoPreset)}
+            >
               <SelectTrigger className="w-full" id="video-preset">
                 <SelectValue />
               </SelectTrigger>
@@ -105,11 +118,15 @@ export function RecordingTab(): ReactElement {
                     </SelectItem>
                   ))}
                   <SelectSeparator />
-                  <SelectItem value={customVideoPresetOption.value}>{customVideoPresetOption.label}</SelectItem>
+                  <SelectItem value={customVideoPresetOption.value}>
+                    {customVideoPresetOption.label}
+                  </SelectItem>
                 </SelectGroup>
               </SelectContent>
             </Select>
-            <FieldDescription>Editing a value below switches the preset to Custom.</FieldDescription>
+            <FieldDescription>
+              Editing a value below switches the preset to Custom.
+            </FieldDescription>
             {compatibilityMessage ? (
               <Alert variant={compatibility.blockingReason ? 'destructive' : 'warning'}>
                 <WarningCircle />
@@ -183,33 +200,54 @@ export function RecordingTab(): ReactElement {
         {outputSessions.length ? (
           <div className="grid gap-2 lg:grid-cols-2">
             {outputSessions.map((session) => (
-              <OutputSessionRow key={session.id} session={session} onRemux={() => remuxSession(session.id)} />
+              <OutputSessionRow
+                key={session.id}
+                session={session}
+                onRemux={() => remuxSession(session.id)}
+              />
             ))}
           </div>
         ) : (
-          <p className="text-sm text-muted-foreground">Completed local recordings will appear here.</p>
+          <p className="text-sm text-muted-foreground">
+            Completed local recordings will appear here.
+          </p>
         )}
       </PanelSection>
     </div>
   )
 }
 
-function OutputSessionRow({ session, onRemux }: { session: SessionSummary; onRemux: () => void }): ReactElement {
-  const canRemux = Boolean(session.status === 'completed' && session.outputPath?.endsWith('.mkv') && !session.mp4Path)
+function OutputSessionRow({
+  session,
+  onRemux
+}: {
+  session: SessionSummary
+  onRemux: () => void
+}): ReactElement {
+  const canRemux = Boolean(
+    session.status === 'completed' && session.outputPath?.endsWith('.mkv') && !session.mp4Path
+  )
 
   return (
     <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/30 px-3 py-2">
       <div className="min-w-0">
         <div className="truncate text-sm font-semibold">{session.title}</div>
         <div className="truncate text-xs text-muted-foreground">
-          {dayLabel(session.startedAt)} · {session.status} · {session.mp4Path ?? session.outputPath ?? session.streamPreset}
+          {dayLabel(session.startedAt)} · {session.status} ·{' '}
+          {session.mp4Path ?? session.outputPath ?? session.streamPreset}
         </div>
         <div className="mt-1 flex flex-wrap gap-1.5">
-          {session.container ? <Badge variant="outline">{session.container.toUpperCase()}</Badge> : null}
+          {session.container ? (
+            <Badge variant="outline">{session.container.toUpperCase()}</Badge>
+          ) : null}
           {typeof session.durationMs === 'number' ? (
             <Badge variant="secondary">{durationMsLabel(session.durationMs)}</Badge>
           ) : null}
-          {session.mp4Path ? <Badge variant="success">MP4</Badge> : <Badge variant="outline">MKV</Badge>}
+          {session.mp4Path ? (
+            <Badge variant="success">MP4</Badge>
+          ) : (
+            <Badge variant="outline">MKV</Badge>
+          )}
         </div>
       </div>
       <Button disabled={!canRemux} size="sm" variant="outline" onClick={onRemux}>

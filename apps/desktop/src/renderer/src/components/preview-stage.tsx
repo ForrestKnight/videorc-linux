@@ -24,7 +24,8 @@ export function PreviewStage({
   onOpenPermissions,
   className
 }: PreviewStageProps): ReactElement {
-  const { previewWindow, openPreviewWindow, closePreviewWindow, setPreviewWindowAlwaysOnTop } = useStudio()
+  const { previewWindow, openPreviewWindow, closePreviewWindow, setPreviewWindowAlwaysOnTop } =
+    useStudio()
 
   return (
     <DetachedPreviewCard
@@ -69,10 +70,15 @@ function DetachedPreviewCard({
   className?: string
 }): ReactElement {
   const transportLabel = previewWindowOpen
-    ? previewTransportLabel(previewSurfaceStatus?.transport ?? 'unavailable', previewSurfaceStatus?.backing)
+    ? previewTransportLabel(
+        previewSurfaceStatus?.transport ?? 'unavailable',
+        previewSurfaceStatus?.backing
+      )
     : null
   const disabledMessage =
-    previewLiveStatus?.message ?? previewSurfaceStatus?.message ?? 'Native preview surface is disabled.'
+    previewLiveStatus?.message ??
+    previewSurfaceStatus?.message ??
+    'Native preview surface is disabled.'
 
   return (
     <div
@@ -113,11 +119,15 @@ function DetachedPreviewCard({
           <>
             <div className="flex flex-col gap-1">
               <span className="text-sm font-medium">Preview lives in its own window</span>
-              <span className="text-xs text-muted-foreground">Open it to watch the program output.</span>
+              <span className="text-xs text-muted-foreground">
+                Open it to watch the program output.
+              </span>
             </div>
             <Button data-videorc-open-preview-window size="sm" onClick={onOpen}>
               Open preview
-              <kbd className="ml-2 rounded bg-background/40 px-1.5 font-mono text-[10px]">Cmd+P</kbd>
+              <kbd className="ml-2 rounded bg-background/40 px-1.5 font-mono text-[10px]">
+                Cmd+P
+              </kbd>
             </Button>
           </>
         )
@@ -145,7 +155,10 @@ function DetachedPreviewCard({
   )
 }
 
-function previewTransportLabel(transport: PreviewLiveStatus['transport'], backing?: PreviewSurfaceStatus['backing']): string | null {
+function previewTransportLabel(
+  transport: PreviewLiveStatus['transport'],
+  backing?: PreviewSurfaceStatus['backing']
+): string | null {
   switch (transport) {
     case 'native-surface':
       return backing === 'cametal-layer' ? 'Native preview' : 'Surface proof'

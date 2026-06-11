@@ -1,4 +1,12 @@
-import { ArrowDown, ArrowUp, FloppyDisk, ImageBroken, ImageSquare, Trash, UploadSimple } from '@phosphor-icons/react'
+import {
+  ArrowDown,
+  ArrowUp,
+  FloppyDisk,
+  ImageBroken,
+  ImageSquare,
+  Trash,
+  UploadSimple
+} from '@phosphor-icons/react'
 import { useEffect, useState, type ReactElement } from 'react'
 
 import { PanelSection } from '@/components/panel-section'
@@ -45,7 +53,9 @@ export function ScreensTab(): ReactElement {
             <ImageSquare weight="duotone" />
           </EmptyMedia>
           <EmptyTitle>No Screens yet</EmptyTitle>
-          <EmptyDescription>Upload a PNG, JPEG, or WebP image to create the first Screen.</EmptyDescription>
+          <EmptyDescription>
+            Upload a PNG, JPEG, or WebP image to create the first Screen.
+          </EmptyDescription>
         </Empty>
       ) : (
         <ScrollArea className="h-[calc(100vh-15rem)] pr-3">
@@ -60,7 +70,9 @@ export function ScreensTab(): ReactElement {
                 screen={screen}
                 total={screens.length}
                 onActivate={() =>
-                  void (activeScreen?.id === screen.id ? clearActiveScreen() : activateScreen(screen.id))
+                  void (activeScreen?.id === screen.id
+                    ? clearActiveScreen()
+                    : activateScreen(screen.id))
                 }
                 onDelete={() => void deleteScreen(screen.id)}
                 onMove={(direction) => void moveScreen(screen.id, direction)}

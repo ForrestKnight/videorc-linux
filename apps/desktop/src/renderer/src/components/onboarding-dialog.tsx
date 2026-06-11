@@ -26,7 +26,13 @@ import {
   DialogHeader,
   DialogTitle
 } from '@/components/ui/dialog'
-import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel
+} from '@/components/ui/field'
 import { Separator } from '@/components/ui/separator'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import type { StudioPanel, WorkspaceTab } from '@/components/workspace-nav'
@@ -60,7 +66,9 @@ export function OnboardingDialog({
     canSampleAudio
   } = useStudio()
   const [stepIndex, setStepIndex] = useState(0)
-  const [workflow, setWorkflow] = useState<Workflow>(() => (captureConfig.streamEnabled ? 'stream' : 'record'))
+  const [workflow, setWorkflow] = useState<Workflow>(() =>
+    captureConfig.streamEnabled ? 'stream' : 'record'
+  )
   const [privacyAcknowledged, setPrivacyAcknowledged] = useState(false)
 
   useEffect(() => {
@@ -90,13 +98,19 @@ export function OnboardingDialog({
   const selectWorkflow = (nextWorkflow: Workflow): void => {
     setWorkflow(nextWorkflow)
     setCaptureConfig((current) => {
-      const streamPreset = current.rtmpPreset === 'custom' && !current.rtmpServerUrl.trim() ? 'youtube' : current.rtmpPreset
+      const streamPreset =
+        current.rtmpPreset === 'custom' && !current.rtmpServerUrl.trim()
+          ? 'youtube'
+          : current.rtmpPreset
 
       return {
         ...current,
         recordEnabled: true,
         streamEnabled: nextWorkflow === 'stream',
-        video: nextWorkflow === 'stream' ? videoPresets['stream-1080p60'] : videoPresets['tutorial-1440p30'],
+        video:
+          nextWorkflow === 'stream'
+            ? videoPresets['stream-1080p60']
+            : videoPresets['tutorial-1440p30'],
         rtmpPreset: nextWorkflow === 'stream' ? streamPreset : current.rtmpPreset,
         rtmpServerUrl:
           nextWorkflow === 'stream'
@@ -126,7 +140,9 @@ export function OnboardingDialog({
               <img alt="Videorc" className="size-14 object-contain" src={logoUrl} />
               <div className="flex flex-col gap-1">
                 <DialogTitle>Set up Videorc</DialogTitle>
-                <DialogDescription>Choose the first-session defaults and confirm the local capture path.</DialogDescription>
+                <DialogDescription>
+                  Choose the first-session defaults and confirm the local capture path.
+                </DialogDescription>
               </div>
             </div>
             <div
@@ -176,7 +192,9 @@ export function OnboardingDialog({
             onAcknowledgedChange={setPrivacyAcknowledged}
           />
         ) : null}
-        {step === 'finish' ? <FinishStep recommendedTab={recommendedTab} workflow={workflow} onComplete={onComplete} /> : null}
+        {step === 'finish' ? (
+          <FinishStep recommendedTab={recommendedTab} workflow={workflow} onComplete={onComplete} />
+        ) : null}
 
         <DialogFooter className="items-center sm:justify-between">
           <Button variant="ghost" onClick={() => onComplete()}>
@@ -210,7 +228,9 @@ function WorkflowStep({
     <FieldGroup>
       <Field>
         <FieldLabel>First session</FieldLabel>
-        <FieldDescription>Videorc will apply matching output defaults now. These can be changed later.</FieldDescription>
+        <FieldDescription>
+          Videorc will apply matching output defaults now. These can be changed later.
+        </FieldDescription>
         <ToggleGroup
           className="w-full items-stretch"
           orientation="vertical"
@@ -219,11 +239,25 @@ function WorkflowStep({
           variant="outline"
           onValueChange={(value) => value && onSelectWorkflow(value as Workflow)}
         >
-          <ToggleGroupItem className="h-auto w-full justify-start px-4 py-3 text-left" value="record">
-            <WorkflowOption icon={FileVideo} title="Record tutorial" detail="Local MKV recording with the tutorial 1440p30 preset." />
+          <ToggleGroupItem
+            className="h-auto w-full justify-start px-4 py-3 text-left"
+            value="record"
+          >
+            <WorkflowOption
+              icon={FileVideo}
+              title="Record tutorial"
+              detail="Local MKV recording with the tutorial 1440p30 preset."
+            />
           </ToggleGroupItem>
-          <ToggleGroupItem className="h-auto w-full justify-start px-4 py-3 text-left" value="stream">
-            <WorkflowOption icon={Broadcast} title="Record while streaming" detail="Local MKV plus RTMP using the stream 1080p60 preset." />
+          <ToggleGroupItem
+            className="h-auto w-full justify-start px-4 py-3 text-left"
+            value="stream"
+          >
+            <WorkflowOption
+              icon={Broadcast}
+              title="Record while streaming"
+              detail="Local MKV plus RTMP using the stream 1080p60 preset."
+            />
           </ToggleGroupItem>
         </ToggleGroup>
       </Field>
@@ -257,7 +291,8 @@ function SetupStepView({
           <Warning weight="fill" />
           <AlertTitle>Setup needs attention</AlertTitle>
           <AlertDescription>
-            Sources, Outputs, and Settings own these checks. You can continue and fix them from the workspace.
+            Sources, Outputs, and Settings own these checks. You can continue and fix them from the
+            workspace.
           </AlertDescription>
         </Alert>
       ) : (
@@ -265,7 +300,8 @@ function SetupStepView({
           <CheckCircle weight="fill" />
           <AlertTitle>Ready for a first session</AlertTitle>
           <AlertDescription>
-            The current device and output defaults are ready for {workflow === 'stream' ? 'recording while streaming' : 'recording'}.
+            The current device and output defaults are ready for{' '}
+            {workflow === 'stream' ? 'recording while streaming' : 'recording'}.
           </AlertDescription>
         </Alert>
       )}
@@ -291,9 +327,18 @@ function SetupStepView({
           <GearSix data-icon="inline-start" />
           Settings
         </Button>
-        <Button disabled={!canSampleAudio || audioMeterLoading} size="sm" variant="outline" onClick={onSampleAudio}>
+        <Button
+          disabled={!canSampleAudio || audioMeterLoading}
+          size="sm"
+          variant="outline"
+          onClick={onSampleAudio}
+        >
           <Waveform data-icon="inline-start" />
-          {audioMeterLoading ? 'Checking mic' : selectedMicrophoneName ? 'Check mic' : 'No mic selected'}
+          {audioMeterLoading
+            ? 'Checking mic'
+            : selectedMicrophoneName
+              ? 'Check mic'
+              : 'No mic selected'}
         </Button>
       </div>
     </div>
@@ -322,7 +367,8 @@ function PrivacyStep({
         <FieldContent>
           <FieldLabel>Local by default</FieldLabel>
           <FieldDescription>
-            Recordings and session metadata stay on this Mac. Cloud AI only runs from the AI tab after explicit consent.
+            Recordings and session metadata stay on this Mac. Cloud AI only runs from the AI tab
+            after explicit consent.
           </FieldDescription>
         </FieldContent>
       </Field>
@@ -350,8 +396,12 @@ function FinishStep({
     <div className="flex flex-col gap-4">
       <Alert>
         <CheckCircle weight="fill" />
-        <AlertTitle>{workflow === 'stream' ? 'Streaming workflow selected' : 'Recording workflow selected'}</AlertTitle>
-        <AlertDescription>The workspace is ready to continue from the most relevant tab.</AlertDescription>
+        <AlertTitle>
+          {workflow === 'stream' ? 'Streaming workflow selected' : 'Recording workflow selected'}
+        </AlertTitle>
+        <AlertDescription>
+          The workspace is ready to continue from the most relevant tab.
+        </AlertDescription>
       </Alert>
 
       <div className="grid gap-2 sm:grid-cols-2">
@@ -376,7 +426,12 @@ function FinishStep({
         <DestinationButton icon={Sparkle} label="AI" onClick={() => onComplete('ai')} />
       </div>
       {recommendedTab === 'settings' ? (
-        <DestinationButton recommended icon={GearSix} label="Settings" onClick={() => onComplete('settings')} />
+        <DestinationButton
+          recommended
+          icon={GearSix}
+          label="Settings"
+          onClick={() => onComplete('settings')}
+        />
       ) : null}
     </div>
   )
@@ -409,12 +464,23 @@ function SetupStatusRow({ item }: { item: SetupStep }): ReactElement {
         <span className="text-sm font-medium">{item.label}</span>
         <span className="line-clamp-2 text-xs text-muted-foreground">{item.detail}</span>
       </div>
-      <StatusBadge tone={toneForSetup(item.tone)} value={item.tone === 'good' ? 'ready' : item.tone} />
+      <StatusBadge
+        tone={toneForSetup(item.tone)}
+        value={item.tone === 'good' ? 'ready' : item.tone}
+      />
     </div>
   )
 }
 
-function Fact({ icon: LeadingIcon, label, value }: { icon: Icon; label: string; value: string }): ReactElement {
+function Fact({
+  icon: LeadingIcon,
+  label,
+  value
+}: {
+  icon: Icon
+  label: string
+  value: string
+}): ReactElement {
   return (
     <div className="flex min-w-0 gap-3 rounded-lg border bg-muted/30 px-3 py-2">
       <LeadingIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" weight="duotone" />

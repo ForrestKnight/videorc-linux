@@ -1,4 +1,13 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, screen, shell, type NativeImage } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  nativeImage,
+  screen,
+  shell,
+  type NativeImage
+} from 'electron'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import {
   createServer,
@@ -40,7 +49,6 @@ import type {
   PreviewSurfaceSceneState,
   PreviewSurfaceSceneUpdateParams,
   PreviewSurfaceStatus,
-  Scene,
   SceneSource,
   SceneTransform,
   StreamScreen,
@@ -71,7 +79,8 @@ const OAUTH_APP_PROTOCOL_REDIRECT_URI = 'videorc://oauth/callback'
 const nativePreviewSurfaceProofEnabled = process.env.VIDEORC_NATIVE_PREVIEW_SURFACE !== '0'
 const nativePreviewFramePollingEnabled = process.env.VIDEORC_SMOKE_PREVIEW_MOTION !== '1'
 const smokeCommandServerEnabled =
-  process.env.VIDEORC_SMOKE_PREVIEW_MOTION === '1' || process.env.VIDEORC_SMOKE_COMMAND_SERVER === '1'
+  process.env.VIDEORC_SMOKE_PREVIEW_MOTION === '1' ||
+  process.env.VIDEORC_SMOKE_COMMAND_SERVER === '1'
 const NATIVE_PREVIEW_INVALID_ACTIVATION_WARN_THRESHOLD = 3
 const requireNativePreviewRealSurfaceModule = createRequire(__filename)
 const configuredNativePreviewHostModulePath = process.env.VIDEORC_NATIVE_PREVIEW_HOST_MODULE?.trim()
@@ -80,8 +89,10 @@ const nativePreviewRealSurfaceDriverLoad = loadNativePreviewRealSurfaceDriver({
   loadModule: (modulePath) => requireNativePreviewRealSurfaceModule(modulePath)
 })
 const NATIVE_PREVIEW_HANDOFF_SAMPLE_LIMIT = 900
-let nativePreviewRealSurfaceDriverUnavailableReason = nativePreviewRealSurfaceDriverLoad.unavailableReason
-let nativePreviewRealSurfaceDriver: NativePreviewRealSurfaceDriver | null = nativePreviewRealSurfaceDriverLoad.driver
+let nativePreviewRealSurfaceDriverUnavailableReason =
+  nativePreviewRealSurfaceDriverLoad.unavailableReason
+let nativePreviewRealSurfaceDriver: NativePreviewRealSurfaceDriver | null =
+  nativePreviewRealSurfaceDriverLoad.driver
 let nativePreviewHelperProcessDriverResolved = false
 let nativePreviewHelperDriverRetryAtMs = 0
 const NATIVE_PREVIEW_HELPER_RETRY_COOLDOWN_MS = 5000
@@ -124,7 +135,8 @@ type NativePreviewMainStatusRefreshFields = Pick<
 
 const MACOS_PERMISSION_URLS: Record<SystemPermissionPane, string> = {
   privacy: 'x-apple.systempreferences:com.apple.preference.security',
-  'screen-recording': 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
+  'screen-recording':
+    'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
   camera: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Camera',
   microphone: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone'
 }
@@ -255,7 +267,10 @@ function savePreviewWindowPrefs(patch: PreviewWindowPrefs): void {
     return
   }
   try {
-    writeFileSync(previewWindowPrefsPath(), JSON.stringify({ ...loadPreviewWindowPrefs(), ...patch }))
+    writeFileSync(
+      previewWindowPrefsPath(),
+      JSON.stringify({ ...loadPreviewWindowPrefs(), ...patch })
+    )
   } catch {
     // Preferences are a convenience; never let them break the preview itself.
   }
@@ -354,7 +369,9 @@ function pushPreviewWindowPlacement(): void {
   if (!bounds) {
     return
   }
-  const surfaceExists = Boolean(nativePreviewSurfaceWindow && !nativePreviewSurfaceWindow.isDestroyed())
+  const surfaceExists = Boolean(
+    nativePreviewSurfaceWindow && !nativePreviewSurfaceWindow.isDestroyed()
+  )
   void applyNativePreviewHostCommands([
     { kind: surfaceExists ? 'update-bounds' : 'create', bounds }
   ]).catch((error) => {
@@ -483,7 +500,9 @@ function setPreviewWindowAlwaysOnTop(alwaysOnTop: boolean): PreviewWindowState {
   return previewWindowState()
 }
 
-function idleNativePreviewSurfaceStatus(message = 'Native preview surface is not running.'): PreviewSurfaceStatus {
+function idleNativePreviewSurfaceStatus(
+  message = 'Native preview surface is not running.'
+): PreviewSurfaceStatus {
   return {
     state: 'unavailable',
     source: 'synthetic',
@@ -506,7 +525,11 @@ function backendPreviewFrameUrl(
   path: '/preview/camera/live.png' | '/preview/screen/live.png',
   maxWidth?: number
 ): string | undefined {
-  if (!nativePreviewFramePollingEnabled || nativePreviewSurfaceFramePollingSuppressed || !backendConnection) {
+  if (
+    !nativePreviewFramePollingEnabled ||
+    nativePreviewSurfaceFramePollingSuppressed ||
+    !backendConnection
+  ) {
     return undefined
   }
   const params = new URLSearchParams({ token: backendConnection.token })
@@ -578,7 +601,9 @@ function previewLayerShape(source: SceneSource, layout: LayoutSettings): CameraS
   if (source.kind !== 'camera') {
     return undefined
   }
-  return layout.layoutPreset === 'screen-camera' && layout.cameraShape === 'circle' ? 'circle' : 'rectangle'
+  return layout.layoutPreset === 'screen-camera' && layout.cameraShape === 'circle'
+    ? 'circle'
+    : 'rectangle'
 }
 
 function previewDrawableWidth(): number | undefined {
@@ -591,7 +616,10 @@ function previewDrawableWidth(): number | undefined {
   return width * Math.max(1, scaleFactor)
 }
 
-function previewLayerSnapshotWidth(transform: SceneTransform, sourceWidth?: number): number | undefined {
+function previewLayerSnapshotWidth(
+  transform: SceneTransform,
+  sourceWidth?: number
+): number | undefined {
   const drawableWidth = previewDrawableWidth()
   if (!drawableWidth) {
     return undefined
@@ -614,7 +642,9 @@ function previewLayerFrameUrl(source: SceneSource): string | undefined {
   return undefined
 }
 
-function buildPreviewSurfaceScene(params: PreviewSurfaceSceneUpdateParams): PreviewSurfaceSceneState {
+function buildPreviewSurfaceScene(
+  params: PreviewSurfaceSceneUpdateParams
+): PreviewSurfaceSceneState {
   const layers: PreviewSurfaceSceneLayer[] = (params.scene?.sources ?? []).map((source) => ({
     id: source.id,
     name: source.name,
@@ -685,7 +715,9 @@ function buildPreviewSurfaceSceneFromCompositorStatus(
   }
 }
 
-function compositorLayerFrameUrl(source: CompositorStatus['sceneSources'][number]): string | undefined {
+function compositorLayerFrameUrl(
+  source: CompositorStatus['sceneSources'][number]
+): string | undefined {
   const maxWidth = previewLayerSnapshotWidth(source.transform, source.width)
   if (source.kind === 'camera') {
     return backendPreviewFrameUrl('/preview/camera/live.png', maxWidth)
@@ -1211,7 +1243,9 @@ async function createNativePreviewSurfaceWindow(): Promise<void> {
   throw lastError instanceof Error ? lastError : new Error(String(lastError))
 }
 
-async function createNativePreviewSurface(bounds: PreviewSurfaceBounds): Promise<PreviewSurfaceStatus> {
+async function createNativePreviewSurface(
+  bounds: PreviewSurfaceBounds
+): Promise<PreviewSurfaceStatus> {
   bounds = normalizePreviewSurfaceBounds(bounds)
   // The direct IPC path must not create a surface while the preview window is closed.
   if (!previewWindow || previewWindow.isDestroyed()) {
@@ -1219,7 +1253,9 @@ async function createNativePreviewSurface(bounds: PreviewSurfaceBounds): Promise
     return nativePreviewSurfaceStatus
   }
   if (!nativePreviewSurfaceProofEnabled) {
-    nativePreviewSurfaceStatus = idleNativePreviewSurfaceStatus('Native preview surface proof mode is disabled.')
+    nativePreviewSurfaceStatus = idleNativePreviewSurfaceStatus(
+      'Native preview surface proof mode is disabled.'
+    )
     return nativePreviewSurfaceStatus
   }
   resetNativePreviewMainHandoffMetrics()
@@ -1244,7 +1280,9 @@ async function createNativePreviewSurface(bounds: PreviewSurfaceBounds): Promise
   }
   nativePreviewSurfaceStatus = {
     state: 'live',
-    source: nativePreviewSurfaceScene?.sources.some((source) => source.kind === 'screen' || source.kind === 'window')
+    source: nativePreviewSurfaceScene?.sources.some(
+      (source) => source.kind === 'screen' || source.kind === 'window'
+    )
       ? 'screen'
       : nativePreviewSurfaceScene?.sources.some((source) => source.kind === 'camera')
         ? 'camera'
@@ -1278,7 +1316,9 @@ async function createNativePreviewSurface(bounds: PreviewSurfaceBounds): Promise
   return nativePreviewSurfaceStatus
 }
 
-async function updateNativePreviewSurfaceBounds(bounds: PreviewSurfaceBounds): Promise<PreviewSurfaceStatus> {
+async function updateNativePreviewSurfaceBounds(
+  bounds: PreviewSurfaceBounds
+): Promise<PreviewSurfaceStatus> {
   bounds = normalizePreviewSurfaceBounds(bounds)
   if (!nativePreviewSurfaceWindow || nativePreviewSurfaceWindow.isDestroyed()) {
     // Never resurrect a torn-down surface just to hide it: after the detached
@@ -1316,7 +1356,9 @@ async function updateNativePreviewSurfaceBounds(bounds: PreviewSurfaceBounds): P
   return nativePreviewSurfaceStatus
 }
 
-async function applyNativePreviewHostCommands(commands: NativePreviewHostCommand[]): Promise<PreviewSurfaceStatus> {
+async function applyNativePreviewHostCommands(
+  commands: NativePreviewHostCommand[]
+): Promise<PreviewSurfaceStatus> {
   // No preview window, no surface — period. A renderer holding a stale window
   // state (IPC events race the close) must not resurrect the hosts main just
   // tore down; only destroys pass while the window is closed.
@@ -1368,7 +1410,9 @@ async function setNativePreviewSurfacesVisible(visible: boolean): Promise<void> 
     return
   }
   try {
-    await runNativePreviewSurfaceMutation(() => applyNativePreviewHostCommands([{ kind: 'update-bounds', bounds }]))
+    await runNativePreviewSurfaceMutation(() =>
+      applyNativePreviewHostCommands([{ kind: 'update-bounds', bounds }])
+    )
   } catch {
     // Visibility policy is best-effort; the next preview-window event re-syncs.
   }
@@ -1394,9 +1438,10 @@ async function applyNativePreviewRealSurfaceHostCommands(
   commands: NativePreviewHostCommand[],
   options: { startIfNeeded?: boolean } = {}
 ): Promise<void> {
-  const driver = options.startIfNeeded === false
-    ? nativePreviewRealSurfaceDriver
-    : ensureNativePreviewRealSurfaceDriver()
+  const driver =
+    options.startIfNeeded === false
+      ? nativePreviewRealSurfaceDriver
+      : ensureNativePreviewRealSurfaceDriver()
   if (!driver || commands.length === 0) {
     return
   }
@@ -1435,7 +1480,9 @@ async function waitForNativePreviewSurfaceMutation(): Promise<void> {
   }
 }
 
-async function updateNativePreviewSurfaceScene(params: PreviewSurfaceSceneUpdateParams): Promise<PreviewSurfaceStatus> {
+async function updateNativePreviewSurfaceScene(
+  params: PreviewSurfaceSceneUpdateParams
+): Promise<PreviewSurfaceStatus> {
   await waitForNativePreviewSurfaceMutation()
   nativePreviewSurfaceScene = buildPreviewSurfaceScene(params)
   if (nativePreviewSurfaceWindow && !nativePreviewSurfaceWindow.isDestroyed()) {
@@ -1447,7 +1494,9 @@ async function updateNativePreviewSurfaceScene(params: PreviewSurfaceSceneUpdate
     )
   }
 
-  const hasScreen = nativePreviewSurfaceScene.sources.some((source) => source.kind === 'screen' || source.kind === 'window')
+  const hasScreen = nativePreviewSurfaceScene.sources.some(
+    (source) => source.kind === 'screen' || source.kind === 'window'
+  )
   const hasCamera = nativePreviewSurfaceScene.sources.some((source) => source.kind === 'camera')
   nativePreviewSurfaceStatus = {
     ...nativePreviewSurfaceStatus,
@@ -1507,7 +1556,10 @@ async function presentNativePreviewSurfaceCompositor(
   if (compositorScene) {
     nativePreviewSurfaceScene = compositorScene
   }
-  const realSurfaceAttempt = await tryPresentNativePreviewRealSurfaceCompositor(effectiveStatus, mainTiming)
+  const realSurfaceAttempt = await tryPresentNativePreviewRealSurfaceCompositor(
+    effectiveStatus,
+    mainTiming
+  )
   if (realSurfaceAttempt.kind === 'presented') {
     nativePreviewLastRealSurfaceFallbackLogKey = undefined
     return realSurfaceAttempt.status
@@ -1530,11 +1582,15 @@ async function presentNativePreviewSurfaceCompositor(
     )
     metrics = await readNativePreviewSurfaceMetricsAfterPaint()
   }
-  const hasScreen = nativePreviewSurfaceScene?.sources.some((source) => source.kind === 'screen' || source.kind === 'window')
+  const hasScreen = nativePreviewSurfaceScene?.sources.some(
+    (source) => source.kind === 'screen' || source.kind === 'window'
+  )
   const hasCamera = nativePreviewSurfaceScene?.sources.some((source) => source.kind === 'camera')
   const presentedFrameId = finiteMetric(metrics?.presentedCompositorFrame)
-  const compositorFrameLag = finiteMetric(metrics?.compositorFrameLag) ?? (presentedFrameId === undefined ? undefined : 0)
-  const droppedFrames = finiteMetric(metrics?.skippedCompositorFrames) ?? nativePreviewSurfaceStatus.droppedFrames ?? 0
+  const compositorFrameLag =
+    finiteMetric(metrics?.compositorFrameLag) ?? (presentedFrameId === undefined ? undefined : 0)
+  const droppedFrames =
+    finiteMetric(metrics?.skippedCompositorFrames) ?? nativePreviewSurfaceStatus.droppedFrames ?? 0
   const inputToPresentLatencyMs = finiteMetric(metrics?.inputToPresentLatencyMs)
   const inputToPresentLatencyP50Ms = finiteMetric(metrics?.inputToPresentLatencyP50Ms)
   const inputToPresentLatencyP95Ms = finiteMetric(metrics?.inputToPresentLatencyP95Ms)
@@ -1548,7 +1604,11 @@ async function presentNativePreviewSurfaceCompositor(
     ...nativePreviewRendererTimingStatusFields(effectiveStatus),
     ...nativePreviewMainStatusRefreshFields(effectiveStatus),
     source: hasScreen ? 'screen' : hasCamera ? 'camera' : nativePreviewSurfaceStatus.source,
-    framesRendered: Math.max(nativePreviewSurfaceStatus.framesRendered, effectiveStatus.framesRendered, presentedFrameId ?? 0),
+    framesRendered: Math.max(
+      nativePreviewSurfaceStatus.framesRendered,
+      effectiveStatus.framesRendered,
+      presentedFrameId ?? 0
+    ),
     presentedFrameId,
     compositorFrameLag,
     droppedFrames,
@@ -1559,7 +1619,8 @@ async function presentNativePreviewSurfaceCompositor(
     presentFps,
     intervalP95Ms,
     intervalP99Ms,
-    framePollingSuppressed: nativePreviewSurfaceFramePollingSuppressed || effectiveStatus.suppressFramePolling === true,
+    framePollingSuppressed:
+      nativePreviewSurfaceFramePollingSuppressed || effectiveStatus.suppressFramePolling === true,
     sourcePixelsPresent: liveLayerCount > 0,
     updatedAt: new Date().toISOString(),
     message: proofSurfaceCompositorMessage(effectiveStatus, realSurfaceAttempt.reason)
@@ -1606,7 +1667,10 @@ async function tryPresentNativePreviewRealSurfaceCompositor(
     nativePreviewRealSurfaceInvalidActivationCount = 0
     return {
       kind: 'skipped',
-      reason: realSurfaceUnavailableMessage(handoff, nativePreviewRealSurfaceDriverUnavailableReason),
+      reason: realSurfaceUnavailableMessage(
+        handoff,
+        nativePreviewRealSurfaceDriverUnavailableReason
+      ),
       logKey: `unavailable:${nativePreviewRealSurfaceDriverUnavailableReason ?? 'not-configured'}`
     }
   }
@@ -1618,7 +1682,8 @@ async function tryPresentNativePreviewRealSurfaceCompositor(
       handoff,
       bounds: nativePreviewSurfaceStatus.bounds,
       scene: nativePreviewSurfaceScene,
-      suppressFramePolling: nativePreviewSurfaceFramePollingSuppressed || status.suppressFramePolling === true,
+      suppressFramePolling:
+        nativePreviewSurfaceFramePollingSuppressed || status.suppressFramePolling === true,
       frameAgeMs: status.frameAgeMs,
       compositorUpdatedAt: status.updatedAt
     })
@@ -1629,7 +1694,10 @@ async function tryPresentNativePreviewRealSurfaceCompositor(
     )
     return {
       kind: 'skipped',
-      reason: realSurfaceUnavailableMessage(handoff, nativePreviewRealSurfaceDriverUnavailableReason ?? 'unknown'),
+      reason: realSurfaceUnavailableMessage(
+        handoff,
+        nativePreviewRealSurfaceDriverUnavailableReason ?? 'unknown'
+      ),
       logKey: `error:${nativePreviewRealSurfaceDriverUnavailableReason}`
     }
   }
@@ -1640,10 +1708,13 @@ async function tryPresentNativePreviewRealSurfaceCompositor(
   if (!driverStatus || !nativeCametalLayerStatusMatchesHandoff(driverStatus, handoff)) {
     nativePreviewRealSurfaceInvalidActivationCount += 1
     const shouldReportInvalidActivation =
-      nativePreviewRealSurfaceInvalidActivationCount >= NATIVE_PREVIEW_INVALID_ACTIVATION_WARN_THRESHOLD
+      nativePreviewRealSurfaceInvalidActivationCount >=
+      NATIVE_PREVIEW_INVALID_ACTIVATION_WARN_THRESHOLD
     return {
       kind: 'skipped',
-      reason: shouldReportInvalidActivation ? realSurfaceInvalidActivationMessage(handoff, driverStatus) : undefined,
+      reason: shouldReportInvalidActivation
+        ? realSurfaceInvalidActivationMessage(handoff, driverStatus)
+        : undefined,
       logKey: `invalid-activation:${handoff.iosurfaceId}:${handoff.width}x${handoff.height}`
     }
   }
@@ -1656,7 +1727,8 @@ async function tryPresentNativePreviewRealSurfaceCompositor(
     ...nativePreviewMainStatusRefreshFields(status),
     ...mainTimingStatus,
     droppedFrames: Math.max(driverStatus.droppedFrames ?? 0, previousDroppedFrames),
-    framePollingSuppressed: nativePreviewSurfaceFramePollingSuppressed || status.suppressFramePolling === true,
+    framePollingSuppressed:
+      nativePreviewSurfaceFramePollingSuppressed || status.suppressFramePolling === true,
     updatedAt: new Date().toISOString()
   }
   // Single placement authority: while the native CAMetalLayer is confirmed
@@ -1664,7 +1736,11 @@ async function tryPresentNativePreviewRealSurfaceCompositor(
   // one rect made every visual bug ambiguous). It may re-show on bounds updates once
   // the native path stops claiming presents (see surface create/update).
   nativePreviewNativePresentConfirmedAtMs = Date.now()
-  if (nativePreviewSurfaceWindow && !nativePreviewSurfaceWindow.isDestroyed() && nativePreviewSurfaceWindow.isVisible()) {
+  if (
+    nativePreviewSurfaceWindow &&
+    !nativePreviewSurfaceWindow.isDestroyed() &&
+    nativePreviewSurfaceWindow.isVisible()
+  ) {
     nativePreviewSurfaceWindow.hide()
   }
   return { kind: 'presented', status: nativePreviewSurfaceStatus }
@@ -1698,7 +1774,10 @@ async function setNativePreviewSurfaceFramePollingSuppressed(
   return nativePreviewSurfaceStatus
 }
 
-async function readNativePreviewSurfaceMetricsAfterPaint(): Promise<Record<string, unknown> | null> {
+async function readNativePreviewSurfaceMetricsAfterPaint(): Promise<Record<
+  string,
+  unknown
+> | null> {
   if (!nativePreviewSurfaceWindow || nativePreviewSurfaceWindow.isDestroyed()) {
     return null
   }
@@ -1776,10 +1855,18 @@ function nativePreviewRendererTimingStatusFields(
   status: PreviewSurfaceCompositorUpdateParams
 ): NativePreviewRendererTimingFields {
   return {
-    nativePreviewRendererPollIntervalP95Ms: finiteMetric(status.nativePreviewRendererPollIntervalP95Ms),
-    nativePreviewRendererPollRoundTripP95Ms: finiteMetric(status.nativePreviewRendererPollRoundTripP95Ms),
-    nativePreviewRendererPresentRoundTripP95Ms: finiteMetric(status.nativePreviewRendererPresentRoundTripP95Ms),
-    nativePreviewRendererPollInFlightSkips: finiteMetric(status.nativePreviewRendererPollInFlightSkips)
+    nativePreviewRendererPollIntervalP95Ms: finiteMetric(
+      status.nativePreviewRendererPollIntervalP95Ms
+    ),
+    nativePreviewRendererPollRoundTripP95Ms: finiteMetric(
+      status.nativePreviewRendererPollRoundTripP95Ms
+    ),
+    nativePreviewRendererPresentRoundTripP95Ms: finiteMetric(
+      status.nativePreviewRendererPresentRoundTripP95Ms
+    ),
+    nativePreviewRendererPollInFlightSkips: finiteMetric(
+      status.nativePreviewRendererPollInFlightSkips
+    )
   }
 }
 
@@ -1790,8 +1877,14 @@ function recordNativePreviewMainHandoffMetrics(
   recordNativePreviewTimingSample(nativePreviewMainQueueWaitSamplesMs, queueWaitMs)
   recordNativePreviewTimingSample(nativePreviewMainPresentSamplesMs, presentMs)
   return {
-    nativePreviewMainQueueWaitP95Ms: nativePreviewTimingPercentile(nativePreviewMainQueueWaitSamplesMs, 0.95),
-    nativePreviewMainPresentP95Ms: nativePreviewTimingPercentile(nativePreviewMainPresentSamplesMs, 0.95),
+    nativePreviewMainQueueWaitP95Ms: nativePreviewTimingPercentile(
+      nativePreviewMainQueueWaitSamplesMs,
+      0.95
+    ),
+    nativePreviewMainPresentP95Ms: nativePreviewTimingPercentile(
+      nativePreviewMainPresentSamplesMs,
+      0.95
+    ),
     nativePreviewMainQueuedBehindCount
   }
 }
@@ -1801,7 +1894,10 @@ function recordNativePreviewMainStatusRefresh(
   fetchStartedAtMs: number,
   succeeded: boolean
 ): NativePreviewMainStatusRefreshFields {
-  recordNativePreviewTimingSample(nativePreviewMainStatusFetchSamplesMs, Math.max(0, Date.now() - fetchStartedAtMs))
+  recordNativePreviewTimingSample(
+    nativePreviewMainStatusFetchSamplesMs,
+    Math.max(0, Date.now() - fetchStartedAtMs)
+  )
   if (succeeded) {
     nativePreviewMainStatusFetchSuccesses += 1
   } else {
@@ -1824,11 +1920,17 @@ function nativePreviewMainStatusRefreshFields(
   status: PreviewSurfaceCompositorUpdateParams | CompositorStatus
 ): NativePreviewMainStatusRefreshFields {
   return {
-    nativePreviewMainStatusFetchP95Ms: nativePreviewTimingPercentile(nativePreviewMainStatusFetchSamplesMs, 0.95),
+    nativePreviewMainStatusFetchP95Ms: nativePreviewTimingPercentile(
+      nativePreviewMainStatusFetchSamplesMs,
+      0.95
+    ),
     nativePreviewMainStatusFetchFailures,
     nativePreviewMainStatusFetchSuccesses,
     nativePreviewMainPresentedStatusAgeMs: nativePreviewCompositorStatusAgeMs(status),
-    nativePreviewMainPresentedStatusAgeP95Ms: nativePreviewTimingPercentile(nativePreviewMainStatusAgeSamplesMs, 0.95),
+    nativePreviewMainPresentedStatusAgeP95Ms: nativePreviewTimingPercentile(
+      nativePreviewMainStatusAgeSamplesMs,
+      0.95
+    ),
     nativePreviewMainPresentedFrameAgeP95Ms: nativePreviewTimingPercentile(
       nativePreviewMainStatusFrameAgeSamplesMs,
       0.95
@@ -1836,7 +1938,9 @@ function nativePreviewMainStatusRefreshFields(
   }
 }
 
-function nativePreviewCompositorStatusAgeMs(status: PreviewSurfaceCompositorUpdateParams | CompositorStatus): number | undefined {
+function nativePreviewCompositorStatusAgeMs(
+  status: PreviewSurfaceCompositorUpdateParams | CompositorStatus
+): number | undefined {
   const updatedAtMs = Date.parse(status.updatedAt)
   if (!Number.isFinite(updatedAtMs)) {
     return undefined
@@ -1865,12 +1969,18 @@ function recordNativePreviewTimingSample(samples: number[], value: number): void
   }
 }
 
-function nativePreviewTimingPercentile(values: number[], percentileRank: number): number | undefined {
+function nativePreviewTimingPercentile(
+  values: number[],
+  percentileRank: number
+): number | undefined {
   if (values.length === 0) {
     return undefined
   }
   const sorted = [...values].sort((left, right) => left - right)
-  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * percentileRank) - 1))
+  const index = Math.min(
+    sorted.length - 1,
+    Math.max(0, Math.ceil(sorted.length * percentileRank) - 1)
+  )
   return sorted[index]
 }
 
@@ -1997,7 +2107,15 @@ function createNativePreviewHelperProcessDriverConfig():
   return {
     driver: createNativePreviewHelperProcessDriver({
       command: resolveCargoBinary(),
-      args: ['run', '--quiet', '-p', 'videorc-backend', '--bin', 'native_preview_host_helper', '--'],
+      args: [
+        'run',
+        '--quiet',
+        '-p',
+        'videorc-backend',
+        '--bin',
+        'native_preview_host_helper',
+        '--'
+      ],
       cwd: root,
       env,
       onProcessStarted: recordOwnedProcess,
@@ -2075,7 +2193,11 @@ function sendOAuthCallbackUrl(callbackUrl: string): void {
 }
 
 function flushOAuthCallbackUrls(): void {
-  if (!mainWindow || mainWindow.webContents.isDestroyed() || pendingOAuthCallbackUrls.length === 0) {
+  if (
+    !mainWindow ||
+    mainWindow.webContents.isDestroyed() ||
+    pendingOAuthCallbackUrls.length === 0
+  ) {
     return
   }
 
@@ -2153,7 +2275,10 @@ function devCargoEnvOverrides(): Record<string, string> {
 }
 
 function resolvePackagedBackendBinary(): string {
-  return join(process.resourcesPath, process.platform === 'win32' ? 'videorc-backend.exe' : 'videorc-backend')
+  return join(
+    process.resourcesPath,
+    process.platform === 'win32' ? 'videorc-backend.exe' : 'videorc-backend'
+  )
 }
 
 function resolvePackagedFfmpegBinDir(): string | null {
@@ -2201,7 +2326,9 @@ function startBackend(): void {
   const cargoBinDir = join(homedir(), '.cargo', 'bin')
   const ffmpegBinDir = resolvePackagedFfmpegBinDir()
   const command = app.isPackaged ? resolvePackagedBackendBinary() : resolveCargoBinary()
-  const args = app.isPackaged ? [] : ['run', '--quiet', '-p', 'videorc-backend', '--bin', 'videorc-backend']
+  const args = app.isPackaged
+    ? []
+    : ['run', '--quiet', '-p', 'videorc-backend', '--bin', 'videorc-backend']
   const pathEntries = [ffmpegBinDir, cargoBinDir, process.env.PATH].filter(Boolean)
 
   logBackend('info', `Launching backend from ${root}`)
@@ -2326,12 +2453,17 @@ function startSmokePreviewMotionServer(): void {
   smokePreviewMotionServer.listen(0, '127.0.0.1', () => {
     const address = smokePreviewMotionServer?.address()
     if (address && typeof address !== 'string') {
-      console.log(`[smoke] preview-motion-ready ${JSON.stringify({ host: address.address, port: address.port })}`)
+      console.log(
+        `[smoke] preview-motion-ready ${JSON.stringify({ host: address.address, port: address.port })}`
+      )
     }
   })
 }
 
-async function handleSmokePreviewMotionRequest(request: IncomingMessage, response: HttpResponse): Promise<void> {
+async function handleSmokePreviewMotionRequest(
+  request: IncomingMessage,
+  response: HttpResponse
+): Promise<void> {
   if (request.method === 'GET' && request.url === '/health') {
     writeSmokeJson(response, 200, { ok: true })
     return
@@ -2346,9 +2478,7 @@ async function handleSmokePreviewMotionRequest(request: IncomingMessage, respons
     const body = await readSmokeBody(request)
     const command = typeof body.command === 'string' ? body.command : ''
     const params =
-      body.params && typeof body.params === 'object'
-        ? (body.params as Record<string, unknown>)
-        : {}
+      body.params && typeof body.params === 'object' ? (body.params as Record<string, unknown>) : {}
     const result = await runSmokePreviewMotionCommand(command, params)
     writeSmokeJson(response, 200, { ok: true, result })
   } catch (error) {
@@ -2359,7 +2489,10 @@ async function handleSmokePreviewMotionRequest(request: IncomingMessage, respons
   }
 }
 
-async function runSmokePreviewMotionCommand(command: string, params: Record<string, unknown>): Promise<unknown> {
+async function runSmokePreviewMotionCommand(
+  command: string,
+  params: Record<string, unknown>
+): Promise<unknown> {
   if (!mainWindow || mainWindow.webContents.isDestroyed()) {
     throw new Error('Main window is not ready for preview motion smoke.')
   }
@@ -2451,8 +2584,13 @@ async function runSmokePreviewMotionCommand(command: string, params: Record<stri
       ...nativePreviewSurfaceStatus,
       framesRendered: Number(metrics.frames ?? nativePreviewSurfaceStatus.framesRendered),
       presentedFrameId,
-      compositorFrameLag: finiteMetric(metrics.compositorFrameLag) ?? (presentedFrameId === undefined ? undefined : 0),
-      droppedFrames: finiteMetric(metrics.skippedCompositorFrames) ?? nativePreviewSurfaceStatus.droppedFrames ?? 0,
+      compositorFrameLag:
+        finiteMetric(metrics.compositorFrameLag) ??
+        (presentedFrameId === undefined ? undefined : 0),
+      droppedFrames:
+        finiteMetric(metrics.skippedCompositorFrames) ??
+        nativePreviewSurfaceStatus.droppedFrames ??
+        0,
       inputToPresentLatencyMs: finiteMetric(metrics.inputToPresentLatencyMs),
       inputToPresentLatencyP50Ms: finiteMetric(metrics.inputToPresentLatencyP50Ms),
       inputToPresentLatencyP95Ms: finiteMetric(metrics.inputToPresentLatencyP95Ms),
@@ -2605,7 +2743,10 @@ function nativePreviewSurfaceStatusMetrics(status: PreviewSurfaceStatus): Record
   }
 }
 
-function smokePreviewSceneParams(revision: number, cameraX: number): PreviewSurfaceSceneUpdateParams {
+function smokePreviewSceneParams(
+  revision: number,
+  cameraX: number
+): PreviewSurfaceSceneUpdateParams {
   const cameraTransform: SceneTransform = {
     x: cameraX,
     y: 0.18,
@@ -2670,7 +2811,9 @@ function smokePreviewSceneParams(revision: number, cameraX: number): PreviewSurf
   }
 }
 
-function smokeCompositorStatusFromSceneParams(params: PreviewSurfaceSceneUpdateParams): CompositorStatus {
+function smokeCompositorStatusFromSceneParams(
+  params: PreviewSurfaceSceneUpdateParams
+): CompositorStatus {
   smokePreviewCompositorFrameId += 1
   return {
     state: 'live',
@@ -3009,7 +3152,9 @@ async function pickScreenImage(): Promise<string | null> {
       }
     ]
   }
-  const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options)
+  const result = mainWindow
+    ? await dialog.showOpenDialog(mainWindow, options)
+    : await dialog.showOpenDialog(options)
 
   if (result.canceled) {
     return null
@@ -3059,7 +3204,9 @@ app.whenReady().then(() => {
   registerOAuthCallbackProtocol()
   ipcMain.handle('backend:get-connection', () => backendConnection)
   ipcMain.handle('backend:get-logs', () => backendLogs)
-  ipcMain.handle('system:open-permissions', (_event, pane?: SystemPermissionPane) => openSystemPermissions(pane))
+  ipcMain.handle('system:open-permissions', (_event, pane?: SystemPermissionPane) =>
+    openSystemPermissions(pane)
+  )
   ipcMain.handle('screens:pick-image', () => pickScreenImage())
   ipcMain.handle('oauth:open-url', (_event, authUrl: string) => openOAuthUrl(authUrl))
   ipcMain.handle('oauth:callback-redirect-uri', (_event, platform?: string) =>
@@ -3074,8 +3221,7 @@ app.whenReady().then(() => {
   )
   ipcMain.handle('preview-window:set-aspect-ratio', (_event, width: number, height: number) => {
     if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
-      const changed =
-        previewWindowAspect.width !== width || previewWindowAspect.height !== height
+      const changed = previewWindowAspect.width !== width || previewWindowAspect.height !== height
       previewWindowAspect = { width, height }
       if (changed && previewWindow && !previewWindow.isDestroyed()) {
         applyPreviewWindowAspect(previewWindow)
@@ -3091,14 +3237,18 @@ app.whenReady().then(() => {
   ipcMain.handle('preview-surface:update-bounds', (_event, bounds: PreviewSurfaceBounds) =>
     runNativePreviewSurfaceMutation(() => updateNativePreviewSurfaceBounds(bounds))
   )
-  ipcMain.handle('preview-surface:apply-host-commands', (_event, commands: NativePreviewHostCommand[]) =>
-    runNativePreviewSurfaceMutation(() => applyNativePreviewHostCommands(commands))
+  ipcMain.handle(
+    'preview-surface:apply-host-commands',
+    (_event, commands: NativePreviewHostCommand[]) =>
+      runNativePreviewSurfaceMutation(() => applyNativePreviewHostCommands(commands))
   )
   ipcMain.handle('preview-surface:update-scene', (_event, scene: PreviewSurfaceSceneUpdateParams) =>
     updateNativePreviewSurfaceScene(scene)
   )
-  ipcMain.handle('preview-surface:update-compositor', (_event, status: PreviewSurfaceCompositorUpdateParams) =>
-    updateNativePreviewSurfaceCompositor(status)
+  ipcMain.handle(
+    'preview-surface:update-compositor',
+    (_event, status: PreviewSurfaceCompositorUpdateParams) =>
+      updateNativePreviewSurfaceCompositor(status)
   )
   ipcMain.handle('preview-surface:set-frame-polling-suppressed', (_event, suppressed: boolean) =>
     setNativePreviewSurfaceFramePollingSuppressed(suppressed)

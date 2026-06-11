@@ -19,7 +19,11 @@ import { useStudio } from '@/hooks/use-studio'
 import type { FileAssessment, GateStatus, SessionSummary } from '@/lib/backend'
 import { dayLabel, durationMsLabel, isActiveRecordingState } from '@/lib/format'
 
-export function LibraryTab({ onOpenInAi }: { onOpenInAi: (sessionId: string) => void }): ReactElement {
+export function LibraryTab({
+  onOpenInAi
+}: {
+  onOpenInAi: (sessionId: string) => void
+}): ReactElement {
   const { sessions } = useStudio()
 
   return (
@@ -37,7 +41,9 @@ export function LibraryTab({ onOpenInAi }: { onOpenInAi: (sessionId: string) => 
             <FileVideo weight="duotone" />
           </EmptyMedia>
           <EmptyTitle>No sessions yet</EmptyTitle>
-          <EmptyDescription>Record or stream from the Studio tab to populate the library.</EmptyDescription>
+          <EmptyDescription>
+            Record or stream from the Studio tab to populate the library.
+          </EmptyDescription>
         </Empty>
       ) : (
         <ScrollArea className="h-[calc(100vh-12rem)] pr-3">
@@ -81,7 +87,9 @@ function SessionRow({
           {session.aiArtifacts.length ? (
             <Badge variant="secondary">{session.aiArtifacts.length} AI</Badge>
           ) : null}
-          {session.container ? <Badge variant="outline">{session.container.toUpperCase()}</Badge> : null}
+          {session.container ? (
+            <Badge variant="outline">{session.container.toUpperCase()}</Badge>
+          ) : null}
           {typeof session.durationMs === 'number' ? (
             <Badge variant="secondary">{durationMsLabel(session.durationMs)}</Badge>
           ) : null}
@@ -138,7 +146,9 @@ function RepairControls({ filePath }: { filePath: string }): ReactElement {
       setPhase('done')
       if (next.status === 'repaired') {
         setHasBackup(true)
-        toast.success(next.interpolated ? 'Repaired with interpolated frames.' : 'Recording repaired.')
+        toast.success(
+          next.interpolated ? 'Repaired with interpolated frames.' : 'Recording repaired.'
+        )
       } else if (next.status === 'ready') {
         toast.success('Recording already passes every quality gate.')
       } else if (next.status === 'not-hundred-percent') {
@@ -174,7 +184,12 @@ function RepairControls({ filePath }: { filePath: string }): ReactElement {
   return (
     <div className="flex flex-col gap-2 border-t pt-2">
       <div className="flex flex-wrap items-center gap-2">
-        <Button disabled={busy || disconnected || captureProtected} size="sm" variant="outline" onClick={runCheck}>
+        <Button
+          disabled={busy || disconnected || captureProtected}
+          size="sm"
+          variant="outline"
+          onClick={runCheck}
+        >
           {phase === 'checking' ? (
             <CircleNotch className="animate-spin" data-icon="inline-start" />
           ) : (
@@ -193,7 +208,12 @@ function RepairControls({ filePath }: { filePath: string }): ReactElement {
           </Button>
         ) : null}
         {hasBackup ? (
-          <Button disabled={busy || disconnected || captureProtected} size="sm" variant="ghost" onClick={runRestore}>
+          <Button
+            disabled={busy || disconnected || captureProtected}
+            size="sm"
+            variant="ghost"
+            onClick={runRestore}
+          >
             <ArrowCounterClockwise data-icon="inline-start" />
             Restore original
           </Button>
@@ -205,7 +225,9 @@ function RepairControls({ filePath }: { filePath: string }): ReactElement {
         <Alert variant={result?.status === 'failed' ? 'destructive' : 'warning'}>
           <WarningCircle />
           <AlertTitle>
-            {result?.status === 'failed' ? 'The quality check could not run' : 'Why this is not 100%'}
+            {result?.status === 'failed'
+              ? 'The quality check could not run'
+              : 'Why this is not 100%'}
           </AlertTitle>
           <AlertDescription>
             <ul className="list-disc pl-4">
@@ -248,7 +270,11 @@ function RepairBadge({
       return <Badge variant="success">100%</Badge>
     }
     if (result.status === 'repaired') {
-      return <Badge variant="success">{result.interpolated ? 'Repaired · interpolated' : 'Repaired'}</Badge>
+      return (
+        <Badge variant="success">
+          {result.interpolated ? 'Repaired · interpolated' : 'Repaired'}
+        </Badge>
+      )
     }
     if (result.status === 'not-hundred-percent') {
       return <Badge variant="warning">Not 100%</Badge>

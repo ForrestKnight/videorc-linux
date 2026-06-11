@@ -7,6 +7,8 @@ These rules are load-bearing for Videorc work. Read this before changing code.
 Use the smallest gate that proves the change, then run the broader gate before handing off risky work.
 
 - TypeScript typecheck: `pnpm typecheck`
+- TypeScript lint: `pnpm lint`
+- TypeScript format check: `pnpm format:check`
 - Node logic tests: `pnpm test:scripts`
 - Desktop unit tests: `pnpm --filter @videorc/desktop test`
 - Desktop build: `pnpm build`
@@ -15,7 +17,7 @@ Use the smallest gate that proves the change, then run the broader gate before h
 - Rust lint: `cargo clippy -p videorc-backend -- -D warnings`
 - Local smoke bundle: `pnpm smoke:local-gates`
 
-CI covers Rust fmt, clippy, Rust tests, TS typecheck, and Node script tests. Device, preview, recording, and packaging smokes still need a local macOS environment with the right permissions.
+CI covers Rust fmt, clippy, Rust tests, TS format, TS lint, TS typecheck, desktop unit tests, and Node script tests. Device, preview, recording, and packaging smokes still need a local macOS environment with the right permissions.
 
 ## Native Preview Rules
 

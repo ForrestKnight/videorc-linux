@@ -43,7 +43,11 @@ import { Switch } from '@/components/ui/switch'
 import { useWorkspaceNav, type StudioPanel, type WorkspaceTab } from '@/components/workspace-nav'
 import { useStudio } from '@/hooks/use-studio'
 import type {
-  LayoutPreset, GoLiveDestinationPreflight, StreamPlatform, StreamScreen } from '@/lib/backend'
+  LayoutPreset,
+  GoLiveDestinationPreflight,
+  StreamPlatform,
+  StreamScreen
+} from '@/lib/backend'
 import { isStreamTargetStartReady, videoProfileCompatibility } from '@/lib/capture'
 import { studioHealth } from '@/lib/studio-health'
 import { cn } from '@/lib/utils'
@@ -80,7 +84,6 @@ export function StudioTab(): ReactElement {
     meterLevel,
     sceneEditMode,
     setSceneEditMode,
-    isSessionActive,
     screens,
     activeScreen,
     activateScreen,
@@ -103,9 +106,15 @@ export function StudioTab(): ReactElement {
   const previewHealth = studioHealth(diagnosticStats, active)
   const banner = studioBlocker(studio)
   const audioSummary =
-    recording.audioTracks?.map((track) => track.label).join(' + ') ?? (selectedMicrophone ? 'Microphone' : 'None')
-  const pipelineSummary = recording.pipeline ? pipelineStatusLabel(recording.pipeline.finalization) : 'Ready'
-  const liveStreamCompatibility = videoProfileCompatibility({ ...captureConfig, streamEnabled: true })
+    recording.audioTracks?.map((track) => track.label).join(' + ') ??
+    (selectedMicrophone ? 'Microphone' : 'None')
+  const pipelineSummary = recording.pipeline
+    ? pipelineStatusLabel(recording.pipeline.finalization)
+    : 'Ready'
+  const liveStreamCompatibility = videoProfileCompatibility({
+    ...captureConfig,
+    streamEnabled: true
+  })
   const liveStreamBlockedReason = liveStreamCompatibility.blockingReason
   // W1 command center: one chip per enabled destination — ready means this
   // destination would survive a go-live right now.
@@ -223,11 +232,7 @@ export function StudioTab(): ReactElement {
               <span className="text-xs text-muted-foreground">{recording.message ?? 'Idle'}</span>
             </div>
             {previewHealth.tone !== 'neutral' ? (
-              <StatusBadge
-                label="Preview"
-                tone={previewHealth.tone}
-                value={previewHealth.value}
-              />
+              <StatusBadge label="Preview" tone={previewHealth.tone} value={previewHealth.value} />
             ) : null}
           </div>
           <time className="font-heading text-2xl font-semibold tabular-nums">{elapsed}</time>
@@ -259,7 +264,9 @@ export function StudioTab(): ReactElement {
             <Button
               size="lg"
               variant="outline"
-              disabled={wsStatus !== 'connected' || startRequestPending || Boolean(liveStreamBlockedReason)}
+              disabled={
+                wsStatus !== 'connected' || startRequestPending || Boolean(liveStreamBlockedReason)
+              }
               title={liveStreamBlockedReason ?? 'Start livestream'}
               onClick={handleLiveStream}
             >
@@ -285,7 +292,9 @@ export function StudioTab(): ReactElement {
                 type="button"
                 onClick={() => openStudioPanel('live')}
               >
-                <span className={cn('size-1.5 rounded-full', chip.ready ? 'bg-success' : 'bg-warning')} />
+                <span
+                  className={cn('size-1.5 rounded-full', chip.ready ? 'bg-success' : 'bg-warning')}
+                />
                 <span className="font-medium capitalize">{chip.label}</span>
                 <span className="text-muted-foreground">{chip.detail}</span>
               </button>
@@ -332,7 +341,12 @@ export function StudioTab(): ReactElement {
               <SummaryRow label="Camera" value={selectedCamera?.name ?? 'Off'} />
               <SummaryRow label="Microphone" value={selectedMicrophone?.name ?? 'Off'} />
             </dl>
-            <Button size="sm" variant="outline" className="w-fit" onClick={() => openStudioPanel('sources')}>
+            <Button
+              size="sm"
+              variant="outline"
+              className="w-fit"
+              onClick={() => openStudioPanel('sources')}
+            >
               Configure sources
             </Button>
           </AccordionContent>
@@ -354,7 +368,11 @@ export function StudioTab(): ReactElement {
               <FieldContent>
                 <FieldLabel htmlFor="studio-edit-mode">Edit transforms</FieldLabel>
               </FieldContent>
-              <Switch checked={sceneEditMode} id="studio-edit-mode" onCheckedChange={setSceneEditMode} />
+              <Switch
+                checked={sceneEditMode}
+                id="studio-edit-mode"
+                onCheckedChange={setSceneEditMode}
+              />
             </Field>
             <Button
               size="sm"
@@ -435,22 +453,32 @@ export function StudioTab(): ReactElement {
               />
               <SummaryRow
                 label="Mode"
-                value={[captureConfig.recordEnabled && 'Record', captureConfig.streamEnabled && 'Stream']
-                  .filter(Boolean)
-                  .join(' + ') || 'None'}
+                value={
+                  [captureConfig.recordEnabled && 'Record', captureConfig.streamEnabled && 'Stream']
+                    .filter(Boolean)
+                    .join(' + ') || 'None'
+                }
               />
               <SummaryRow label="Pipeline" value={pipelineSummary} />
             </dl>
             <Separator />
             <div className="flex flex-wrap items-center gap-2">
-              <StatusBadge label="Socket" tone={wsStatus === 'connected' ? 'good' : 'warn'} value={wsStatus} />
+              <StatusBadge
+                label="Socket"
+                tone={wsStatus === 'connected' ? 'good' : 'warn'}
+                value={wsStatus}
+              />
               <StatusBadge
                 label="FFmpeg"
                 tone={health?.ffmpeg.available ? 'good' : 'warn'}
                 value={health?.ffmpeg.available ? 'ready' : 'check'}
               />
               {captureConfig.streamEnabled ? (
-                <StatusBadge label="Stream" tone={streamReady ? 'good' : 'warn'} value={streamReady ? 'ready' : 'setup'} />
+                <StatusBadge
+                  label="Stream"
+                  tone={streamReady ? 'good' : 'warn'}
+                  value={streamReady ? 'ready' : 'setup'}
+                />
               ) : null}
             </div>
             <div className="flex flex-wrap gap-2">
@@ -491,7 +519,9 @@ function SectionLabel({
       <LeadingIcon className="size-4 shrink-0 text-muted-foreground" weight="duotone" />
       <span className="font-medium">{title}</span>
       {summary ? (
-        <span className="min-w-0 truncate text-xs font-normal text-muted-foreground">{summary}</span>
+        <span className="min-w-0 truncate text-xs font-normal text-muted-foreground">
+          {summary}
+        </span>
       ) : null}
     </span>
   )
@@ -558,7 +588,9 @@ function GoLiveConfirmationDialog({
               <div className="flex items-center justify-between gap-3">
                 <span className="text-sm font-medium">Destinations</span>
                 {errorCount ? (
-                  <Badge variant="destructive">{errorCount} issue{errorCount === 1 ? '' : 's'}</Badge>
+                  <Badge variant="destructive">
+                    {errorCount} issue{errorCount === 1 ? '' : 's'}
+                  </Badge>
                 ) : (
                   <Badge variant="success">Ready</Badge>
                 )}
@@ -653,14 +685,20 @@ function GoLiveDestinationRow({
             )}
             {destination.ready ? 'Ready' : 'Blocked'}
           </Badge>
-          <Badge variant="outline">{destination.authMode === 'oauth' ? 'OAuth' : 'Manual RTMP'}</Badge>
+          <Badge variant="outline">
+            {destination.authMode === 'oauth' ? 'OAuth' : 'Manual RTMP'}
+          </Badge>
         </div>
-        <p className="mt-1 truncate text-sm text-muted-foreground">{destination.title || 'Untitled'}</p>
+        <p className="mt-1 truncate text-sm text-muted-foreground">
+          {destination.title || 'Untitled'}
+        </p>
         {destination.accountLabel ? (
           <p className="mt-0.5 text-xs text-muted-foreground">{destination.accountLabel}</p>
         ) : null}
       </div>
-      <p className="text-xs text-muted-foreground sm:max-w-64 sm:text-right">{destination.message}</p>
+      <p className="text-xs text-muted-foreground sm:max-w-64 sm:text-right">
+        {destination.message}
+      </p>
     </div>
   )
 }
@@ -772,7 +810,11 @@ function StudioScreensRow({
             <span className="flex min-w-0 items-center gap-2">
               <span className="h-5 w-8 shrink-0 overflow-hidden rounded border bg-muted">
                 {!missing ? (
-                  <img alt="" className="size-full object-cover" src={fileUrlFromPath(screen.imagePath)} />
+                  <img
+                    alt=""
+                    className="size-full object-cover"
+                    src={fileUrlFromPath(screen.imagePath)}
+                  />
                 ) : (
                   <span className="block size-full bg-destructive/20" />
                 )}

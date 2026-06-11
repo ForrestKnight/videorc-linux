@@ -32,7 +32,9 @@ export function PanelSection({
     <Card className={cn('gap-4', className)}>
       <CardHeader className="gap-1">
         <CardTitle className="flex items-center gap-2 text-base font-semibold">
-          {LeadingIcon ? <LeadingIcon className="size-4 text-muted-foreground" weight="duotone" /> : null}
+          {LeadingIcon ? (
+            <LeadingIcon className="size-4 text-muted-foreground" weight="duotone" />
+          ) : null}
           {title}
         </CardTitle>
         {description ? <CardDescription>{description}</CardDescription> : null}

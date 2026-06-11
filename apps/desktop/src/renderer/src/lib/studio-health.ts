@@ -69,7 +69,10 @@ export function studioHealth(
   // A fallback transport is the dominant, stable state, so surface it before borderline latency.
   // Otherwise the badge flaps between "Fallback" and "Lagging" while the preview sits on the
   // polling path and its present latency oscillates around the budget.
-  if (stats.previewTransport === 'latest-jpeg-polling' || stats.previewTransport === 'mjpeg-stream') {
+  if (
+    stats.previewTransport === 'latest-jpeg-polling' ||
+    stats.previewTransport === 'mjpeg-stream'
+  ) {
     return {
       tone: 'warn',
       value: 'Fallback',
@@ -100,7 +103,10 @@ export function studioHealth(
 }
 
 function shouldBlockForNonNativePreview(stats: StudioHealthInput, active: boolean): boolean {
-  if (stats.previewTransport === 'native-surface' && stats.previewSurfaceBacking === 'cametal-layer') {
+  if (
+    stats.previewTransport === 'native-surface' &&
+    stats.previewSurfaceBacking === 'cametal-layer'
+  ) {
     return false
   }
   if (stats.previewTransport && stats.previewTransport !== 'unavailable') {

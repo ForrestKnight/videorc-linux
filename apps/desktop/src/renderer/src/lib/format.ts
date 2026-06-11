@@ -3,7 +3,6 @@ import type {
   AudioMeterResult,
   BackendHealth,
   Device,
-  HealthEvent,
   RecordingStatus,
   SessionSummary,
   StreamHealth
@@ -63,14 +62,19 @@ export function formatDb(value?: number): string {
 }
 
 export function formatMetric(value: number | undefined, suffix: string): string {
-  return typeof value === 'number' ? `${value.toFixed(suffix === 'fps' ? 1 : 2)} ${suffix}` : `-- ${suffix}`
+  return typeof value === 'number'
+    ? `${value.toFixed(suffix === 'fps' ? 1 : 2)} ${suffix}`
+    : `-- ${suffix}`
 }
 
 export function formatDroppedFrames(value: number | undefined): string {
   return typeof value === 'number' ? `${value} drop` : '-- drop'
 }
 
-export function mergeStreamHealth(current: StreamHealth | null, update: StreamHealth): StreamHealth {
+export function mergeStreamHealth(
+  current: StreamHealth | null,
+  update: StreamHealth
+): StreamHealth {
   if (!current || current.sessionId !== update.sessionId) {
     return update
   }
@@ -120,7 +124,9 @@ export function setupChecklist({
   const microphoneTone: SetupTone =
     audioMeter?.status === 'ready'
       ? 'good'
-      : audioMeter?.status === 'silent' || audioMeter?.status === 'permission-required' || !selectedMicrophone
+      : audioMeter?.status === 'silent' ||
+          audioMeter?.status === 'permission-required' ||
+          !selectedMicrophone
         ? 'warn'
         : 'neutral'
 
@@ -139,7 +145,9 @@ export function setupChecklist({
     },
     {
       label: 'Capture',
-      detail: selectedCaptureDevice ? selectedCaptureDevice.name : 'No screen or window source selected.',
+      detail: selectedCaptureDevice
+        ? selectedCaptureDevice.name
+        : 'No screen or window source selected.',
       tone: selectedCaptureDevice?.status === 'available' ? 'good' : 'warn'
     },
     {
@@ -149,7 +157,9 @@ export function setupChecklist({
     },
     {
       label: 'Microphone',
-      detail: audioMeter?.message ?? (selectedMicrophone ? selectedMicrophone.name : 'No microphone selected.'),
+      detail:
+        audioMeter?.message ??
+        (selectedMicrophone ? selectedMicrophone.name : 'No microphone selected.'),
       tone: microphoneTone
     },
     {
@@ -175,8 +185,13 @@ export function setupChecklist({
   ]
 }
 
-export function latestArtifact(session: SessionSummary, kind: AiArtifact['kind']): AiArtifact | undefined {
-  return session.aiArtifacts.filter((artifact) => artifact.kind === kind && artifact.status === 'ready').at(-1)
+export function latestArtifact(
+  session: SessionSummary,
+  kind: AiArtifact['kind']
+): AiArtifact | undefined {
+  return session.aiArtifacts
+    .filter((artifact) => artifact.kind === kind && artifact.status === 'ready')
+    .at(-1)
 }
 
 export function artifactField(artifact: AiArtifact, field: string): string {
@@ -188,7 +203,9 @@ export function artifactField(artifact: AiArtifact, field: string): string {
   return typeof value === 'string' ? value : ''
 }
 
-export function artifactChapters(artifact: AiArtifact): Array<{ timestamp: string; title: string }> {
+export function artifactChapters(
+  artifact: AiArtifact
+): Array<{ timestamp: string; title: string }> {
   if (typeof artifact.content !== 'object' || artifact.content === null) {
     return []
   }
@@ -230,7 +247,10 @@ export function artifactText(artifact: AiArtifact): string {
   return artifact.status
 }
 
-export function artifactObjects(artifact: AiArtifact | undefined, field: string): Record<string, unknown>[] {
+export function artifactObjects(
+  artifact: AiArtifact | undefined,
+  field: string
+): Record<string, unknown>[] {
   if (!artifact || typeof artifact.content !== 'object' || artifact.content === null) {
     return []
   }

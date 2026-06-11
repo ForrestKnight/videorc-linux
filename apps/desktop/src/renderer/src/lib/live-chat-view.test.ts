@@ -11,14 +11,10 @@ import {
   nextUnreadCount,
   shouldAutoscroll,
   sortMessagesChronological,
-  visibleMessages,
+  visibleMessages
 } from './live-chat-view'
 
-function message(
-  id: string,
-  platform: StreamPlatform,
-  receivedAt: string,
-): LiveChatMessage {
+function message(id: string, platform: StreamPlatform, receivedAt: string): LiveChatMessage {
   return {
     id,
     providerMessageId: id,
@@ -32,7 +28,7 @@ function message(
     messageText: 'hi',
     fragments: [],
     eventType: 'message',
-    isDeleted: false,
+    isDeleted: false
   }
 }
 
@@ -45,7 +41,7 @@ describe('live-chat-view', () => {
     const sorted = sortMessagesChronological([
       message('twitch:b', 'twitch', '2026-06-06T10:00:02Z'),
       message('youtube:a', 'youtube', '2026-06-06T10:00:01Z'),
-      message('twitch:c', 'twitch', '2026-06-06T10:00:03Z'),
+      message('twitch:c', 'twitch', '2026-06-06T10:00:03Z')
     ])
     expect(sorted.map((m) => m.id)).toEqual(['youtube:a', 'twitch:b', 'twitch:c'])
   })
@@ -68,11 +64,11 @@ describe('live-chat-view', () => {
   it('filters by platform, treating an empty set as show-all', () => {
     const messages = [
       message('y', 'youtube', '2026-06-06T10:00:01Z'),
-      message('t', 'twitch', '2026-06-06T10:00:02Z'),
+      message('t', 'twitch', '2026-06-06T10:00:02Z')
     ]
     expect(filterMessagesByPlatform(messages, new Set()).map((m) => m.id)).toEqual(['y', 't'])
     expect(
-      filterMessagesByPlatform(messages, new Set<StreamPlatform>(['twitch'])).map((m) => m.id),
+      filterMessagesByPlatform(messages, new Set<StreamPlatform>(['twitch'])).map((m) => m.id)
     ).toEqual(['t'])
   })
 
@@ -108,14 +104,14 @@ describe('live-chat-view', () => {
     snapshot = applyLiveChatMessages(snapshot, [
       message('b', 'twitch', '2026-06-06T10:00:01Z'),
       message('a', 'youtube', '2026-06-06T10:00:02Z'),
-      message('c', 'twitch', '2026-06-06T10:00:03Z'),
+      message('c', 'twitch', '2026-06-06T10:00:03Z')
     ])
     expect(snapshot.messages.map((m) => m.id)).toEqual(['b', 'a', 'c'])
   })
 
   it('windows the rendered tail to the most recent messages', () => {
     const messages = Array.from({ length: 5 }, (_, index) =>
-      message(`m${index}`, 'youtube', `2026-06-06T10:00:0${index}Z`),
+      message(`m${index}`, 'youtube', `2026-06-06T10:00:0${index}Z`)
     )
     expect(visibleMessages(messages, 2).map((m) => m.id)).toEqual(['m3', 'm4'])
     expect(visibleMessages(messages, 10)).toHaveLength(5)

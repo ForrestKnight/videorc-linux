@@ -144,7 +144,9 @@ function isOwnedProcessRecord(value: unknown): value is OwnedProcessRecord {
     return false
   }
   const record = value as Partial<OwnedProcessRecord>
-  return validPid(record.pid) && typeof record.label === 'string' && typeof record.startedAt === 'string'
+  return (
+    validPid(record.pid) && typeof record.label === 'string' && typeof record.startedAt === 'string'
+  )
 }
 
 function validPid(pid: unknown): pid is number {

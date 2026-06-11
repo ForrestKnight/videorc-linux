@@ -9,7 +9,12 @@ import { STORAGE_KEYS } from '@/lib/capture'
 
 export function App(): ReactElement {
   return (
-    <ThemeProvider attribute="class" defaultTheme="system" enableSystem storageKey={STORAGE_KEYS.theme}>
+    <ThemeProvider
+      attribute="class"
+      defaultTheme="system"
+      enableSystem
+      storageKey={STORAGE_KEYS.theme}
+    >
       <TooltipProvider>
         <StudioProvider>
           <AppShell />

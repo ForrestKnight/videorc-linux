@@ -55,7 +55,12 @@ export type AudioTrackSource = 'microphone' | 'test-tone'
 
 export type RecordingContainer = 'none' | 'mkv' | 'flv' | 'tee'
 export type RecordingFinalizationState = 'none' | 'finalizing' | 'finalized' | 'failed'
-export type RecordingPipelineStage = 'capture' | 'render' | 'video-encoder' | 'audio-encoder' | 'muxer'
+export type RecordingPipelineStage =
+  | 'capture'
+  | 'render'
+  | 'video-encoder'
+  | 'audio-encoder'
+  | 'muxer'
 export type RecordingPipelineStageState =
   | 'pending'
   | 'starting'
@@ -1037,7 +1042,12 @@ export interface PreviewSurfaceBoundsParams {
   bounds: PreviewSurfaceBounds
 }
 
-export type PreviewCameraState = 'starting' | 'live' | 'permission-needed' | 'device-missing' | 'failed'
+export type PreviewCameraState =
+  | 'starting'
+  | 'live'
+  | 'permission-needed'
+  | 'device-missing'
+  | 'failed'
 
 export interface PreviewCameraStartParams {
   sources: SourceSelection
@@ -1076,7 +1086,12 @@ export interface CameraCapabilityFormat {
   maxFps: number
 }
 
-export type PreviewScreenState = 'starting' | 'live' | 'permission-needed' | 'source-missing' | 'failed'
+export type PreviewScreenState =
+  | 'starting'
+  | 'live'
+  | 'permission-needed'
+  | 'source-missing'
+  | 'failed'
 export type PreviewScreenSourceKind = 'screen' | 'window'
 
 export interface PreviewScreenStartParams {
@@ -1141,7 +1156,15 @@ export interface StreamHealth {
   createdAt: string
 }
 
-export type DiagnosticBottleneck = 'none' | 'capture' | 'render' | 'encoder' | 'preview' | 'audio' | 'device' | 'unknown'
+export type DiagnosticBottleneck =
+  | 'none'
+  | 'capture'
+  | 'render'
+  | 'encoder'
+  | 'preview'
+  | 'audio'
+  | 'device'
+  | 'unknown'
 
 export type SourceRegistrySourceKind = 'camera' | 'screen' | 'window' | 'image' | 'synthetic'
 export type SourceRegistryLifecycleStatus =
@@ -1604,10 +1627,18 @@ export interface VideorcApi {
   onPreviewWindowState: (callback: (state: PreviewWindowState) => void) => () => void
   createNativePreviewSurface: (bounds: PreviewSurfaceBounds) => Promise<PreviewSurfaceStatus>
   updateNativePreviewSurfaceBounds: (bounds: PreviewSurfaceBounds) => Promise<PreviewSurfaceStatus>
-  applyNativePreviewHostCommands: (commands: NativePreviewHostCommand[]) => Promise<PreviewSurfaceStatus>
-  updateNativePreviewSurfaceScene: (scene: PreviewSurfaceSceneUpdateParams) => Promise<PreviewSurfaceStatus>
-  updateNativePreviewSurfaceCompositor: (status: PreviewSurfaceCompositorUpdateParams) => Promise<PreviewSurfaceStatus>
-  setNativePreviewSurfaceFramePollingSuppressed: (suppressed: boolean) => Promise<PreviewSurfaceStatus>
+  applyNativePreviewHostCommands: (
+    commands: NativePreviewHostCommand[]
+  ) => Promise<PreviewSurfaceStatus>
+  updateNativePreviewSurfaceScene: (
+    scene: PreviewSurfaceSceneUpdateParams
+  ) => Promise<PreviewSurfaceStatus>
+  updateNativePreviewSurfaceCompositor: (
+    status: PreviewSurfaceCompositorUpdateParams
+  ) => Promise<PreviewSurfaceStatus>
+  setNativePreviewSurfaceFramePollingSuppressed: (
+    suppressed: boolean
+  ) => Promise<PreviewSurfaceStatus>
   destroyNativePreviewSurface: () => Promise<PreviewSurfaceStatus>
   getNativePreviewSurfaceStatus: () => Promise<PreviewSurfaceStatus>
   openSystemPermissions: (pane?: SystemPermissionPane) => Promise<void>
@@ -1671,11 +1702,7 @@ export interface RepairRestoreParams {
 // backend; only the latest snapshot/events drive the panel.
 
 /** Whether a connected account can read live chat for a platform (setup-time audit). */
-export type ChatCapabilityState =
-  | 'available'
-  | 'needs-reconnect'
-  | 'not-connected'
-  | 'unsupported'
+export type ChatCapabilityState = 'available' | 'needs-reconnect' | 'not-connected' | 'unsupported'
 
 /** Per-platform live-chat readiness, surfaced before Go Live (the `liveChat.capability` result). */
 export interface ChatCapability {
@@ -1767,6 +1794,6 @@ export function createEmptyLiveChatSnapshot(updatedAt: string): LiveChatSnapshot
     providers: [],
     messages: [],
     unreadCount: 0,
-    updatedAt,
+    updatedAt
   }
 }

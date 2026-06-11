@@ -6,7 +6,7 @@ import type {
   LiveChatProviderConnectionState,
   LiveChatProviderState,
   LiveChatSnapshot,
-  StreamPlatform,
+  StreamPlatform
 } from '@/lib/backend'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -17,7 +17,7 @@ import {
   filterMessagesByPlatform,
   nextUnreadCount,
   shouldAutoscroll,
-  visibleMessages,
+  visibleMessages
 } from '@/lib/live-chat-view'
 import { cn } from '@/lib/utils'
 
@@ -25,7 +25,7 @@ const PLATFORM_LABELS: Record<StreamPlatform, string> = {
   youtube: 'YouTube',
   twitch: 'Twitch',
   x: 'X',
-  custom: 'Custom',
+  custom: 'Custom'
 }
 
 const BOTTOM_THRESHOLD_PX = 48
@@ -99,7 +99,7 @@ function MessageRow({ message }: { message: LiveChatMessage }): ReactElement {
 
 export function LiveChatPanel({
   snapshot,
-  onClearLocal,
+  onClearLocal
 }: {
   snapshot: LiveChatSnapshot
   onClearLocal: () => Promise<void> | void
@@ -116,7 +116,10 @@ export function LiveChatPanel({
     [snapshot.messages, enabled]
   )
   const filterablePlatforms = useMemo(
-    () => LIVE_CHAT_PLATFORMS.filter((platform) => snapshot.providers.some((p) => p.platform === platform)),
+    () =>
+      LIVE_CHAT_PLATFORMS.filter((platform) =>
+        snapshot.providers.some((p) => p.platform === platform)
+      ),
     [snapshot.providers]
   )
 

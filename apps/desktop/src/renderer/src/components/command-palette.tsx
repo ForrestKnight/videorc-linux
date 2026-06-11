@@ -52,7 +52,10 @@ export function CommandPalette({
               {tab.label}
             </CommandItem>
           ))}
-          <CommandItem value="Go to Diagnostics" onSelect={() => run(() => setActive('diagnostics'))}>
+          <CommandItem
+            value="Go to Diagnostics"
+            onSelect={() => run(() => setActive('diagnostics'))}
+          >
             <Gauge className="size-4" />
             Diagnostics
           </CommandItem>
@@ -77,7 +80,11 @@ export function CommandPalette({
 
         <CommandGroup heading="Session">
           {live ? (
-            <CommandItem value="Stop session" disabled={busy} onSelect={() => run(() => void stopSession())}>
+            <CommandItem
+              value="Stop session"
+              disabled={busy}
+              onSelect={() => run(() => void stopSession())}
+            >
               <Stop className="size-4" />
               Stop session
             </CommandItem>

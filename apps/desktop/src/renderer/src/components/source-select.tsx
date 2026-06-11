@@ -49,7 +49,11 @@ export function SourceSelect({
           <SelectGroup>
             {allowNone ? <SelectItem value={NONE_VALUE}>None</SelectItem> : null}
             {devices.map((device) => (
-              <SelectItem disabled={device.status !== 'available'} key={device.id} value={device.id}>
+              <SelectItem
+                disabled={device.status !== 'available'}
+                key={device.id}
+                value={device.id}
+              >
                 {device.name}
                 {device.status !== 'available' ? ` (${device.status})` : ''}
               </SelectItem>

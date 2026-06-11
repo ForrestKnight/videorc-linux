@@ -7,7 +7,7 @@ import type {
   LiveChatMessage,
   LiveChatProviderState,
   LiveChatSnapshot,
-  StreamPlatform,
+  StreamPlatform
 } from '@/lib/backend'
 
 /** Platforms that can appear in the unified feed, in display order. */
@@ -40,14 +40,14 @@ function boundMessages(messages: LiveChatMessage[]): LiveChatMessage[] {
 export function applyLiveChatSnapshot(snapshot: LiveChatSnapshot): LiveChatSnapshot {
   return {
     ...snapshot,
-    messages: boundMessages(sortMessagesChronological(snapshot.messages)),
+    messages: boundMessages(sortMessagesChronological(snapshot.messages))
   }
 }
 
 /** Merge one incremental message: dedupe by id, insert chronologically, bound the buffer. */
 export function applyLiveChatMessage(
   snapshot: LiveChatSnapshot,
-  message: LiveChatMessage,
+  message: LiveChatMessage
 ): LiveChatSnapshot {
   if (snapshot.messages.some((existing) => existing.id === message.id)) {
     return snapshot
@@ -59,7 +59,7 @@ export function applyLiveChatMessage(
 /** Update (or append) one provider's status row. */
 export function applyLiveChatProviderStatus(
   snapshot: LiveChatSnapshot,
-  provider: LiveChatProviderState,
+  provider: LiveChatProviderState
 ): LiveChatSnapshot {
   const exists = snapshot.providers.some((row) => row.platform === provider.platform)
   const providers = exists
@@ -76,7 +76,7 @@ export function applyLiveChatCleared(snapshot: LiveChatSnapshot): LiveChatSnapsh
 /** Filter messages to the enabled platforms. An empty enabled set means "show all". */
 export function filterMessagesByPlatform(
   messages: LiveChatMessage[],
-  enabled: ReadonlySet<StreamPlatform>,
+  enabled: ReadonlySet<StreamPlatform>
 ): LiveChatMessage[] {
   if (enabled.size === 0) return messages
   return messages.filter((message) => enabled.has(message.platform))
@@ -105,7 +105,7 @@ export const MAX_RENDERED_LIVE_CHAT_MESSAGES = 200
  */
 export function applyLiveChatMessages(
   snapshot: LiveChatSnapshot,
-  incoming: LiveChatMessage[],
+  incoming: LiveChatMessage[]
 ): LiveChatSnapshot {
   if (incoming.length === 0) return snapshot
   const seen = new Set(snapshot.messages.map((message) => message.id))

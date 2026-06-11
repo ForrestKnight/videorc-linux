@@ -106,7 +106,7 @@ import { createEmptyLiveChatSnapshot } from '@/lib/backend'
 import {
   applyLiveChatMessage,
   applyLiveChatProviderStatus,
-  applyLiveChatSnapshot,
+  applyLiveChatSnapshot
 } from '@/lib/live-chat-view'
 import {
   findDevice,
@@ -138,12 +138,18 @@ function recordNativePreviewTimingSample(samples: number[], value: number): void
   }
 }
 
-function nativePreviewTimingPercentile(values: number[], percentileRank: number): number | undefined {
+function nativePreviewTimingPercentile(
+  values: number[],
+  percentileRank: number
+): number | undefined {
   if (values.length === 0) {
     return undefined
   }
   const sorted = [...values].sort((left, right) => left - right)
-  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * percentileRank) - 1))
+  const index = Math.min(
+    sorted.length - 1,
+    Math.max(0, Math.ceil(sorted.length * percentileRank) - 1)
+  )
   return sorted[index]
 }
 
@@ -257,7 +263,12 @@ export type StudioContextValue = {
   refreshPreview: () => Promise<void>
   reloadSceneFromCaptureConfig: () => Promise<void>
   resetSceneSource: (sourceId?: string) => Promise<void>
-  nudgeSceneSource: (sourceId: string, directionX: number, directionY: number, large?: boolean) => Promise<void>
+  nudgeSceneSource: (
+    sourceId: string,
+    directionX: number,
+    directionY: number,
+    large?: boolean
+  ) => Promise<void>
   commitCameraTransform: (sourceId: string, x: number, y: number) => Promise<void>
   setSceneSourceVisible: (sourceId: string, visible: boolean) => Promise<void>
   moveSceneSource: (sourceId: string, direction: -1 | 1) => Promise<void>
@@ -481,8 +492,12 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   const [screens, setScreens] = useState<StreamScreen[]>([])
   const [activeScreen, setActiveScreen] = useState<StreamScreen | null>(null)
   const [platformAccounts, setPlatformAccounts] = useState<PlatformAccount[]>([])
-  const [platformAccountValidations, setPlatformAccountValidations] = useState<PlatformAccountValidation[]>([])
-  const [oauthProviderCredentials, setOauthProviderCredentials] = useState<OAuthProviderCredentialStatus[]>([])
+  const [platformAccountValidations, setPlatformAccountValidations] = useState<
+    PlatformAccountValidation[]
+  >([])
+  const [oauthProviderCredentials, setOauthProviderCredentials] = useState<
+    OAuthProviderCredentialStatus[]
+  >([])
   const [youtubeChannels, setYoutubeChannels] = useState<YouTubeChannel[]>([])
   const [youtubeChannelsLoading, setYoutubeChannelsLoading] = useState(false)
   const [twitchCategories, setTwitchCategories] = useState<TwitchCategory[]>([])
@@ -498,7 +513,8 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     await client.request('liveChat.clearLocal')
   }, [client])
   const [streamMetadataDraft, setStreamMetadataDraft] = useState<StreamMetadataDraft | null>(null)
-  const [streamMetadataValidation, setStreamMetadataValidation] = useState<StreamMetadataValidation | null>(null)
+  const [streamMetadataValidation, setStreamMetadataValidation] =
+    useState<StreamMetadataValidation | null>(null)
   const [goLivePreflight, setGoLivePreflight] = useState<GoLivePreflight | null>(null)
   const [goLiveConfirmationOpen, setGoLiveConfirmationOpen] = useState(false)
   const [goLiveConfirmationPending, setGoLiveConfirmationPending] = useState(false)
@@ -511,9 +527,12 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     transport: 'unavailable',
     message: 'Live preview is not running.'
   })
-  const [previewSurfaceStatus, setPreviewSurfaceStatus] = useState<PreviewSurfaceStatus>(idlePreviewSurfaceStatus)
-  const [previewCameraStatus, setPreviewCameraStatus] = useState<PreviewCameraStatus>(idlePreviewCameraStatus)
-  const [previewScreenStatus, setPreviewScreenStatus] = useState<PreviewScreenStatus>(idlePreviewScreenStatus)
+  const [previewSurfaceStatus, setPreviewSurfaceStatus] =
+    useState<PreviewSurfaceStatus>(idlePreviewSurfaceStatus)
+  const [previewCameraStatus, setPreviewCameraStatus] =
+    useState<PreviewCameraStatus>(idlePreviewCameraStatus)
+  const [previewScreenStatus, setPreviewScreenStatus] =
+    useState<PreviewScreenStatus>(idlePreviewScreenStatus)
   const [scene, setScene] = useState<Scene | null>(null)
   const [sceneEditMode, setSceneEditMode] = useState(false)
   const [selectedSceneSourceId, setSelectedSceneSourceId] = useState<string | null>(null)
@@ -527,7 +546,9 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   const [stopRequestPending, setStopRequestPending] = useState(false)
   const [screenImportPending, setScreenImportPending] = useState(false)
   const [streamMetadataSavePending, setStreamMetadataSavePending] = useState(false)
-  const [settings, setSettings] = useState<SettingsState>(() => loadJson(STORAGE_KEYS.settings, defaultSettings))
+  const [settings, setSettings] = useState<SettingsState>(() =>
+    loadJson(STORAGE_KEYS.settings, defaultSettings)
+  )
   const [captureConfig, setCaptureConfig] = useState<CaptureConfig>(loadCaptureConfig)
   const [lastError, setLastError] = useState<string | null>(null)
   const [runtimeInfo, setRuntimeInfo] = useState<RuntimeInfo | null>(null)
@@ -559,9 +580,13 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   const nativePreviewCompositorPresentRoundTripSamplesRef = useRef<number[]>([])
   const nativePreviewCompositorLastPollStartedAtRef = useRef(0)
   const nativePreviewCompositorPollInFlightSkipsRef = useRef(0)
-  const nativePreviewSurfacePresentReportPendingRef = useRef<PreviewSurfacePresentParams | null>(null)
+  const nativePreviewSurfacePresentReportPendingRef = useRef<PreviewSurfacePresentParams | null>(
+    null
+  )
   const nativePreviewSurfacePresentReportInFlightRef = useRef(false)
-  const nativePreviewSurfacePresentReportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const nativePreviewSurfacePresentReportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  )
   const nativePreviewSurfacePresentReportLastSentAtRef = useRef(0)
   const sourceReconciliationMessages = useRef<string[]>([])
   const toastedFailedTargets = useRef<Set<string>>(new Set())
@@ -620,16 +645,23 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     setLogs((current) => [...current.slice(-79), log])
   }, [])
 
-  const applyPreviewLiveStatus = useCallback((status: PreviewLiveStatus) => {
-    if (nativePreviewSurfaceEnabled && !isPreviewSurfaceTransport(status.transport)) {
-      setPreviewLoading(false)
-      setPreviewUrl(null)
-      return
-    }
-    setPreviewLiveStatus(status)
-    setPreviewLoading(status.state === 'connecting' || status.state === 'reconnecting')
-    setPreviewUrl(status.url ? `${status.url}${status.url.includes('?') ? '&' : '?'}cache=${Date.now()}` : null)
-  }, [nativePreviewSurfaceEnabled])
+  const applyPreviewLiveStatus = useCallback(
+    (status: PreviewLiveStatus) => {
+      if (nativePreviewSurfaceEnabled && !isPreviewSurfaceTransport(status.transport)) {
+        setPreviewLoading(false)
+        setPreviewUrl(null)
+        return
+      }
+      setPreviewLiveStatus(status)
+      setPreviewLoading(status.state === 'connecting' || status.state === 'reconnecting')
+      setPreviewUrl(
+        status.url
+          ? `${status.url}${status.url.includes('?') ? '&' : '?'}cache=${Date.now()}`
+          : null
+      )
+    },
+    [nativePreviewSurfaceEnabled]
+  )
 
   const applyPreviewSurfaceStatus = useCallback((status: PreviewSurfaceStatus) => {
     previewSurfaceStatusRef.current = status
@@ -642,49 +674,50 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     syncFramePollingSuppressionRef.current?.()
   }, [])
 
-  const queueNativePreviewSurfacePresentReport = useCallback((
-    activeClient: BackendClient,
-    params: PreviewSurfacePresentParams
-  ) => {
-    nativePreviewSurfacePresentReportPendingRef.current = params
+  const queueNativePreviewSurfacePresentReport = useCallback(
+    (activeClient: BackendClient, params: PreviewSurfacePresentParams) => {
+      nativePreviewSurfacePresentReportPendingRef.current = params
 
-    const flushReport = () => {
-      if (
-        nativePreviewSurfacePresentReportInFlightRef.current ||
-        !nativePreviewSurfacePresentReportPendingRef.current
-      ) {
-        return
-      }
-
-      const elapsedSinceLastSendMs = Date.now() - nativePreviewSurfacePresentReportLastSentAtRef.current
-      const delayMs = NATIVE_PREVIEW_SURFACE_PRESENT_REPORT_INTERVAL_MS - elapsedSinceLastSendMs
-      if (delayMs > 0) {
-        if (!nativePreviewSurfacePresentReportTimerRef.current) {
-          nativePreviewSurfacePresentReportTimerRef.current = setTimeout(() => {
-            nativePreviewSurfacePresentReportTimerRef.current = null
-            flushReport()
-          }, delayMs)
+      const flushReport = () => {
+        if (
+          nativePreviewSurfacePresentReportInFlightRef.current ||
+          !nativePreviewSurfacePresentReportPendingRef.current
+        ) {
+          return
         }
-        return
+
+        const elapsedSinceLastSendMs =
+          Date.now() - nativePreviewSurfacePresentReportLastSentAtRef.current
+        const delayMs = NATIVE_PREVIEW_SURFACE_PRESENT_REPORT_INTERVAL_MS - elapsedSinceLastSendMs
+        if (delayMs > 0) {
+          if (!nativePreviewSurfacePresentReportTimerRef.current) {
+            nativePreviewSurfacePresentReportTimerRef.current = setTimeout(() => {
+              nativePreviewSurfacePresentReportTimerRef.current = null
+              flushReport()
+            }, delayMs)
+          }
+          return
+        }
+
+        const nextParams = nativePreviewSurfacePresentReportPendingRef.current
+        nativePreviewSurfacePresentReportPendingRef.current = null
+        nativePreviewSurfacePresentReportInFlightRef.current = true
+        nativePreviewSurfacePresentReportLastSentAtRef.current = Date.now()
+        void activeClient
+          .request<PreviewSurfaceStatus>('preview.surface.present', nextParams)
+          .catch((error: unknown) => {
+            console.error('Native preview surface present report failed:', error)
+          })
+          .finally(() => {
+            nativePreviewSurfacePresentReportInFlightRef.current = false
+            flushReport()
+          })
       }
 
-      const nextParams = nativePreviewSurfacePresentReportPendingRef.current
-      nativePreviewSurfacePresentReportPendingRef.current = null
-      nativePreviewSurfacePresentReportInFlightRef.current = true
-      nativePreviewSurfacePresentReportLastSentAtRef.current = Date.now()
-      void activeClient
-        .request<PreviewSurfaceStatus>('preview.surface.present', nextParams)
-        .catch((error: unknown) => {
-          console.error('Native preview surface present report failed:', error)
-        })
-        .finally(() => {
-          nativePreviewSurfacePresentReportInFlightRef.current = false
-          flushReport()
-        })
-    }
-
-    flushReport()
-  }, [])
+      flushReport()
+    },
+    []
+  )
 
   const resetNativePreviewCompositorTiming = useCallback(() => {
     nativePreviewCompositorPollIntervalSamplesRef.current = []
@@ -694,117 +727,148 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     nativePreviewCompositorPollInFlightSkipsRef.current = 0
   }, [])
 
-  const nativePreviewRendererTimingStatusFields = useCallback((): NativePreviewRendererTimingFields => ({
-    nativePreviewRendererPollIntervalP95Ms: nativePreviewTimingPercentile(
-      nativePreviewCompositorPollIntervalSamplesRef.current,
-      0.95
-    ),
-    nativePreviewRendererPollRoundTripP95Ms: nativePreviewTimingPercentile(
-      nativePreviewCompositorPollRoundTripSamplesRef.current,
-      0.95
-    ),
-    nativePreviewRendererPresentRoundTripP95Ms: nativePreviewTimingPercentile(
-      nativePreviewCompositorPresentRoundTripSamplesRef.current,
-      0.95
-    ),
-    nativePreviewRendererPollInFlightSkips: nativePreviewCompositorPollInFlightSkipsRef.current
-  }), [])
+  const nativePreviewRendererTimingStatusFields = useCallback(
+    (): NativePreviewRendererTimingFields => ({
+      nativePreviewRendererPollIntervalP95Ms: nativePreviewTimingPercentile(
+        nativePreviewCompositorPollIntervalSamplesRef.current,
+        0.95
+      ),
+      nativePreviewRendererPollRoundTripP95Ms: nativePreviewTimingPercentile(
+        nativePreviewCompositorPollRoundTripSamplesRef.current,
+        0.95
+      ),
+      nativePreviewRendererPresentRoundTripP95Ms: nativePreviewTimingPercentile(
+        nativePreviewCompositorPresentRoundTripSamplesRef.current,
+        0.95
+      ),
+      nativePreviewRendererPollInFlightSkips: nativePreviewCompositorPollInFlightSkipsRef.current
+    }),
+    []
+  )
 
-  const queueNativePreviewCompositorPresent = useCallback((activeClient: BackendClient, status: CompositorStatus) => {
-    const updateCompositor = typeof window === 'undefined' ? undefined : window.videorc?.updateNativePreviewSurfaceCompositor
-    if (
-      !nativePreviewSurfaceEnabled ||
-      !updateCompositor
-    ) {
-      nativePreviewCompositorPendingRef.current = null
-      return
-    }
-    if (recordingRef.current.state === 'starting') {
-      nativePreviewCompositorPendingRef.current = null
-      nativePreviewCompositorSuppressedPresentsRef.current += 1
-      return
-    }
-
-    nativePreviewCompositorPendingRef.current = status
-    if (nativePreviewCompositorPresentingRef.current) {
-      return
-    }
-
-    nativePreviewCompositorPresentingRef.current = true
-    void (async () => {
-      try {
-        while (nativePreviewCompositorPendingRef.current) {
-          const nextStatus = nativePreviewCompositorPendingRef.current
-          nativePreviewCompositorPendingRef.current = null
-          const suppressFramePolling = isActiveRecordingState(recordingRef.current.state)
-          const updateParams: PreviewSurfaceCompositorUpdateParams = suppressFramePolling
-            ? { ...nextStatus, suppressFramePolling: true, ...nativePreviewRendererTimingStatusFields() }
-            : { ...nextStatus, ...nativePreviewRendererTimingStatusFields() }
-          const presentStartedAt = performance.now()
-          const surfaceStatus = await updateCompositor(updateParams)
-          recordNativePreviewTimingSample(
-            nativePreviewCompositorPresentRoundTripSamplesRef.current,
-            performance.now() - presentStartedAt
-          )
-          const rendererTimingFields = nativePreviewRendererTimingStatusFields()
-          const pendingStatus = nativePreviewCompositorPendingRef.current as CompositorStatus | null
-          if (pendingCompositorStatusSupersedes(pendingStatus, nextStatus, { includeSameRunFrameAdvance: false })) {
-            nativePreviewCompositorSuppressedPresentsRef.current += 1
-            continue
-          }
-          const droppedFrames =
-            surfaceStatus.droppedFrames + nativePreviewCompositorSuppressedPresentsRef.current
-          const nextSurfaceStatus: PreviewSurfaceStatus = {
-            ...surfaceStatus,
-            ...rendererTimingFields,
-            framesRendered: Math.max(surfaceStatus.framesRendered, nextStatus.framesRendered),
-            droppedFrames
-          }
-          applyPreviewSurfaceStatus(nextSurfaceStatus)
-          const presentParams: PreviewSurfacePresentParams = {
-            transport: surfaceStatus.transport,
-            backing: surfaceStatus.backing,
-            presentedFrameId: surfaceStatus.presentedFrameId,
-            compositorFrameLag: surfaceStatus.compositorFrameLag,
-            droppedFrames,
-            inputToPresentLatencyMs: surfaceStatus.inputToPresentLatencyMs,
-            inputToPresentLatencyP50Ms: surfaceStatus.inputToPresentLatencyP50Ms,
-            inputToPresentLatencyP95Ms: surfaceStatus.inputToPresentLatencyP95Ms,
-            inputToPresentLatencyP99Ms: surfaceStatus.inputToPresentLatencyP99Ms,
-            presentFps: surfaceStatus.presentFps,
-            intervalP95Ms: surfaceStatus.intervalP95Ms,
-            intervalP99Ms: surfaceStatus.intervalP99Ms,
-            ...rendererTimingFields,
-            nativePreviewMainQueueWaitP95Ms: surfaceStatus.nativePreviewMainQueueWaitP95Ms,
-            nativePreviewMainPresentP95Ms: surfaceStatus.nativePreviewMainPresentP95Ms,
-            nativePreviewMainQueuedBehindCount: surfaceStatus.nativePreviewMainQueuedBehindCount,
-            nativePreviewHelperRoundTripP95Ms: surfaceStatus.nativePreviewHelperRoundTripP95Ms,
-            nativePreviewMainStatusFetchP95Ms: surfaceStatus.nativePreviewMainStatusFetchP95Ms,
-            nativePreviewMainStatusFetchFailures: surfaceStatus.nativePreviewMainStatusFetchFailures,
-            nativePreviewMainStatusFetchSuccesses: surfaceStatus.nativePreviewMainStatusFetchSuccesses,
-            nativePreviewMainPresentedStatusAgeMs: surfaceStatus.nativePreviewMainPresentedStatusAgeMs,
-            nativePreviewMainPresentedStatusAgeP95Ms: surfaceStatus.nativePreviewMainPresentedStatusAgeP95Ms,
-            nativePreviewMainPresentedFrameAgeP95Ms: surfaceStatus.nativePreviewMainPresentedFrameAgeP95Ms,
-            framePollingSuppressed: surfaceStatus.framePollingSuppressed,
-            sourcePixelsPresent: surfaceStatus.sourcePixelsPresent
-          }
-          queueNativePreviewSurfacePresentReport(activeClient, presentParams)
-          if (pendingCompositorStatusSupersedes(pendingStatus, nextStatus, { includeSameRunFrameAdvance: true })) {
-            nativePreviewCompositorSuppressedPresentsRef.current += 1
-            continue
-          }
-
-        }
-      } catch (error: unknown) {
-        console.error('Native preview compositor present failed:', error)
-      } finally {
-        nativePreviewCompositorPresentingRef.current = false
-        if (nativePreviewCompositorPendingRef.current) {
-          queueNativePreviewCompositorPresent(activeClient, nativePreviewCompositorPendingRef.current)
-        }
+  const queueNativePreviewCompositorPresent = useCallback(
+    (activeClient: BackendClient, status: CompositorStatus) => {
+      const updateCompositor =
+        typeof window === 'undefined'
+          ? undefined
+          : window.videorc?.updateNativePreviewSurfaceCompositor
+      if (!nativePreviewSurfaceEnabled || !updateCompositor) {
+        nativePreviewCompositorPendingRef.current = null
+        return
       }
-    })()
-  }, [applyPreviewSurfaceStatus, nativePreviewRendererTimingStatusFields, nativePreviewSurfaceEnabled, queueNativePreviewSurfacePresentReport])
+      if (recordingRef.current.state === 'starting') {
+        nativePreviewCompositorPendingRef.current = null
+        nativePreviewCompositorSuppressedPresentsRef.current += 1
+        return
+      }
+
+      nativePreviewCompositorPendingRef.current = status
+      if (nativePreviewCompositorPresentingRef.current) {
+        return
+      }
+
+      nativePreviewCompositorPresentingRef.current = true
+      void (async () => {
+        try {
+          while (nativePreviewCompositorPendingRef.current) {
+            const nextStatus = nativePreviewCompositorPendingRef.current
+            nativePreviewCompositorPendingRef.current = null
+            const suppressFramePolling = isActiveRecordingState(recordingRef.current.state)
+            const updateParams: PreviewSurfaceCompositorUpdateParams = suppressFramePolling
+              ? {
+                  ...nextStatus,
+                  suppressFramePolling: true,
+                  ...nativePreviewRendererTimingStatusFields()
+                }
+              : { ...nextStatus, ...nativePreviewRendererTimingStatusFields() }
+            const presentStartedAt = performance.now()
+            const surfaceStatus = await updateCompositor(updateParams)
+            recordNativePreviewTimingSample(
+              nativePreviewCompositorPresentRoundTripSamplesRef.current,
+              performance.now() - presentStartedAt
+            )
+            const rendererTimingFields = nativePreviewRendererTimingStatusFields()
+            const pendingStatus =
+              nativePreviewCompositorPendingRef.current as CompositorStatus | null
+            if (
+              pendingCompositorStatusSupersedes(pendingStatus, nextStatus, {
+                includeSameRunFrameAdvance: false
+              })
+            ) {
+              nativePreviewCompositorSuppressedPresentsRef.current += 1
+              continue
+            }
+            const droppedFrames =
+              surfaceStatus.droppedFrames + nativePreviewCompositorSuppressedPresentsRef.current
+            const nextSurfaceStatus: PreviewSurfaceStatus = {
+              ...surfaceStatus,
+              ...rendererTimingFields,
+              framesRendered: Math.max(surfaceStatus.framesRendered, nextStatus.framesRendered),
+              droppedFrames
+            }
+            applyPreviewSurfaceStatus(nextSurfaceStatus)
+            const presentParams: PreviewSurfacePresentParams = {
+              transport: surfaceStatus.transport,
+              backing: surfaceStatus.backing,
+              presentedFrameId: surfaceStatus.presentedFrameId,
+              compositorFrameLag: surfaceStatus.compositorFrameLag,
+              droppedFrames,
+              inputToPresentLatencyMs: surfaceStatus.inputToPresentLatencyMs,
+              inputToPresentLatencyP50Ms: surfaceStatus.inputToPresentLatencyP50Ms,
+              inputToPresentLatencyP95Ms: surfaceStatus.inputToPresentLatencyP95Ms,
+              inputToPresentLatencyP99Ms: surfaceStatus.inputToPresentLatencyP99Ms,
+              presentFps: surfaceStatus.presentFps,
+              intervalP95Ms: surfaceStatus.intervalP95Ms,
+              intervalP99Ms: surfaceStatus.intervalP99Ms,
+              ...rendererTimingFields,
+              nativePreviewMainQueueWaitP95Ms: surfaceStatus.nativePreviewMainQueueWaitP95Ms,
+              nativePreviewMainPresentP95Ms: surfaceStatus.nativePreviewMainPresentP95Ms,
+              nativePreviewMainQueuedBehindCount: surfaceStatus.nativePreviewMainQueuedBehindCount,
+              nativePreviewHelperRoundTripP95Ms: surfaceStatus.nativePreviewHelperRoundTripP95Ms,
+              nativePreviewMainStatusFetchP95Ms: surfaceStatus.nativePreviewMainStatusFetchP95Ms,
+              nativePreviewMainStatusFetchFailures:
+                surfaceStatus.nativePreviewMainStatusFetchFailures,
+              nativePreviewMainStatusFetchSuccesses:
+                surfaceStatus.nativePreviewMainStatusFetchSuccesses,
+              nativePreviewMainPresentedStatusAgeMs:
+                surfaceStatus.nativePreviewMainPresentedStatusAgeMs,
+              nativePreviewMainPresentedStatusAgeP95Ms:
+                surfaceStatus.nativePreviewMainPresentedStatusAgeP95Ms,
+              nativePreviewMainPresentedFrameAgeP95Ms:
+                surfaceStatus.nativePreviewMainPresentedFrameAgeP95Ms,
+              framePollingSuppressed: surfaceStatus.framePollingSuppressed,
+              sourcePixelsPresent: surfaceStatus.sourcePixelsPresent
+            }
+            queueNativePreviewSurfacePresentReport(activeClient, presentParams)
+            if (
+              pendingCompositorStatusSupersedes(pendingStatus, nextStatus, {
+                includeSameRunFrameAdvance: true
+              })
+            ) {
+              nativePreviewCompositorSuppressedPresentsRef.current += 1
+              continue
+            }
+          }
+        } catch (error: unknown) {
+          console.error('Native preview compositor present failed:', error)
+        } finally {
+          nativePreviewCompositorPresentingRef.current = false
+          if (nativePreviewCompositorPendingRef.current) {
+            queueNativePreviewCompositorPresent(
+              activeClient,
+              nativePreviewCompositorPendingRef.current
+            )
+          }
+        }
+      })()
+    },
+    [
+      applyPreviewSurfaceStatus,
+      nativePreviewRendererTimingStatusFields,
+      nativePreviewSurfaceEnabled,
+      queueNativePreviewSurfacePresentReport
+    ]
+  )
 
   useEffect(() => {
     if (!nativePreviewSurfaceEnabled || !client || wsStatus !== 'connected') {
@@ -901,20 +965,25 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     }
   }, [client, refreshScreensForClient, reportError])
 
-  const refreshPlatformAccountsForClient = useCallback(async (activeClient: BackendClient | null) => {
-    if (!activeClient) {
-      setPlatformAccounts([])
-      setOauthProviderCredentials([])
-      return
-    }
+  const refreshPlatformAccountsForClient = useCallback(
+    async (activeClient: BackendClient | null) => {
+      if (!activeClient) {
+        setPlatformAccounts([])
+        setOauthProviderCredentials([])
+        return
+      }
 
-    const [accounts, credentials] = await Promise.all([
-      activeClient.request<PlatformAccount[]>('platformAccounts.list'),
-      activeClient.request<OAuthProviderCredentialStatus[]>('platformAccounts.oauth.providerCredentials')
-    ])
-    setPlatformAccounts(accounts)
-    setOauthProviderCredentials(credentials)
-  }, [])
+      const [accounts, credentials] = await Promise.all([
+        activeClient.request<PlatformAccount[]>('platformAccounts.list'),
+        activeClient.request<OAuthProviderCredentialStatus[]>(
+          'platformAccounts.oauth.providerCredentials'
+        )
+      ])
+      setPlatformAccounts(accounts)
+      setOauthProviderCredentials(credentials)
+    },
+    []
+  )
 
   const refreshPlatformAccounts = useCallback(async () => {
     try {
@@ -924,16 +993,21 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     }
   }, [client, refreshPlatformAccountsForClient, reportError])
 
-  const validatePlatformAccountsForClient = useCallback(async (activeClient: BackendClient | null) => {
-    if (!activeClient) {
-      setPlatformAccountValidations([])
-      return []
-    }
+  const validatePlatformAccountsForClient = useCallback(
+    async (activeClient: BackendClient | null) => {
+      if (!activeClient) {
+        setPlatformAccountValidations([])
+        return []
+      }
 
-    const validations = await activeClient.request<PlatformAccountValidation[]>('platformAccounts.validate')
-    setPlatformAccountValidations(validations)
-    return validations
-  }, [])
+      const validations = await activeClient.request<PlatformAccountValidation[]>(
+        'platformAccounts.validate'
+      )
+      setPlatformAccountValidations(validations)
+      return validations
+    },
+    []
+  )
 
   const validatePlatformAccounts = useCallback(async () => {
     try {
@@ -954,9 +1028,12 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       try {
         setLastError(null)
         setYoutubeChannelsLoading(true)
-        const result = await client.request<{ channels: YouTubeChannel[] }>('platformAccounts.youtube.channels', {
-          accountId
-        })
+        const result = await client.request<{ channels: YouTubeChannel[] }>(
+          'platformAccounts.youtube.channels',
+          {
+            accountId
+          }
+        )
         setYoutubeChannels(result.channels)
       } catch (error) {
         setYoutubeChannels([])
@@ -977,11 +1054,17 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
 
       try {
         setLastError(null)
-        const selected = await client.request<PlatformAccount>('platformAccounts.youtube.selectChannel', {
-          accountId,
-          channelId
-        })
-        await Promise.all([refreshPlatformAccountsForClient(client), validatePlatformAccountsForClient(client)])
+        const selected = await client.request<PlatformAccount>(
+          'platformAccounts.youtube.selectChannel',
+          {
+            accountId,
+            channelId
+          }
+        )
+        await Promise.all([
+          refreshPlatformAccountsForClient(client),
+          validatePlatformAccountsForClient(client)
+        ])
         setCaptureConfig((current) => {
           const targets = current.streaming.targets.map((target) => {
             if (target.platform !== 'youtube') {
@@ -999,7 +1082,10 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
               status: sameAccount ? target.status : undefined
             }
           })
-          return bridgeStreamingToLegacy({ ...current, streaming: { ...current.streaming, targets } })
+          return bridgeStreamingToLegacy({
+            ...current,
+            streaming: { ...current.streaming, targets }
+          })
         })
         await refreshYouTubeChannels(selected.accountId)
         toast.success(`YouTube channel set to ${selected.accountLabel}.`)
@@ -1038,11 +1124,14 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
         setLastError(null)
         setTwitchCategorySearchPending(true)
         const account = platformAccounts.find((item) => item.platform === 'twitch')
-        const result = await client.request<{ categories: TwitchCategory[] }>('streamTargets.twitch.searchCategories', {
-          accountId: account?.accountId,
-          query: trimmed,
-          first: 10
-        })
+        const result = await client.request<{ categories: TwitchCategory[] }>(
+          'streamTargets.twitch.searchCategories',
+          {
+            accountId: account?.accountId,
+            query: trimmed,
+            first: 10
+          }
+        )
         setTwitchCategories(result.categories)
       } catch (error) {
         setTwitchCategories([])
@@ -1070,7 +1159,10 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       try {
         setLastError(null)
         setXNativeCapabilityLoading(true)
-        const capability = await client.request<XNativeLiveCapability>('streamTargets.x.capability', { accountId })
+        const capability = await client.request<XNativeLiveCapability>(
+          'streamTargets.x.capability',
+          { accountId }
+        )
         setXNativeCapability(capability)
       } catch (error) {
         setXNativeCapability(null)
@@ -1099,7 +1191,10 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     }
 
     const draft = await activeClient.request<StreamMetadataDraft>('streamTargets.metadata.get')
-    const validation = await activeClient.request<StreamMetadataValidation>('streamTargets.metadata.validate', draft)
+    const validation = await activeClient.request<StreamMetadataValidation>(
+      'streamTargets.metadata.validate',
+      draft
+    )
     setStreamMetadataDraft(draft)
     setStreamMetadataValidation(validation)
   }, [])
@@ -1117,7 +1212,10 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   }, [settings])
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.captureConfig, JSON.stringify(persistableCaptureConfig(captureConfig)))
+    localStorage.setItem(
+      STORAGE_KEYS.captureConfig,
+      JSON.stringify(persistableCaptureConfig(captureConfig))
+    )
   }, [captureConfig])
 
   useEffect(() => {
@@ -1175,7 +1273,9 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
         return current
       }
 
-      sourceReconciliationMessages.current.push(...sourceSelectionChangeMessages(current.sources, nextSources))
+      sourceReconciliationMessages.current.push(
+        ...sourceSelectionChangeMessages(current.sources, nextSources)
+      )
       return { ...current, sources: nextSources }
     })
   }, [deviceList])
@@ -1275,9 +1375,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
         setLiveChatSnapshot(applyLiveChatSnapshot(payload as LiveChatSnapshot))
       ),
       nextClient.on('liveChat.message', (payload) =>
-        setLiveChatSnapshot((current) =>
-          applyLiveChatMessage(current, payload as LiveChatMessage)
-        )
+        setLiveChatSnapshot((current) => applyLiveChatMessage(current, payload as LiveChatMessage))
       ),
       nextClient.on('liveChat.providerStatus', (payload) =>
         setLiveChatSnapshot((current) =>
@@ -1345,11 +1443,14 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
         setLiveChatSnapshot(applyLiveChatSnapshot(nextLiveChat))
         const nextPreview = await nextClient.request<PreviewLiveStatus>('preview.live.status')
         applyPreviewLiveStatus(nextPreview)
-        const nextPreviewSurface = await nextClient.request<PreviewSurfaceStatus>('preview.surface.status')
+        const nextPreviewSurface =
+          await nextClient.request<PreviewSurfaceStatus>('preview.surface.status')
         applyPreviewSurfaceStatus(nextPreviewSurface)
-        const nextPreviewCamera = await nextClient.request<PreviewCameraStatus>('preview.camera.status')
+        const nextPreviewCamera =
+          await nextClient.request<PreviewCameraStatus>('preview.camera.status')
         applyPreviewCameraStatus(nextPreviewCamera)
-        const nextPreviewScreen = await nextClient.request<PreviewScreenStatus>('preview.screen.status')
+        const nextPreviewScreen =
+          await nextClient.request<PreviewScreenStatus>('preview.screen.status')
         applyPreviewScreenStatus(nextPreviewScreen)
         const nextScene = await nextClient.request<Scene>('scene.get')
         if (nextScene.sources.length) {
@@ -1433,11 +1534,15 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       video: captureConfig.video
     }
     await loadScene(
-      runtimeInfo?.previewSmokeMode
-        ? smokePreviewCompositorCaptureConfig(config)
-        : config
+      runtimeInfo?.previewSmokeMode ? smokePreviewCompositorCaptureConfig(config) : config
     )
-  }, [captureConfig.layout, captureConfig.sources, captureConfig.video, loadScene, runtimeInfo?.previewSmokeMode])
+  }, [
+    captureConfig.layout,
+    captureConfig.sources,
+    captureConfig.video,
+    loadScene,
+    runtimeInfo?.previewSmokeMode
+  ])
 
   const patchLayout = useCallback((patch: Partial<LayoutSettings>) => {
     setCaptureConfig((current) => ({ ...current, layout: { ...current.layout, ...patch } }))
@@ -1482,14 +1587,20 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
         nextPlatformAccountValidations,
         nextStreamMetadataDraft
       ] = await Promise.all([
-        client.request<BackendHealth>('health.ping', { ffmpegPath: settings.ffmpegPath.trim() || undefined }),
-        client.request<DeviceList>('devices.list', { ffmpegPath: settings.ffmpegPath.trim() || undefined }),
+        client.request<BackendHealth>('health.ping', {
+          ffmpegPath: settings.ffmpegPath.trim() || undefined
+        }),
+        client.request<DeviceList>('devices.list', {
+          ffmpegPath: settings.ffmpegPath.trim() || undefined
+        }),
         client.request<SessionSummary[]>('sessions.list'),
         client.request<DiagnosticStats>('diagnostics.stats'),
         client.request<StreamScreen[]>('screens.list'),
         client.request<StreamScreen | null>('screens.active'),
         client.request<PlatformAccount[]>('platformAccounts.list'),
-        client.request<OAuthProviderCredentialStatus[]>('platformAccounts.oauth.providerCredentials'),
+        client.request<OAuthProviderCredentialStatus[]>(
+          'platformAccounts.oauth.providerCredentials'
+        ),
         client.request<PlatformAccountValidation[]>('platformAccounts.validate'),
         client.request<StreamMetadataDraft>('streamTargets.metadata.get')
       ])
@@ -1673,7 +1784,12 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
             applyScene(status.scene)
             setCaptureConfig((current) => ({
               ...current,
-              layout: { ...current.layout, ...patch, cameraTransformMode: 'preset', cameraTransform: null }
+              layout: {
+                ...current.layout,
+                ...patch,
+                cameraTransformMode: 'preset',
+                cameraTransform: null
+              }
             }))
             if (status.mode === 'warm' && status.message) {
               toast.success(status.message)
@@ -1689,10 +1805,19 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
 
       setCaptureConfig((current) => ({
         ...current,
-        layout: { ...current.layout, ...patch, cameraTransformMode: 'preset', cameraTransform: null }
+        layout: {
+          ...current.layout,
+          ...patch,
+          cameraTransformMode: 'preset',
+          cameraTransform: null
+        }
       }))
       if (sceneEditMode) {
-        void loadScene({ sources: captureConfig.sources, layout, video: captureConfig.video }).catch(reportError)
+        void loadScene({
+          sources: captureConfig.sources,
+          layout,
+          video: captureConfig.video
+        }).catch(reportError)
       }
     },
     [
@@ -1761,7 +1886,8 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       layout: captureConfig.layout,
       video: captureConfig.video
     })
-    nativePreviewCameraKeyRef.current = status.state === 'failed' || status.state === 'device-missing' ? null : key
+    nativePreviewCameraKeyRef.current =
+      status.state === 'failed' || status.state === 'device-missing' ? null : key
     applyPreviewCameraStatus(status)
     return status
   }, [
@@ -1787,7 +1913,11 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     }
 
     const sourceId = captureConfig.sources.windowId ?? captureConfig.sources.screenId
-    const sourceKind = captureConfig.sources.windowId ? 'window' : captureConfig.sources.screenId ? 'screen' : null
+    const sourceKind = captureConfig.sources.windowId
+      ? 'window'
+      : captureConfig.sources.screenId
+        ? 'screen'
+        : null
     if (!sourceId || !sourceKind) {
       nativePreviewScreenKeyRef.current = null
       const status = await client.request<PreviewScreenStatus>('preview.screen.stop')
@@ -1852,7 +1982,9 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
             ? 'Native screen preview source is live.'
             : cameraStatus.state === 'live'
               ? 'Native camera preview source is live.'
-              : (screenStatus.message ?? cameraStatus.message ?? 'Native preview surface proof mode is active.')
+              : (screenStatus.message ??
+                cameraStatus.message ??
+                'Native preview surface proof mode is active.')
       })
       return
     }
@@ -1908,7 +2040,10 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       if (!nativePreviewSurfaceEnabled || !client || wsStatus !== 'connected') {
         return
       }
-      if (!window.videorc?.createNativePreviewSurface || !window.videorc?.updateNativePreviewSurfaceBounds) {
+      if (
+        !window.videorc?.createNativePreviewSurface ||
+        !window.videorc?.updateNativePreviewSurfaceBounds
+      ) {
         return
       }
       const surfaceAlreadyCreated =
@@ -1931,10 +2066,14 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
           nativePreviewSurfaceBoundsPendingRef.current = null
           const applyHostCommands = window.videorc?.applyNativePreviewHostCommands
           const current = previewSurfaceStatusRef.current
-          const surfaceAlreadyCreated = nativePreviewSurfaceCreatedRef.current || current.state === 'live'
+          const surfaceAlreadyCreated =
+            nativePreviewSurfaceCreatedRef.current || current.state === 'live'
           if (
             surfaceAlreadyCreated &&
-            !previewSurfaceBoundsChanged(nativePreviewSurfaceLastSyncedBoundsRef.current, nextBounds)
+            !previewSurfaceBoundsChanged(
+              nativePreviewSurfaceLastSyncedBoundsRef.current,
+              nextBounds
+            )
           ) {
             continue
           }
@@ -1952,19 +2091,21 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
           if (directlyApplied) {
             await applyHostCommands([{ kind: 'update-bounds', bounds: nextBounds }])
           }
-          const backendStatus =
-            surfaceAlreadyCreated
-              ? await client.request<PreviewSurfaceStatus>('preview.surface.update_bounds', { bounds: nextBounds })
-              : await client.request<PreviewSurfaceStatus>('preview.surface.create', {
-                  bounds: nextBounds,
-                  targetFps: 60,
-                  source: surfaceSource
-                })
+          const backendStatus = surfaceAlreadyCreated
+            ? await client.request<PreviewSurfaceStatus>('preview.surface.update_bounds', {
+                bounds: nextBounds
+              })
+            : await client.request<PreviewSurfaceStatus>('preview.surface.create', {
+                bounds: nextBounds,
+                targetFps: 60,
+                source: surfaceSource
+              })
           if (!surfaceAlreadyCreated) {
             nativePreviewCompositorSuppressedPresentsRef.current = 0
             resetNativePreviewCompositorTiming()
           }
-          nativePreviewSurfaceCreatedRef.current = backendStatus.state === 'live' || surfaceAlreadyCreated
+          nativePreviewSurfaceCreatedRef.current =
+            backendStatus.state === 'live' || surfaceAlreadyCreated
           const queuedCommands = await client.request<NativePreviewHostCommand[]>(
             'preview.surface.take_native_host_commands'
           )
@@ -1989,8 +2130,13 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
           nativePreviewSurfaceCreatedRef.current =
             nativePreviewSurfaceCreatedRef.current || hostStatus.state === 'live'
           const backendStatusAfterHostDrain =
-            hostCommands.length > 0 ? { ...backendStatus, pendingHostCommandCount: 0 } : backendStatus
-          const surfaceStatus = mergePreviewSurfaceHostStatus(backendStatusAfterHostDrain, hostStatus)
+            hostCommands.length > 0
+              ? { ...backendStatus, pendingHostCommandCount: 0 }
+              : backendStatus
+          const surfaceStatus = mergePreviewSurfaceHostStatus(
+            backendStatusAfterHostDrain,
+            hostStatus
+          )
           nativePreviewSurfaceLastSyncedBoundsRef.current = nextBounds
           applyPreviewSurfaceStatus(surfaceStatus)
           setPreviewLiveStatus({
@@ -2075,10 +2221,14 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   // session records (the compositor feeds the encoder directly) and while the
   // detached preview window is closed (nothing presents at all) — UI rewrite U2.
   const syncFramePollingSuppression = useCallback(() => {
-    if (!nativePreviewSurfaceEnabled || !window.videorc?.setNativePreviewSurfaceFramePollingSuppressed) {
+    if (
+      !nativePreviewSurfaceEnabled ||
+      !window.videorc?.setNativePreviewSurfaceFramePollingSuppressed
+    ) {
       return
     }
-    const suppress = isActiveRecordingState(recordingRef.current.state) || !previewWindowRef.current.open
+    const suppress =
+      isActiveRecordingState(recordingRef.current.state) || !previewWindowRef.current.open
     void window.videorc
       .setNativePreviewSurfaceFramePollingSuppressed(suppress)
       .then(applyPreviewSurfaceStatus)
@@ -2157,7 +2307,10 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   // The preview window is locked to the OUTPUT aspect ratio — the user can never
   // squeeze or stretch what they will record/stream.
   useEffect(() => {
-    void window.videorc?.setPreviewWindowAspectRatio?.(captureConfig.video.width, captureConfig.video.height)
+    void window.videorc?.setPreviewWindowAspectRatio?.(
+      captureConfig.video.width,
+      captureConfig.video.height
+    )
   }, [captureConfig.video.width, captureConfig.video.height])
 
   const syncNativePreviewSurfaceScene = useCallback(async () => {
@@ -2175,12 +2328,18 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     }
     if (client && wsStatus === 'connected') {
       const compositorParams: CompositorSceneUpdateParams = params
-      const compositorStatus = await client.request<CompositorStatus>('compositor.scene.update', compositorParams)
+      const compositorStatus = await client.request<CompositorStatus>(
+        'compositor.scene.update',
+        compositorParams
+      )
       if (window.videorc.updateNativePreviewSurfaceCompositor) {
         const status = await window.videorc.updateNativePreviewSurfaceCompositor(compositorStatus)
         applyPreviewSurfaceStatus({
           ...status,
-          framesRendered: Math.max(status.framesRendered, previewSurfaceStatusRef.current.framesRendered)
+          framesRendered: Math.max(
+            status.framesRendered,
+            previewSurfaceStatusRef.current.framesRendered
+          )
         })
         return
       }
@@ -2188,9 +2347,20 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     const status = await window.videorc.updateNativePreviewSurfaceScene(params)
     applyPreviewSurfaceStatus({
       ...status,
-      framesRendered: Math.max(status.framesRendered, previewSurfaceStatusRef.current.framesRendered)
+      framesRendered: Math.max(
+        status.framesRendered,
+        previewSurfaceStatusRef.current.framesRendered
+      )
     })
-  }, [activeScreen, applyPreviewSurfaceStatus, captureConfig.layout, client, nativePreviewSurfaceEnabled, scene, wsStatus])
+  }, [
+    activeScreen,
+    applyPreviewSurfaceStatus,
+    captureConfig.layout,
+    client,
+    nativePreviewSurfaceEnabled,
+    scene,
+    wsStatus
+  ])
 
   useEffect(() => {
     if (!nativePreviewSurfaceEnabled) {
@@ -2205,9 +2375,12 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     if (!client || wsStatus !== 'connected') {
       return
     }
-    void client.request<DiagnosticStats>('diagnostics.preview_surface.resize').then(setDiagnosticStats).catch(() => {
-      // Resize diagnostics are best-effort and should never interrupt editing.
-    })
+    void client
+      .request<DiagnosticStats>('diagnostics.preview_surface.resize')
+      .then(setDiagnosticStats)
+      .catch(() => {
+        // Resize diagnostics are best-effort and should never interrupt editing.
+      })
   }, [client, wsStatus])
 
   const importScreenImage = useCallback(async () => {
@@ -2245,18 +2418,21 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     }
   }, [client, refreshScreensForClient, reportError, settings.ffmpegPath, wsStatus])
 
-  const openSystemPermission = useCallback(async (pane: SystemPermissionPane) => {
-    if (!window.videorc?.openSystemPermissions) {
-      toast.error('Permission shortcut is unavailable outside Electron.')
-      return
-    }
+  const openSystemPermission = useCallback(
+    async (pane: SystemPermissionPane) => {
+      if (!window.videorc?.openSystemPermissions) {
+        toast.error('Permission shortcut is unavailable outside Electron.')
+        return
+      }
 
-    try {
-      await window.videorc.openSystemPermissions(pane)
-    } catch (error) {
-      reportError(error)
-    }
-  }, [reportError])
+      try {
+        await window.videorc.openSystemPermissions(pane)
+      } catch (error) {
+        reportError(error)
+      }
+    },
+    [reportError]
+  )
 
   const openPreviewPermissions = useCallback(async () => {
     await openSystemPermission('screen-recording')
@@ -2295,18 +2471,30 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     } finally {
       setAudioMeterLoading(false)
     }
-  }, [captureConfig.audio.microphoneGainDb, captureConfig.audio.microphoneMuted, captureConfig.sources.microphoneId, client, reportError, settings.ffmpegPath])
+  }, [
+    captureConfig.audio.microphoneGainDb,
+    captureConfig.audio.microphoneMuted,
+    captureConfig.sources.microphoneId,
+    client,
+    reportError,
+    settings.ffmpegPath
+  ])
 
   const outputEnabled = captureConfig.recordEnabled || captureConfig.streamEnabled
   const profileCompatibility = videoProfileCompatibility(captureConfig)
   const streamReady =
     !captureConfig.streamEnabled || areEnabledStreamTargetsStartReady(captureConfig.streaming)
-  const isSessionActive = isActiveRecordingState(recording.state) || startRequestPending || stopRequestPending
+  const isSessionActive =
+    isActiveRecordingState(recording.state) || startRequestPending || stopRequestPending
 
   const renameScreen = useCallback(
     async (screenId: string, name: string) => {
       if (!client || isSessionActive) {
-        toast.error(isSessionActive ? 'Screen management is locked while live.' : 'Backend socket is not connected.')
+        toast.error(
+          isSessionActive
+            ? 'Screen management is locked while live.'
+            : 'Backend socket is not connected.'
+        )
         return
       }
 
@@ -2325,7 +2513,11 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   const deleteScreen = useCallback(
     async (screenId: string) => {
       if (!client || isSessionActive) {
-        toast.error(isSessionActive ? 'Screen management is locked while live.' : 'Backend socket is not connected.')
+        toast.error(
+          isSessionActive
+            ? 'Screen management is locked while live.'
+            : 'Backend socket is not connected.'
+        )
         return
       }
 
@@ -2344,7 +2536,11 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   const moveScreen = useCallback(
     async (screenId: string, direction: -1 | 1) => {
       if (!client || isSessionActive) {
-        toast.error(isSessionActive ? 'Screen management is locked while live.' : 'Backend socket is not connected.')
+        toast.error(
+          isSessionActive
+            ? 'Screen management is locked while live.'
+            : 'Backend socket is not connected.'
+        )
         return
       }
 
@@ -2429,7 +2625,10 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
                 }
               : target
           )
-          return bridgeStreamingToLegacy({ ...current, streaming: { ...current.streaming, targets } })
+          return bridgeStreamingToLegacy({
+            ...current,
+            streaming: { ...current.streaming, targets }
+          })
         })
         toast.success('Disconnected account.')
       } catch (error) {
@@ -2454,7 +2653,10 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
         setLastError(null)
         const redirectUri = await window.videorc.getOAuthCallbackRedirectUri(platform)
         const params = redirectUri ? { platform, redirectUri } : { platform }
-        const result = await client.request<OAuthStartResult>('platformAccounts.oauth.startProvider', params)
+        const result = await client.request<OAuthStartResult>(
+          'platformAccounts.oauth.startProvider',
+          params
+        )
         await window.videorc.openOAuthUrl(result.authUrl)
         toast.success('OAuth browser opened.')
       } catch (error) {
@@ -2564,7 +2766,13 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     if (runtimeInfo?.disableAutoPreview) {
       return
     }
-    if (!client || wsStatus !== 'connected' || isSessionActive || !health?.ffmpeg.available || !deviceList.devices.length) {
+    if (
+      !client ||
+      wsStatus !== 'connected' ||
+      isSessionActive ||
+      !health?.ffmpeg.available ||
+      !deviceList.devices.length
+    ) {
       return
     }
 
@@ -2648,10 +2856,13 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
             if (platformLifecycleRun.current !== runId) {
               return
             }
-            lastStatus = await client.request<YouTubeStreamStatusResult>('streamTargets.youtube.streamStatus', {
-              accountId: target.accountId,
-              streamId
-            })
+            lastStatus = await client.request<YouTubeStreamStatusResult>(
+              'streamTargets.youtube.streamStatus',
+              {
+                accountId: target.accountId,
+                streamId
+              }
+            )
             const statusSnapshot = lastStatus
             setCaptureConfig((current) =>
               bridgeStreamingToLegacy({
@@ -2744,11 +2955,14 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
               })
             })
           )
-          const result = await client.request<YouTubeBroadcastTransitionResult>('streamTargets.youtube.transition', {
-            accountId: target.accountId,
-            broadcastId,
-            status: 'complete'
-          })
+          const result = await client.request<YouTubeBroadcastTransitionResult>(
+            'streamTargets.youtube.transition',
+            {
+              accountId: target.accountId,
+              broadcastId,
+              status: 'complete'
+            }
+          )
           setCaptureConfig((current) =>
             bridgeStreamingToLegacy({
               ...current,
@@ -2784,78 +2998,81 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     [captureConfig.streaming, client]
   )
 
-  const runStartSession = useCallback(async (streamingOverride?: StreamingSettings) => {
-    if (!client || startBlockedReason) {
-      if (startBlockedReason && !isSessionActive) {
-        reportError(new Error(startBlockedReason))
-      }
-      return
-    }
-
-    let streamingForStart: StreamingSettings | null = null
-    try {
-      setLastError(null)
-      setStreamHealth(null)
-      setStreamTargets([])
-      setStartRequestPending(true)
-      streamingForStart = streamingOverride ?? captureConfig.streaming
-      const lifecycleRunId = platformLifecycleRun.current + 1
-      platformLifecycleRun.current = lifecycleRunId
-      const enabledOauthTargets = streamingForStart.targets.filter(
-        (target) => target.enabled && target.authMode === 'oauth'
-      )
-      if (enabledOauthTargets.length) {
-        const validations = await validatePlatformAccountsForClient(client)
-        const unhealthy = enabledOauthTargets.find((target) => {
-          const validation = validations.find((item) => item.platform === target.platform)
-          return !validation || !['valid', 'refreshed'].includes(validation.state)
-        })
-        if (unhealthy) {
-          throw new Error(`Reconnect ${unhealthy.label} before starting an OAuth livestream.`)
+  const runStartSession = useCallback(
+    async (streamingOverride?: StreamingSettings) => {
+      if (!client || startBlockedReason) {
+        if (startBlockedReason && !isSessionActive) {
+          reportError(new Error(startBlockedReason))
         }
+        return
       }
-      const optimisticRecording = isActiveRecordingState(recordingRef.current.state)
-        ? recordingRef.current
-        : {
-            state: 'starting' as const,
-            message: streamingOverride ? 'Preparing livestream…' : 'Preparing recording…'
+
+      let streamingForStart: StreamingSettings | null = null
+      try {
+        setLastError(null)
+        setStreamHealth(null)
+        setStreamTargets([])
+        setStartRequestPending(true)
+        streamingForStart = streamingOverride ?? captureConfig.streaming
+        const lifecycleRunId = platformLifecycleRun.current + 1
+        platformLifecycleRun.current = lifecycleRunId
+        const enabledOauthTargets = streamingForStart.targets.filter(
+          (target) => target.enabled && target.authMode === 'oauth'
+        )
+        if (enabledOauthTargets.length) {
+          const validations = await validatePlatformAccountsForClient(client)
+          const unhealthy = enabledOauthTargets.find((target) => {
+            const validation = validations.find((item) => item.platform === target.platform)
+            return !validation || !['valid', 'refreshed'].includes(validation.state)
+          })
+          if (unhealthy) {
+            throw new Error(`Reconnect ${unhealthy.label} before starting an OAuth livestream.`)
           }
-      applyRecordingStatus(optimisticRecording)
-      const nextSessionParams: StartSessionParams = streamingOverride
-        ? {
-            ...sessionParams,
-            output: { ...sessionParams.output, streamEnabled: true },
-            streaming: streamingOverride
-          }
-        : sessionParams
-      const status = await client.request<RecordingStatus>('session.start', nextSessionParams)
-      applyRecordingStatus(status)
-      await refreshSessions(client)
-      await activatePreparedYouTubeBroadcasts(streamingForStart, lifecycleRunId)
-    } catch (error) {
-      if (streamingOverride && streamingForStart) {
-        await completePreparedPlatformBroadcasts(streamingForStart)
+        }
+        const optimisticRecording = isActiveRecordingState(recordingRef.current.state)
+          ? recordingRef.current
+          : {
+              state: 'starting' as const,
+              message: streamingOverride ? 'Preparing livestream…' : 'Preparing recording…'
+            }
+        applyRecordingStatus(optimisticRecording)
+        const nextSessionParams: StartSessionParams = streamingOverride
+          ? {
+              ...sessionParams,
+              output: { ...sessionParams.output, streamEnabled: true },
+              streaming: streamingOverride
+            }
+          : sessionParams
+        const status = await client.request<RecordingStatus>('session.start', nextSessionParams)
+        applyRecordingStatus(status)
+        await refreshSessions(client)
+        await activatePreparedYouTubeBroadcasts(streamingForStart, lifecycleRunId)
+      } catch (error) {
+        if (streamingOverride && streamingForStart) {
+          await completePreparedPlatformBroadcasts(streamingForStart)
+        }
+        reportError(error)
+        if (recordingRef.current.state === 'starting' && !recordingRef.current.sessionId) {
+          applyRecordingStatus({ state: 'idle', message: 'Ready to start a capture session.' })
+        }
+      } finally {
+        setStartRequestPending(false)
       }
-      reportError(error)
-      if (recordingRef.current.state === 'starting' && !recordingRef.current.sessionId) {
-        applyRecordingStatus({ state: 'idle', message: 'Ready to start a capture session.' })
-      }
-    } finally {
-      setStartRequestPending(false)
-    }
-  }, [
-    activatePreparedYouTubeBroadcasts,
-    applyRecordingStatus,
-    captureConfig.streaming,
-    client,
-    completePreparedPlatformBroadcasts,
-    isSessionActive,
-    refreshSessions,
-    reportError,
-    sessionParams,
-    startBlockedReason,
-    validatePlatformAccountsForClient
-  ])
+    },
+    [
+      activatePreparedYouTubeBroadcasts,
+      applyRecordingStatus,
+      captureConfig.streaming,
+      client,
+      completePreparedPlatformBroadcasts,
+      isSessionActive,
+      refreshSessions,
+      reportError,
+      sessionParams,
+      startBlockedReason,
+      validatePlatformAccountsForClient
+    ]
+  )
 
   const prepareOauthTargetsForGoLive = useCallback(async (): Promise<GoLivePartialSetup> => {
     if (!client) {
@@ -2869,10 +3086,13 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     )) {
       try {
         if (target.platform === 'youtube') {
-          const prepared = await client.request<PreparedYouTubeBroadcast>('streamTargets.youtube.prepare', {
-            accountId: target.accountId,
-            video: captureConfig.video
-          })
+          const prepared = await client.request<PreparedYouTubeBroadcast>(
+            'streamTargets.youtube.prepare',
+            {
+              accountId: target.accountId,
+              video: captureConfig.video
+            }
+          )
           nextStreaming = patchPreparedStreamTarget(nextStreaming, target.id, {
             accountId: prepared.accountId,
             accountLabel: prepared.accountLabel,
@@ -2887,9 +3107,12 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
             }
           })
         } else if (target.platform === 'twitch') {
-          const prepared = await client.request<PreparedTwitchBroadcast>('streamTargets.twitch.prepare', {
-            accountId: target.accountId
-          })
+          const prepared = await client.request<PreparedTwitchBroadcast>(
+            'streamTargets.twitch.prepare',
+            {
+              accountId: target.accountId
+            }
+          )
           nextStreaming = patchPreparedStreamTarget(nextStreaming, target.id, {
             accountId: prepared.accountId,
             accountLabel: prepared.accountLabel,
@@ -2929,7 +3152,9 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     return {
       streaming: nextStreaming,
       failures,
-      readyLabels: nextStreaming.targets.filter((target) => target.enabled).map((target) => target.label)
+      readyLabels: nextStreaming.targets
+        .filter((target) => target.enabled)
+        .map((target) => target.label)
     }
   }, [captureConfig.streaming, captureConfig.video, client, refreshPlatformAccountsForClient])
 
@@ -2957,9 +3182,12 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
         )
         setStreamMetadataValidation(validation)
       }
-      const preflight = await client.request<GoLivePreflight>('streamTargets.confirmation.validate', {
-        streaming: captureConfig.streaming
-      })
+      const preflight = await client.request<GoLivePreflight>(
+        'streamTargets.confirmation.validate',
+        {
+          streaming: captureConfig.streaming
+        }
+      )
       setGoLivePreflight(preflight)
       setGoLiveConfirmationOpen(true)
     } catch (error) {
@@ -2967,7 +3195,14 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     } finally {
       setGoLiveConfirmationPending(false)
     }
-  }, [captureConfig.streaming, client, isSessionActive, reportError, startBlockedReason, streamMetadataDraft])
+  }, [
+    captureConfig.streaming,
+    client,
+    isSessionActive,
+    reportError,
+    startBlockedReason,
+    streamMetadataDraft
+  ])
 
   const startSession = useCallback(async () => {
     if (captureConfig.streamEnabled) {
@@ -2986,7 +3221,12 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     }
     setGoLivePartialSetup(null)
     setGoLiveConfirmationOpen(false)
-  }, [completePreparedPlatformBroadcasts, goLiveConfirmationPending, goLivePartialSetup, startRequestPending])
+  }, [
+    completePreparedPlatformBroadcasts,
+    goLiveConfirmationPending,
+    goLivePartialSetup,
+    startRequestPending
+  ])
 
   const confirmGoLive = useCallback(async () => {
     if (!client || goLiveConfirmationPending || startRequestPending) {
@@ -3008,9 +3248,12 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
         )
         setStreamMetadataValidation(validation)
       }
-      const preflight = await client.request<GoLivePreflight>('streamTargets.confirmation.validate', {
-        streaming: captureConfig.streaming
-      })
+      const preflight = await client.request<GoLivePreflight>(
+        'streamTargets.confirmation.validate',
+        {
+          streaming: captureConfig.streaming
+        }
+      )
       setGoLivePreflight(preflight)
       if (!preflight.valid) {
         toast.error('Resolve Go Live issues before starting.')
@@ -3062,7 +3305,13 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     } finally {
       setGoLiveConfirmationPending(false)
     }
-  }, [goLiveConfirmationPending, goLivePartialSetup, reportError, runStartSession, startRequestPending])
+  }, [
+    goLiveConfirmationPending,
+    goLivePartialSetup,
+    reportError,
+    runStartSession,
+    startRequestPending
+  ])
 
   const stopSession = useCallback(async () => {
     if (!client || stopRequestPending) {
@@ -3081,7 +3330,13 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     } finally {
       setStopRequestPending(false)
     }
-  }, [applyRecordingStatus, client, completePreparedPlatformBroadcasts, reportError, stopRequestPending])
+  }, [
+    applyRecordingStatus,
+    client,
+    completePreparedPlatformBroadcasts,
+    reportError,
+    stopRequestPending
+  ])
 
   const remuxSession = useCallback(
     async (sessionId: string) => {
@@ -3119,7 +3374,11 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
           ffmpegPath: settings.ffmpegPath.trim() || undefined
         })
         await refreshSessions(client)
-        toast.success(aiConsent ? 'AI workflow finished.' : 'Extracted local audio. Enable consent for cloud AI.')
+        toast.success(
+          aiConsent
+            ? 'AI workflow finished.'
+            : 'Extracted local audio. Enable consent for cloud AI.'
+        )
       } catch (error) {
         reportError(error)
       } finally {
@@ -3203,26 +3462,31 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     }))
   }, [])
 
-  const patchStreamingTarget = useCallback((targetId: string, patch: Partial<StreamTargetSettings>) => {
-    setCaptureConfig((current) => {
-      const now = new Date().toISOString()
-      const targets = current.streaming.targets.map((target) => {
-        if (target.id !== targetId) {
-          return target
+  const patchStreamingTarget = useCallback(
+    (targetId: string, patch: Partial<StreamTargetSettings>) => {
+      setCaptureConfig((current) => {
+        const now = new Date().toISOString()
+        const targets = current.streaming.targets.map((target) => {
+          if (target.id !== targetId) {
+            return target
+          }
+          return patchStreamTargetForEdit(target, patch, now)
+        })
+        const enabledTargetIds = targets
+          .filter((target) => target.enabled)
+          .map((target) => target.id)
+        const streaming: StreamingSettings = {
+          ...current.streaming,
+          targets,
+          enabled: enabledTargetIds.length > 0,
+          mode: enabledTargetIds.length > 1 ? 'multi' : 'single',
+          enabledTargetIds
         }
-        return patchStreamTargetForEdit(target, patch, now)
+        return bridgeStreamingToLegacy({ ...current, streaming })
       })
-      const enabledTargetIds = targets.filter((target) => target.enabled).map((target) => target.id)
-      const streaming: StreamingSettings = {
-        ...current.streaming,
-        targets,
-        enabled: enabledTargetIds.length > 0,
-        mode: enabledTargetIds.length > 1 ? 'multi' : 'single',
-        enabledTargetIds
-      }
-      return bridgeStreamingToLegacy({ ...current, streaming })
-    })
-  }, [])
+    },
+    []
+  )
 
   const saveManualStreamKey = useCallback(
     async (targetId: string, streamKey: string) => {
@@ -3233,10 +3497,13 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
 
       try {
         setLastError(null)
-        const result = await client.request<StoreManualStreamKeyResult>('streamTargets.manualKey.store', {
-          targetId,
-          streamKey
-        })
+        const result = await client.request<StoreManualStreamKeyResult>(
+          'streamTargets.manualKey.store',
+          {
+            targetId,
+            streamKey
+          }
+        )
         setCaptureConfig((current) => {
           const target = current.streaming.targets.find((item) => item.id === targetId)
           const streaming = patchPreparedStreamTarget(current.streaming, targetId, {
@@ -3356,134 +3623,134 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
 
   const value = useMemo<StudioContextValue>(
     () => ({
-    connection,
-    wsStatus,
-    health,
-    deviceList,
-    recording,
-    logs,
-    healthEvents,
-    streamHealth,
-    streamTargets,
-    diagnosticStats,
-    sessions,
-    screens,
-    activeScreen,
-    platformAccounts,
-    platformAccountValidations,
-    oauthProviderCredentials,
-    youtubeChannels,
-    youtubeChannelsLoading,
-    twitchCategories,
-    twitchCategorySearchPending,
-    xNativeCapability,
-    xNativeCapabilityLoading,
-    liveChatSnapshot,
-    clearLiveChat,
-    streamMetadataDraft,
-    streamMetadataValidation,
-    goLivePreflight,
-    goLiveConfirmationOpen,
-    goLiveConfirmationPending,
-    goLivePartialSetup,
-    previewUrl,
-    previewLoading,
-    previewLiveStatus,
-    previewCameraStatus,
-    previewScreenStatus,
-    previewSurfaceStatus,
-    nativePreviewSurfaceEnabled,
-    previewWindow,
-    openPreviewWindow,
-    closePreviewWindow,
-    setPreviewWindowAlwaysOnTop,
-    scene,
-    sceneEditMode,
-    selectedSceneSourceId,
-    setSceneEditMode,
-    setSelectedSceneSourceId,
-    audioMeter,
-    audioMeterLoading,
-    aiConsent,
-    setAiConsent,
-    aiRunningSessionId,
-    exportRunningSessionId,
-    startRequestPending,
-    stopRequestPending,
-    screenImportPending,
-    streamMetadataSavePending,
-    settings,
-    setSettings,
-    captureConfig,
-    setCaptureConfig,
-    patchLayout,
-    patchVideo,
-    applyVideoPreset,
-    applyRtmpPreset,
-    patchStreamingTarget,
-    saveManualStreamKey,
-    patchStreamMetadataDraft,
-    patchStreamTargetMetadataDraft,
-    lastError,
-    runtimeInfo,
-    refreshBackend,
-    refreshPlatformAccounts,
-    validatePlatformAccounts,
-    connectPlatformAccount,
-    disconnectPlatformAccount,
-    refreshYouTubeChannels,
-    selectYouTubeChannel,
-    searchTwitchCategories,
-    refreshXNativeCapability,
-    refreshStreamMetadata,
-    saveStreamMetadataDraft,
-    cancelGoLiveConfirmation,
-    confirmGoLive,
-    continueGoLiveWithReadyDestinations,
-    refreshScreens,
-    importScreenImage,
-    renameScreen,
-    deleteScreen,
-    moveScreen,
-    activateScreen,
-    clearActiveScreen,
-    refreshPreview,
-    reloadSceneFromCaptureConfig,
-    resetSceneSource,
-    nudgeSceneSource,
-    commitCameraTransform,
-    applyCameraPreset,
-    layoutSwitchPending,
-    setSceneSourceVisible,
-    moveSceneSource,
-    openSystemPermission,
-    openPreviewPermissions,
-    revealPermissionTarget,
-    registerPreviewSurfaceResize,
-    syncNativePreviewSurfaceBounds,
-    sampleAudioMeter,
-    startSession,
-    stopSession,
-    remuxSession,
-    runAiWorkflow,
-    exportPublishPack,
-    assessRecording,
-    repairRecording,
-    restoreRecording,
-    outputEnabled,
-    streamReady,
-    isSessionActive,
-    startBlockedReason,
-    canStart,
-    canStop,
-    visibleStartBlockedReason,
-    selectedCaptureDevice,
-    selectedCamera,
-    selectedMicrophone,
-    setupSteps,
-    elapsed,
-    meterLevel,
-    canSampleAudio
+      connection,
+      wsStatus,
+      health,
+      deviceList,
+      recording,
+      logs,
+      healthEvents,
+      streamHealth,
+      streamTargets,
+      diagnosticStats,
+      sessions,
+      screens,
+      activeScreen,
+      platformAccounts,
+      platformAccountValidations,
+      oauthProviderCredentials,
+      youtubeChannels,
+      youtubeChannelsLoading,
+      twitchCategories,
+      twitchCategorySearchPending,
+      xNativeCapability,
+      xNativeCapabilityLoading,
+      liveChatSnapshot,
+      clearLiveChat,
+      streamMetadataDraft,
+      streamMetadataValidation,
+      goLivePreflight,
+      goLiveConfirmationOpen,
+      goLiveConfirmationPending,
+      goLivePartialSetup,
+      previewUrl,
+      previewLoading,
+      previewLiveStatus,
+      previewCameraStatus,
+      previewScreenStatus,
+      previewSurfaceStatus,
+      nativePreviewSurfaceEnabled,
+      previewWindow,
+      openPreviewWindow,
+      closePreviewWindow,
+      setPreviewWindowAlwaysOnTop,
+      scene,
+      sceneEditMode,
+      selectedSceneSourceId,
+      setSceneEditMode,
+      setSelectedSceneSourceId,
+      audioMeter,
+      audioMeterLoading,
+      aiConsent,
+      setAiConsent,
+      aiRunningSessionId,
+      exportRunningSessionId,
+      startRequestPending,
+      stopRequestPending,
+      screenImportPending,
+      streamMetadataSavePending,
+      settings,
+      setSettings,
+      captureConfig,
+      setCaptureConfig,
+      patchLayout,
+      patchVideo,
+      applyVideoPreset,
+      applyRtmpPreset,
+      patchStreamingTarget,
+      saveManualStreamKey,
+      patchStreamMetadataDraft,
+      patchStreamTargetMetadataDraft,
+      lastError,
+      runtimeInfo,
+      refreshBackend,
+      refreshPlatformAccounts,
+      validatePlatformAccounts,
+      connectPlatformAccount,
+      disconnectPlatformAccount,
+      refreshYouTubeChannels,
+      selectYouTubeChannel,
+      searchTwitchCategories,
+      refreshXNativeCapability,
+      refreshStreamMetadata,
+      saveStreamMetadataDraft,
+      cancelGoLiveConfirmation,
+      confirmGoLive,
+      continueGoLiveWithReadyDestinations,
+      refreshScreens,
+      importScreenImage,
+      renameScreen,
+      deleteScreen,
+      moveScreen,
+      activateScreen,
+      clearActiveScreen,
+      refreshPreview,
+      reloadSceneFromCaptureConfig,
+      resetSceneSource,
+      nudgeSceneSource,
+      commitCameraTransform,
+      applyCameraPreset,
+      layoutSwitchPending,
+      setSceneSourceVisible,
+      moveSceneSource,
+      openSystemPermission,
+      openPreviewPermissions,
+      revealPermissionTarget,
+      registerPreviewSurfaceResize,
+      syncNativePreviewSurfaceBounds,
+      sampleAudioMeter,
+      startSession,
+      stopSession,
+      remuxSession,
+      runAiWorkflow,
+      exportPublishPack,
+      assessRecording,
+      repairRecording,
+      restoreRecording,
+      outputEnabled,
+      streamReady,
+      isSessionActive,
+      startBlockedReason,
+      canStart,
+      canStop,
+      visibleStartBlockedReason,
+      selectedCaptureDevice,
+      selectedCamera,
+      selectedMicrophone,
+      setupSteps,
+      elapsed,
+      meterLevel,
+      canSampleAudio
     }),
     [
       connection,
@@ -3631,7 +3898,8 @@ function mergePreviewSurfaceHostStatus(
   hostStatus: PreviewSurfaceStatus
 ): PreviewSurfaceStatus {
   const hostLive = hostStatus.state === 'live'
-  const hostTransport = hostStatus.transport !== 'unavailable' ? hostStatus.transport : backendStatus.transport
+  const hostTransport =
+    hostStatus.transport !== 'unavailable' ? hostStatus.transport : backendStatus.transport
   const hostBacking = hostStatus.backing !== 'none' ? hostStatus.backing : backendStatus.backing
 
   if (!hostLive) {
@@ -3655,14 +3923,19 @@ function mergePreviewSurfaceHostStatus(
     presentedFrameId: hostStatus.presentedFrameId ?? backendStatus.presentedFrameId,
     compositorFrameLag: hostStatus.compositorFrameLag ?? backendStatus.compositorFrameLag,
     droppedFrames: hostStatus.droppedFrames ?? backendStatus.droppedFrames,
-    inputToPresentLatencyMs: hostStatus.inputToPresentLatencyMs ?? backendStatus.inputToPresentLatencyMs,
-    inputToPresentLatencyP50Ms: hostStatus.inputToPresentLatencyP50Ms ?? backendStatus.inputToPresentLatencyP50Ms,
-    inputToPresentLatencyP95Ms: hostStatus.inputToPresentLatencyP95Ms ?? backendStatus.inputToPresentLatencyP95Ms,
-    inputToPresentLatencyP99Ms: hostStatus.inputToPresentLatencyP99Ms ?? backendStatus.inputToPresentLatencyP99Ms,
+    inputToPresentLatencyMs:
+      hostStatus.inputToPresentLatencyMs ?? backendStatus.inputToPresentLatencyMs,
+    inputToPresentLatencyP50Ms:
+      hostStatus.inputToPresentLatencyP50Ms ?? backendStatus.inputToPresentLatencyP50Ms,
+    inputToPresentLatencyP95Ms:
+      hostStatus.inputToPresentLatencyP95Ms ?? backendStatus.inputToPresentLatencyP95Ms,
+    inputToPresentLatencyP99Ms:
+      hostStatus.inputToPresentLatencyP99Ms ?? backendStatus.inputToPresentLatencyP99Ms,
     presentFps: hostStatus.presentFps ?? backendStatus.presentFps,
     intervalP95Ms: hostStatus.intervalP95Ms ?? backendStatus.intervalP95Ms,
     intervalP99Ms: hostStatus.intervalP99Ms ?? backendStatus.intervalP99Ms,
-    framePollingSuppressed: hostStatus.framePollingSuppressed || backendStatus.framePollingSuppressed,
+    framePollingSuppressed:
+      hostStatus.framePollingSuppressed || backendStatus.framePollingSuppressed,
     sourcePixelsPresent: hostStatus.sourcePixelsPresent || backendStatus.sourcePixelsPresent,
     pendingHostCommandCount: backendStatus.pendingHostCommandCount,
     bounds: hostStatus.bounds ?? backendStatus.bounds,

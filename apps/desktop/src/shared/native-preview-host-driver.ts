@@ -115,8 +115,12 @@ export function proofSurfaceCompositorMessage(
   realSurfaceFallbackReason?: string
 ): string | undefined {
   const proofMessage =
-    status.state === 'live' ? 'Electron proof preview surface is displaying compositor output.' : status.message
-  return realSurfaceFallbackReason ? `${realSurfaceFallbackReason} ${proofMessage ?? ''}`.trim() : proofMessage
+    status.state === 'live'
+      ? 'Electron proof preview surface is displaying compositor output.'
+      : status.message
+  return realSurfaceFallbackReason
+    ? `${realSurfaceFallbackReason} ${proofMessage ?? ''}`.trim()
+    : proofMessage
 }
 
 function finitePositiveInteger(value: unknown): number | null {

@@ -45,7 +45,7 @@ jobs:
         run: cargo test -p videorc-backend
 
   js:
-    name: JS (typecheck + node tests)
+    name: JS (format + lint + tests)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -67,8 +67,17 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Format check
+        run: pnpm format:check
+
+      - name: Lint
+        run: pnpm lint
+
       - name: Typecheck
         run: pnpm typecheck
+
+      - name: Desktop tests
+        run: pnpm --filter @videorc/desktop test
 
       - name: Node logic tests
         run: pnpm test:scripts
