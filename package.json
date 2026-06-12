@@ -10,6 +10,7 @@
     "dev:zerocopy": "VIDEORC_ZEROCOPY_SOURCES=1 pnpm --filter @videorc/desktop dev",
     "build": "pnpm --filter @videorc/desktop build",
     "typecheck": "pnpm --filter @videorc/desktop typecheck",
+    "check:windows": "XWIN_ACCEPT_LICENSE=1 PATH=\"/opt/homebrew/opt/llvm/bin:$PATH\" cargo xwin check -p videorc-backend --target x86_64-pc-windows-msvc",
     "lint": "eslint \"apps/desktop/**/*.{ts,tsx}\"",
     "format": "prettier --write \"apps/desktop/**/*.{ts,tsx,css,json,html}\" \"*.{json,js,cjs,mjs}\" \".github/workflows/*.yml\"",
     "format:check": "prettier --check \"apps/desktop/**/*.{ts,tsx,css,json,html}\" \"*.{json,js,cjs,mjs}\" \".github/workflows/*.yml\"",

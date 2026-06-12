@@ -75,10 +75,19 @@ fn should_skip_screen_capture_cpu_copy_for_config(
 fn should_skip_screen_capture_cpu_copy(zero_copy_source_handle_available: bool) -> bool {
     should_skip_screen_capture_cpu_copy_for_config(
         zero_copy_source_handle_available,
-        crate::metal_compositor::source_zerocopy_enabled(),
+        source_zerocopy_enabled(),
         native_preview_surface_env_enabled(),
         forced_screen_capture_cpu_copy_enabled(),
     )
+}
+
+#[cfg(target_os = "macos")]
+use crate::metal_compositor::source_zerocopy_enabled;
+
+/// Zero-copy source handoff is Metal/IOSurface-backed and exists only on macOS.
+#[cfg(not(target_os = "macos"))]
+fn source_zerocopy_enabled() -> bool {
+    false
 }
 
 pub type PreviewScreenSlot = Arc<tokio::sync::Mutex<PreviewScreenRuntime>>;

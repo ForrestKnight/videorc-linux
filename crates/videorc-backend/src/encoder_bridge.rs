@@ -1,7 +1,5 @@
-use std::ffi::CString;
 use std::fs::File;
 use std::io::{self, Write as StdWrite};
-use std::os::fd::FromRawFd;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1822,31 +1820,13 @@ fn next_fresh_compositor_frame(
 }
 
 fn open_recording_fifo_writer(path: &Path, stop: &AtomicBool) -> io::Result<File> {
-    let c_path = CString::new(path.display().to_string()).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "invalid recording encoder bridge FIFO path",
-        )
-    })?;
-
-    while !stop.load(Ordering::Relaxed) {
-        let fd = unsafe { libc::open(c_path.as_ptr(), libc::O_WRONLY | libc::O_NONBLOCK) };
-        if fd >= 0 {
-            let _ = unsafe { libc::fcntl(fd, libc::F_SETFL, 0) };
-            return Ok(unsafe { File::from_raw_fd(fd) });
-        }
-
-        let error = io::Error::last_os_error();
-        if error.raw_os_error() != Some(libc::ENXIO) {
-            return Err(error);
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
-
-    Err(io::Error::new(
-        io::ErrorKind::Interrupted,
+    crate::fifo::open_writer(
+        path,
+        stop,
+        Duration::from_millis(10),
+        true,
         "recording encoder bridge writer stopped before FIFO opened",
-    ))
+    )
 }
 
 fn emit_encoder_bridge_diagnostics_from_thread(

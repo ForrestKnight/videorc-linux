@@ -9,6 +9,7 @@ mod diagnostics;
 mod encoder_bridge;
 mod ffmpeg;
 mod ffmpeg_work;
+mod fifo;
 mod frame_store;
 mod live_chat;
 mod live_layout;

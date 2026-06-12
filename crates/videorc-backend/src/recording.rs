@@ -1,7 +1,5 @@
-use std::ffi::CString;
 use std::fs::File;
 use std::io::{self, Write};
-use std::os::fd::FromRawFd;
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -4180,19 +4178,12 @@ fn create_recording_encoder_bridge_fifo(path: &Path) -> Result<()> {
         })?;
     }
 
-    let c_path = CString::new(path.display().to_string())
-        .context("Recording encoder bridge FIFO path contained an interior NUL byte")?;
-    let status = unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) };
-    if status != 0 {
-        return Err(io::Error::last_os_error()).with_context(|| {
-            format!(
-                "Could not create recording encoder bridge FIFO {}",
-                path.display()
-            )
-        });
-    }
-
-    Ok(())
+    crate::fifo::create(path).with_context(|| {
+        format!(
+            "Could not create recording encoder bridge FIFO {}",
+            path.display()
+        )
+    })
 }
 
 fn create_screen_overlay_fifo(path: &Path) -> Result<()> {
@@ -4205,42 +4196,18 @@ fn create_screen_overlay_fifo(path: &Path) -> Result<()> {
         })?;
     }
 
-    let c_path = CString::new(path.display().to_string())
-        .context("Screen overlay FIFO path contained an interior NUL byte")?;
-    let status = unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) };
-    if status != 0 {
-        return Err(io::Error::last_os_error())
-            .with_context(|| format!("Could not create Screen overlay FIFO {}", path.display()));
-    }
-
-    Ok(())
+    crate::fifo::create(path)
+        .with_context(|| format!("Could not create Screen overlay FIFO {}", path.display()))
 }
 
 fn open_screen_overlay_fifo_writer(path: &Path, stop: &AtomicBool) -> io::Result<File> {
-    let c_path = CString::new(path.display().to_string()).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "invalid Screen overlay FIFO path",
-        )
-    })?;
-
-    while !stop.load(Ordering::Relaxed) {
-        let fd = unsafe { libc::open(c_path.as_ptr(), libc::O_WRONLY | libc::O_NONBLOCK) };
-        if fd >= 0 {
-            return Ok(unsafe { File::from_raw_fd(fd) });
-        }
-
-        let error = io::Error::last_os_error();
-        if error.raw_os_error() != Some(libc::ENXIO) {
-            return Err(error);
-        }
-        thread::sleep(SCREEN_OVERLAY_FIFO_OPEN_RETRY);
-    }
-
-    Err(io::Error::new(
-        io::ErrorKind::Interrupted,
+    crate::fifo::open_writer(
+        path,
+        stop,
+        SCREEN_OVERLAY_FIFO_OPEN_RETRY,
+        false,
         "Screen overlay writer stopped before FIFO opened",
-    ))
+    )
 }
 
 fn write_screen_overlay_frames(

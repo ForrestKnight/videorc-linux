@@ -1,7 +1,5 @@
-use std::ffi::CString;
 use std::fs::File;
 use std::io::{self, Write};
-use std::os::fd::FromRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, mpsc};
@@ -232,15 +230,8 @@ pub fn create_native_audio_fifo(path: &Path) -> Result<()> {
             .with_context(|| format!("Could not remove stale audio FIFO {}", path.display()))?;
     }
 
-    let c_path = CString::new(path.display().to_string())
-        .context("Audio FIFO path contained an interior NUL byte")?;
-    let status = unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) };
-    if status != 0 {
-        return Err(io::Error::last_os_error())
-            .with_context(|| format!("Could not create audio FIFO {}", path.display()));
-    }
-
-    Ok(())
+    crate::fifo::create(path)
+        .with_context(|| format!("Could not create audio FIFO {}", path.display()))
 }
 
 pub fn start_native_audio_source(
@@ -467,28 +458,13 @@ fn sample_meter_from_source(mut source: NativeAudioSource, duration: Duration) -
 }
 
 fn open_fifo_writer(path: &Path, stop: &AtomicBool) -> io::Result<File> {
-    let c_path = CString::new(path.display().to_string())
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid FIFO path"))?;
-
-    while !stop.load(Ordering::Relaxed) {
-        let fd = unsafe { libc::open(c_path.as_ptr(), libc::O_WRONLY | libc::O_NONBLOCK) };
-        if fd >= 0 {
-            let _ = unsafe { libc::fcntl(fd, libc::F_SETFL, 0) };
-            let file = unsafe { File::from_raw_fd(fd) };
-            return Ok(file);
-        }
-
-        let error = io::Error::last_os_error();
-        if error.raw_os_error() != Some(libc::ENXIO) {
-            return Err(error);
-        }
-        thread::sleep(FIFO_OPEN_RETRY);
-    }
-
-    Err(io::Error::new(
-        io::ErrorKind::Interrupted,
+    crate::fifo::open_writer(
+        path,
+        stop,
+        FIFO_OPEN_RETRY,
+        true,
         "native audio writer stopped before FIFO opened",
-    ))
+    )
 }
 
 fn write_frame_f32le(file: &mut File, frame: &AudioFrame) -> io::Result<()> {

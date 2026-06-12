@@ -239,7 +239,11 @@ everything; that's the shortest route to "a correct recording on Windows."
 Phases 3–5 are quality/productization and can interleave with ongoing macOS
 work. Two slices run entirely on the Mac and should come first:
 1. `cargo check --target x86_64-pc-windows-msvc` green — forces every
-   Unix-ism into the open.
+   Unix-ism into the open. **DONE 2026-06-12:** `pnpm check:windows`
+   (cargo-xwin + Homebrew LLVM for `llvm-lib`; the Unix-isms were the five
+   FIFO helpers — now one `fifo.rs` seam with a Windows stub — and ungated
+   `metal_compositor::source_zerocopy_enabled` calls in the two preview
+   modules).
 2. Extract the per-platform ffmpeg input-builder seam from
    `recording.rs`/`preview_*.rs` with behavior pinned by the existing
    smokes — so the Windows branch lands in a prepared socket instead of a
