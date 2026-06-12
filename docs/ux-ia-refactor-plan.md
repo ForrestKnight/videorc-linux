@@ -93,7 +93,7 @@ Delete all six accordions. The page becomes three fixed bands:
    | Chip | Shows | Inline affordance | Click target |
    |---|---|---|---|
    | Source | screen · camera · mic names | — | Sources |
-   | Mic | live level meter sliver | mute toggle | Sources |
+   | Mic | mic name + mute state | mute toggle | Sources |
    | Layout | active preset name | popover: 4 presets (live-safe switch) | Scene |
    | Takeover | active Screen or "—" (hidden if none exist) | popover: pick/clear Screen | Scene → Screens section |
    | Destinations | per-target chips (exist today) | — | Destinations |
@@ -232,8 +232,10 @@ by eye (per memory: smoothness/visuals are perceptual).
 2. **S2 — Bound the sources diagnostics.** Collapsible + ScrollArea
    max-h-72 + count/problem badges. (The owner's explicit itch — ships
    first-day.)
-3. **S3 — Output sheds artifacts.** Delete the artifacts grid; verify
-   Library covers export; rename copy.
+3. **S3 — Output sheds artifacts.** MOVE the Export-MP4 action into the
+   Library row actions first (verified absent there today — Library rows
+   only have Open-in-AI + repair), then delete the artifacts grid; rename
+   copy.
 4. **S4 — Scene absorbs Screens.** Un-stack the double render in
    app-shell; Screens become a section; framing controls regroup into
    Placement/Lens clusters.
@@ -245,14 +247,45 @@ by eye (per memory: smoothness/visuals are perceptual).
 7. **S7 — Health regroup.** Sidebar entry exists since S1; this slice does
    the metric sections + verdict pinning.
 
-## Approval points (taste calls the owner can veto)
+## Approval points — RESOLVED (auto-grill, 2026-06-13)
 
-1. Labels: **Scene** (vs Layouts), **Destinations** (vs Live), **Output**
-   (vs Recording), **Health** (vs Diagnostics). All label-only.
-2. Live chat as a live-only right rail (⌘J) vs a chip that opens the
-   detached window.
-3. ⌘1–⌘9 ordering above (Studio first, system last).
-4. Studio Layout chip keeping a quick-switch popover (the one deliberate
-   "control in two places" exception — justified because preset switching
-   is a mid-session action; the popover IS the in-session control, Scene
-   is the editor).
+Owner delegated these to best judgment consistent with the design language;
+all four recommendations adopted:
+
+1. Labels: **Scene**, **Destinations**, **Output**, **Health** — adopted,
+   label-only (ids and `data-videorc-tab-trigger` stay).
+2. Live chat: **live-only right rail**, ⌘J toggle, auto-opens on go-live
+   when a chat-capable destination is enabled. `LiveChatPanel` is already a
+   self-contained component (snapshot + onClearLocal props) — rehosting is
+   presentation-only.
+3. ⌘1–⌘9 ordering as specified (Studio first, system last).
+4. Layout chip quick-switch popover — adopted as the one deliberate
+   exception to "one home per control".
+
+## Grill resolutions (auto-grill, 2026-06-13)
+
+Questions stress-tested against the code; corrections applied above:
+
+- **Mic chip cannot show a live level** — the meter is on-demand sampling
+  (`audio.meter.sample` request via the Check-mic flow, `use-studio.tsx:2757`),
+  not a continuous stream. Chip shows name + mute only; the on-demand meter
+  stays in Sources. A persistent live meter would need new backend work —
+  out of scope, noted as a future option.
+- **Library lacks Export-MP4 today** — the action lives only on the Output
+  (Recording) artifacts grid. S3 moves it into Library rows before deleting
+  the grid (corrected in S3).
+- **⌘1–⌘9 / ⌘, are conflict-free** — the app ships Electron's default menu
+  (no custom Menu in `main/index.ts`), which binds neither; the app-shell
+  already owns a renderer keydown handler (⌘K/⌘P pattern at
+  `app-shell.tsx:75-88`) that the new bindings extend.
+- **`smoke:screens` drives the backend protocol, not the UI** — moving the
+  Screens grid into the Scene page does not touch it; `smoke:start-labels`
+  asserts Start-button text, untouched by the renames.
+- **Sidebar flattening is presentation-only** — `STUDIO_PANELS`,
+  `legacyTabId` data attributes, and the workspace-nav context survive
+  unchanged, so existing smokes and deep links keep working (the
+  "panels are full pages" decision of 2026-06-09 is preserved).
+- **Takeover popover replicates an existing live-safe action** — the Studio
+  screens accordion already switches takeovers mid-session; management
+  (upload/rename/delete) stays session-locked on the Scene page exactly as
+  the Screens tab behaves today.
