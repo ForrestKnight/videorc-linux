@@ -13,24 +13,29 @@ files:
   - out/**/*
   - package.json
 
+# Shared across platforms. Platform-specific resources live under mac:/win:
+# because electron-builder CONCATENATES global + platform extraResources
+# (it does not override) — a global entry with a mac-only path breaks the
+# Windows build and vice versa.
 extraResources:
-  - from: ../../target/release/videorc-backend
-    to: videorc-backend
-    filter:
-      - videorc-backend
   - from: src/renderer/src/assets/videorc-logo.png
     to: videorc-logo.png
-  - from: ../../vendor/ffmpeg/current
-    to: ffmpeg
-    filter:
-      - bin/ffmpeg
-      - NOTICE.txt
-      - SOURCE.txt
-      - BUILD-CONFIG.txt
-      - licenses/**/*
 
 mac:
   category: public.app-category.video
+  extraResources:
+    - from: ../../target/release/videorc-backend
+      to: videorc-backend
+      filter:
+        - videorc-backend
+    - from: ../../vendor/ffmpeg/current
+      to: ffmpeg
+      filter:
+        - bin/ffmpeg
+        - NOTICE.txt
+        - SOURCE.txt
+        - BUILD-CONFIG.txt
+        - licenses/**/*
   hardenedRuntime: true
   icon: build-resources/icon.icns
   entitlements: build-resources/entitlements.mac.plist
@@ -52,18 +57,16 @@ mac:
 win:
   icon: build-resources/icon.ico
   extraResources:
-    - from: ../../target/x86_64-pc-windows-msvc/release/videorc-backend.exe
+    # Host-target build: `pnpm package:backend` on the Windows box puts the
+    # exe in target/release/, not target/<triple>/release/.
+    - from: ../../target/release/videorc-backend.exe
       to: videorc-backend.exe
-    - from: src/renderer/src/assets/videorc-logo.png
-      to: videorc-logo.png
     - from: ../../vendor/ffmpeg/windows-x64
       to: ffmpeg
       filter:
         - bin/ffmpeg.exe
-        - NOTICE.txt
+        - LICENSE.txt
         - SOURCE.txt
-        - BUILD-CONFIG.txt
-        - licenses/**/*
   target:
     - dir
     - nsis

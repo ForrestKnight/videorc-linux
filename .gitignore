@@ -9,6 +9,7 @@ vendor/ffmpeg/_build/
 vendor/ffmpeg/_src/
 vendor/ffmpeg/current/
 vendor/ffmpeg/macos-*/
+vendor/ffmpeg/windows-x64/
 
 .DS_Store
 *.log
