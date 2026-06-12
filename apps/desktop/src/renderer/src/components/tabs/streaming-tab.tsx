@@ -2,6 +2,7 @@ import {
   ArrowCounterClockwise,
   ArrowsClockwise,
   Broadcast,
+  CaretDown,
   CheckCircle,
   FloppyDisk,
   Gauge,
@@ -191,9 +192,9 @@ export function StreamingTab(): ReactElement {
             onSelectYouTubeChannel={selectYouTubeChannel}
           />
         ))}
-      </div>
-
-      <div className="flex flex-col gap-4">
+        {/* Broadcast info: its own section below the destination rows — the
+            rows own auth/credentials, this owns what the stream says
+            (ux-ia plan, slice 7). */}
         <MetadataEditor
           disabled={isSessionActive}
           draft={streamMetadataDraft}
@@ -207,6 +208,9 @@ export function StreamingTab(): ReactElement {
           onSave={() => void saveStreamMetadataDraft()}
           onSearchTwitchCategories={searchTwitchCategories}
         />
+      </div>
+
+      <div className="flex flex-col gap-4">
         {compatibilityMessage ? (
           <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm text-warning-foreground dark:text-warning">
             <WarningCircle className="mt-0.5 size-4 shrink-0" weight="fill" />
@@ -369,6 +373,11 @@ function DestinationCard({
 
   const credentialLabel = fullUrl ? 'RTMP URL' : 'stream key'
 
+  // Row + detail (ux-ia plan, slice 7): the row shows identity and state; the
+  // expandable detail holds ONLY auth + credentials. Needs-setup targets start
+  // open so first-run configuration is zero extra clicks.
+  const [expanded, setExpanded] = useState(() => target.enabled && !ready)
+
   const saveAndClearDraft = (value: string, mode: 'key' | 'full-url'): void => {
     void onSaveManualStreamKey(target.id, value).then((saved) => {
       // Only discard what the user typed once the key is truly stored.
@@ -416,266 +425,284 @@ function DestinationCard({
       data-slot="destination-card"
     >
       {/* The reference row anatomy: vivid platform tile · title · account
-          context · spring · state meta · enable switch (videorc-design). */}
+          context · spring · state meta · enable switch (videorc-design).
+          Clicking the row toggles the auth/credentials detail. */}
       <ListRow
-        interactive={false}
-        className="-mx-1 h-auto min-h-9 px-1"
+        className="-mx-1 h-auto min-h-9 cursor-pointer px-1"
         icon={<PlatformGlyph platform={target.platform} />}
         title={target.label}
         context={account?.accountLabel ?? (oauthMode ? undefined : 'Manual RTMP')}
         meta={<Badge variant={badge.tone}>{badge.label}</Badge>}
+        role="button"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((value) => !value)}
       >
-        <Switch
-          aria-label={`Enable ${target.label}`}
-          checked={target.enabled}
-          disabled={disabled}
-          onCheckedChange={(checked) => onPatch(target.id, { enabled: checked })}
+        <span onClick={(event) => event.stopPropagation()}>
+          <Switch
+            aria-label={`Enable ${target.label}`}
+            checked={target.enabled}
+            disabled={disabled}
+            onCheckedChange={(checked) => onPatch(target.id, { enabled: checked })}
+          />
+        </span>
+        <CaretDown
+          className={cn(
+            'size-3.5 shrink-0 text-muted-foreground transition-transform',
+            expanded && 'rotate-180'
+          )}
         />
       </ListRow>
       {statusMessage ? (
         <span className="-mt-2 text-xs text-muted-foreground">{statusMessage}</span>
       ) : null}
 
-      {target.platform === 'custom' ? (
-        <Field>
-          <FieldLabel>URL mode</FieldLabel>
-          <ToggleGroup
-            className="w-full"
-            disabled={disabled}
-            type="single"
-            value={target.urlMode ?? 'server-and-key'}
-            variant="outline"
-            onValueChange={(value) =>
-              value && onPatch(target.id, { urlMode: value as StreamUrlMode })
-            }
-          >
-            <ToggleGroupItem value="server-and-key">Server + key</ToggleGroupItem>
-            <ToggleGroupItem value="full-url">Full URL</ToggleGroupItem>
-          </ToggleGroup>
-        </Field>
-      ) : null}
-
-      {nativeDestination ? (
-        <Field>
-          <FieldLabel>Auth mode</FieldLabel>
-          <ToggleGroup
-            className="w-full"
-            disabled={disabled}
-            type="single"
-            value={target.authMode}
-            variant="outline"
-            onValueChange={(value) =>
-              value && onPatch(target.id, { authMode: value as StreamAuthMode })
-            }
-          >
-            <ToggleGroupItem value="oauth">OAuth</ToggleGroupItem>
-            <ToggleGroupItem value="manual-rtmp">Manual RTMP</ToggleGroupItem>
-          </ToggleGroup>
-        </Field>
-      ) : null}
-
-      {oauthMode ? (
-        <OAuthAccountPanel
-          account={account}
-          credentials={credentials}
-          disabled={disabled}
-          platform={target.platform}
-          validation={validation}
-          xNativeCapability={xNativeCapability}
-          xNativeCapabilityLoading={xNativeCapabilityLoading}
-          youtubeChannels={youtubeChannels}
-          youtubeChannelsLoading={youtubeChannelsLoading}
-          onConnect={onConnect}
-          onDisconnect={onDisconnect}
-          onRefreshYouTubeChannels={onRefreshYouTubeChannels}
-          onRefreshXNativeCapability={onRefreshXNativeCapability}
-          onSelectYouTubeChannel={onSelectYouTubeChannel}
-          onUseManualRtmp={() => onPatch(target.id, { authMode: 'manual-rtmp' })}
-        />
-      ) : (
+      {!expanded ? null : (
         <>
-          <Field>
-            <FieldLabel htmlFor={`${target.id}-server`}>
-              {fullUrl ? 'Full RTMP URL' : 'RTMP server'}
-            </FieldLabel>
-            <div className="flex gap-2">
-              <Input
-                disabled={disabled}
-                id={`${target.id}-server`}
-                placeholder={
-                  fullUrl
-                    ? target.streamKeyPresent
-                      ? `URL saved · ends ${target.streamKeyHint ?? '••••'} — paste to replace`
-                      : 'rtmp://server/app/key'
-                    : 'rtmp://server/app'
-                }
-                type={fullUrl ? 'password' : 'text'}
-                value={fullUrl ? fullUrlDraft : target.serverUrl}
-                onBlur={() => {
-                  if (fullUrl) {
-                    requestManualKeySave(fullUrlDraft, 'full-url')
-                  }
-                }}
-                onChange={(event) =>
-                  fullUrl
-                    ? setFullUrlDraft(event.target.value)
-                    : onPatch(target.id, { serverUrl: event.target.value })
-                }
-                onKeyDown={(event) => {
-                  if (fullUrl && event.key === 'Enter') {
-                    requestManualKeySave(fullUrlDraft, 'full-url')
-                  }
-                }}
-              />
-              {fullUrl && target.streamKeyPresent ? (
-                <Button
-                  disabled={disabled}
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setConfirmingClear(true)}
-                >
-                  Clear
-                </Button>
-              ) : null}
-            </div>
-            {fullUrl ? (
-              <FieldDescription>
-                {target.streamKeyPresent
-                  ? `URL saved securely · ends ${target.streamKeyHint ?? '••••'}. Pasting a new one asks before replacing it.`
-                  : 'Saved securely because full RTMP URLs can include the stream key.'}
-              </FieldDescription>
-            ) : null}
-          </Field>
-
-          {!fullUrl ? (
+          {target.platform === 'custom' ? (
             <Field>
-              <FieldLabel htmlFor={`${target.id}-key`}>Stream key</FieldLabel>
-              <div className="flex gap-2">
-                <Input
-                  autoComplete="off"
-                  disabled={disabled}
-                  id={`${target.id}-key`}
-                  placeholder={
-                    target.streamKeyPresent
-                      ? `Key saved · ends ${target.streamKeyHint ?? '••••'} — paste to replace`
-                      : 'paste your stream key'
-                  }
-                  type="password"
-                  value={manualStreamKeyDraft}
-                  onBlur={() => requestManualKeySave(manualStreamKeyDraft, 'key')}
-                  onChange={(event) => setManualStreamKeyDraft(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') {
-                      requestManualKeySave(manualStreamKeyDraft, 'key')
-                    }
-                  }}
-                />
-                {target.streamKeyPresent ? (
-                  <Button
-                    disabled={disabled}
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setConfirmingClear(true)}
-                  >
-                    Clear
-                  </Button>
-                ) : null}
-              </div>
-              <FieldDescription>
-                {target.streamKeyPresent
-                  ? `Key saved securely · ends ${target.streamKeyHint ?? '••••'}. Pasting a new one asks before replacing it.`
-                  : 'Saved securely per platform — switching platforms never overwrites another key.'}
-              </FieldDescription>
+              <FieldLabel>URL mode</FieldLabel>
+              <ToggleGroup
+                className="w-full"
+                disabled={disabled}
+                type="single"
+                value={target.urlMode ?? 'server-and-key'}
+                variant="outline"
+                onValueChange={(value) =>
+                  value && onPatch(target.id, { urlMode: value as StreamUrlMode })
+                }
+              >
+                <ToggleGroupItem value="server-and-key">Server + key</ToggleGroupItem>
+                <ToggleGroupItem value="full-url">Full URL</ToggleGroupItem>
+              </ToggleGroup>
             </Field>
           ) : null}
 
-          {target.previousStreamKeyPresent ? (
-            <Button
-              className="w-fit"
+          {nativeDestination ? (
+            <Field>
+              <FieldLabel>Auth mode</FieldLabel>
+              <ToggleGroup
+                className="w-full"
+                disabled={disabled}
+                type="single"
+                value={target.authMode}
+                variant="outline"
+                onValueChange={(value) =>
+                  value && onPatch(target.id, { authMode: value as StreamAuthMode })
+                }
+              >
+                <ToggleGroupItem value="oauth">OAuth</ToggleGroupItem>
+                <ToggleGroupItem value="manual-rtmp">Manual RTMP</ToggleGroupItem>
+              </ToggleGroup>
+            </Field>
+          ) : null}
+
+          {oauthMode ? (
+            <OAuthAccountPanel
+              account={account}
+              credentials={credentials}
               disabled={disabled}
-              size="sm"
-              variant="ghost"
-              onClick={() => void onRestorePreviousStreamKey(target.id)}
-            >
-              <ArrowCounterClockwise />
-              Restore previous {credentialLabel}
-              {target.previousStreamKeyHint ? ` (ends ${target.previousStreamKeyHint})` : ''}
-            </Button>
+              platform={target.platform}
+              validation={validation}
+              xNativeCapability={xNativeCapability}
+              xNativeCapabilityLoading={xNativeCapabilityLoading}
+              youtubeChannels={youtubeChannels}
+              youtubeChannelsLoading={youtubeChannelsLoading}
+              onConnect={onConnect}
+              onDisconnect={onDisconnect}
+              onRefreshYouTubeChannels={onRefreshYouTubeChannels}
+              onRefreshXNativeCapability={onRefreshXNativeCapability}
+              onSelectYouTubeChannel={onSelectYouTubeChannel}
+              onUseManualRtmp={() => onPatch(target.id, { authMode: 'manual-rtmp' })}
+            />
+          ) : (
+            <>
+              <Field>
+                <FieldLabel htmlFor={`${target.id}-server`}>
+                  {fullUrl ? 'Full RTMP URL' : 'RTMP server'}
+                </FieldLabel>
+                <div className="flex gap-2">
+                  <Input
+                    disabled={disabled}
+                    id={`${target.id}-server`}
+                    placeholder={
+                      fullUrl
+                        ? target.streamKeyPresent
+                          ? `URL saved · ends ${target.streamKeyHint ?? '••••'} — paste to replace`
+                          : 'rtmp://server/app/key'
+                        : 'rtmp://server/app'
+                    }
+                    type={fullUrl ? 'password' : 'text'}
+                    value={fullUrl ? fullUrlDraft : target.serverUrl}
+                    onBlur={() => {
+                      if (fullUrl) {
+                        requestManualKeySave(fullUrlDraft, 'full-url')
+                      }
+                    }}
+                    onChange={(event) =>
+                      fullUrl
+                        ? setFullUrlDraft(event.target.value)
+                        : onPatch(target.id, { serverUrl: event.target.value })
+                    }
+                    onKeyDown={(event) => {
+                      if (fullUrl && event.key === 'Enter') {
+                        requestManualKeySave(fullUrlDraft, 'full-url')
+                      }
+                    }}
+                  />
+                  {fullUrl && target.streamKeyPresent ? (
+                    <Button
+                      disabled={disabled}
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setConfirmingClear(true)}
+                    >
+                      Clear
+                    </Button>
+                  ) : null}
+                </div>
+                {fullUrl ? (
+                  <FieldDescription>
+                    {target.streamKeyPresent
+                      ? `URL saved securely · ends ${target.streamKeyHint ?? '••••'}. Pasting a new one asks before replacing it.`
+                      : 'Saved securely because full RTMP URLs can include the stream key.'}
+                  </FieldDescription>
+                ) : null}
+              </Field>
+
+              {!fullUrl ? (
+                <Field>
+                  <FieldLabel htmlFor={`${target.id}-key`}>Stream key</FieldLabel>
+                  <div className="flex gap-2">
+                    <Input
+                      autoComplete="off"
+                      disabled={disabled}
+                      id={`${target.id}-key`}
+                      placeholder={
+                        target.streamKeyPresent
+                          ? `Key saved · ends ${target.streamKeyHint ?? '••••'} — paste to replace`
+                          : 'paste your stream key'
+                      }
+                      type="password"
+                      value={manualStreamKeyDraft}
+                      onBlur={() => requestManualKeySave(manualStreamKeyDraft, 'key')}
+                      onChange={(event) => setManualStreamKeyDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          requestManualKeySave(manualStreamKeyDraft, 'key')
+                        }
+                      }}
+                    />
+                    {target.streamKeyPresent ? (
+                      <Button
+                        disabled={disabled}
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setConfirmingClear(true)}
+                      >
+                        Clear
+                      </Button>
+                    ) : null}
+                  </div>
+                  <FieldDescription>
+                    {target.streamKeyPresent
+                      ? `Key saved securely · ends ${target.streamKeyHint ?? '••••'}. Pasting a new one asks before replacing it.`
+                      : 'Saved securely per platform — switching platforms never overwrites another key.'}
+                  </FieldDescription>
+                </Field>
+              ) : null}
+
+              {target.previousStreamKeyPresent ? (
+                <Button
+                  className="w-fit"
+                  disabled={disabled}
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => void onRestorePreviousStreamKey(target.id)}
+                >
+                  <ArrowCounterClockwise />
+                  Restore previous {credentialLabel}
+                  {target.previousStreamKeyHint ? ` (ends ${target.previousStreamKeyHint})` : ''}
+                </Button>
+              ) : null}
+            </>
+          )}
+
+          <Dialog
+            open={pendingKeySave !== null}
+            onOpenChange={(open) => {
+              if (!open) {
+                setPendingKeySave(null)
+              }
+            }}
+          >
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>
+                  {target.streamKeyPresent
+                    ? `Replace the ${target.label} ${credentialLabel}?`
+                    : `Save this ${credentialLabel} to ${target.label}?`}
+                </DialogTitle>
+                <DialogDescription>
+                  {target.streamKeyPresent
+                    ? `The saved ${credentialLabel}${
+                        target.streamKeyHint ? ` ending ${target.streamKeyHint}` : ''
+                      } will be replaced by the new one ending ${streamKeyTailHint(
+                        pendingKeySave?.value ?? ''
+                      )}. The old one is kept as your previous ${credentialLabel}, so you can restore it.`
+                    : `The key ending ${streamKeyTailHint(pendingKeySave?.value ?? '')} will be saved to ${target.label}.`}
+                </DialogDescription>
+              </DialogHeader>
+              {pendingKeySave?.warning ? (
+                <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-600 dark:text-amber-400">
+                  <Warning className="mt-0.5 shrink-0" />
+                  <span>{pendingKeySave.warning}</span>
+                </div>
+              ) : null}
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setPendingKeySave(null)}>
+                  Cancel
+                </Button>
+                <Button
+                  variant={pendingKeySave?.warning ? 'destructive' : 'default'}
+                  onClick={confirmPendingKeySave}
+                >
+                  {target.streamKeyPresent
+                    ? `Replace ${credentialLabel}`
+                    : `Save ${credentialLabel}`}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={confirmingClear} onOpenChange={setConfirmingClear}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>{`Remove the ${target.label} ${credentialLabel}?`}</DialogTitle>
+                <DialogDescription>
+                  {`The saved ${credentialLabel}${
+                    target.streamKeyHint ? ` ending ${target.streamKeyHint}` : ''
+                  } is kept as your previous ${credentialLabel} after removal, so you can restore it.`}
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setConfirmingClear(false)}>
+                  Cancel
+                </Button>
+                <Button variant="destructive" onClick={confirmClearKey}>
+                  Remove {credentialLabel}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          {target.platform === 'x' && !oauthMode ? (
+            <p className="text-xs text-muted-foreground">
+              X needs Media Studio Producer access; copy the RTMP URL and key from a Producer
+              source.
+            </p>
           ) : null}
         </>
       )}
-
-      <Dialog
-        open={pendingKeySave !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setPendingKeySave(null)
-          }
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {target.streamKeyPresent
-                ? `Replace the ${target.label} ${credentialLabel}?`
-                : `Save this ${credentialLabel} to ${target.label}?`}
-            </DialogTitle>
-            <DialogDescription>
-              {target.streamKeyPresent
-                ? `The saved ${credentialLabel}${
-                    target.streamKeyHint ? ` ending ${target.streamKeyHint}` : ''
-                  } will be replaced by the new one ending ${streamKeyTailHint(
-                    pendingKeySave?.value ?? ''
-                  )}. The old one is kept as your previous ${credentialLabel}, so you can restore it.`
-                : `The key ending ${streamKeyTailHint(pendingKeySave?.value ?? '')} will be saved to ${target.label}.`}
-            </DialogDescription>
-          </DialogHeader>
-          {pendingKeySave?.warning ? (
-            <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-600 dark:text-amber-400">
-              <Warning className="mt-0.5 shrink-0" />
-              <span>{pendingKeySave.warning}</span>
-            </div>
-          ) : null}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPendingKeySave(null)}>
-              Cancel
-            </Button>
-            <Button
-              variant={pendingKeySave?.warning ? 'destructive' : 'default'}
-              onClick={confirmPendingKeySave}
-            >
-              {target.streamKeyPresent ? `Replace ${credentialLabel}` : `Save ${credentialLabel}`}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={confirmingClear} onOpenChange={setConfirmingClear}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{`Remove the ${target.label} ${credentialLabel}?`}</DialogTitle>
-            <DialogDescription>
-              {`The saved ${credentialLabel}${
-                target.streamKeyHint ? ` ending ${target.streamKeyHint}` : ''
-              } is kept as your previous ${credentialLabel} after removal, so you can restore it.`}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirmingClear(false)}>
-              Cancel
-            </Button>
-            <Button variant="destructive" onClick={confirmClearKey}>
-              Remove {credentialLabel}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {target.platform === 'x' && !oauthMode ? (
-        <p className="text-xs text-muted-foreground">
-          X needs Media Studio Producer access; copy the RTMP URL and key from a Producer source.
-        </p>
-      ) : null}
     </section>
   )
 }
@@ -1017,7 +1044,7 @@ function MetadataEditor({
         </Button>
       }
       icon={TextAa}
-      title="Broadcast metadata"
+      title="Broadcast info"
     >
       {!draft ? (
         <p className="text-sm text-muted-foreground">Loading metadata draft.</p>
