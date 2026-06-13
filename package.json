@@ -24,6 +24,7 @@
     "package:preflight:macos": "node scripts/preflight-macos-package.mjs",
     "package:preflight:windows": "node scripts/preflight-windows-package.mjs",
     "release:preflight:macos": "node scripts/preflight-macos-release.mjs",
+    "release:validate:macos": "node scripts/validate-macos-release-artifact.mjs",
     "package:desktop": "pnpm package:backend:macos && pnpm ffmpeg:build:macos && pnpm package:preflight:macos && pnpm --filter @videorc/desktop package",
     "package:desktop:windows": "pnpm package:backend && pnpm ffmpeg:fetch:windows && pnpm package:preflight:windows && pnpm --filter @videorc/desktop package",
     "dist:desktop:windows": "pnpm package:backend && pnpm ffmpeg:fetch:windows && pnpm package:preflight:windows && pnpm --filter @videorc/desktop dist",

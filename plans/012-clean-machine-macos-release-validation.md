@@ -21,8 +21,12 @@
 - **Current status**: IN PROGRESS, 2026-06-13. Step 1 landed as a
   behavior-free release-preflight slice: `pnpm release:preflight:macos` checks
   signed-release credentials/tools/paths with redacted output, and
-  `pnpm dist:desktop:signed` runs it before packaging. Artifact validation,
-  workflow validation, and clean-machine release evidence remain pending.
+  `pnpm dist:desktop:signed` runs it before packaging. Step 2 landed as
+  `pnpm release:validate:macos`, which validates the latest `.app`/DMG with
+  `codesign`, Gatekeeper, and stapler checks. The release workflow runs the
+  validator after signed packaging. Clean-machine release evidence remains
+  pending. A local validator sanity run against stale unsigned artifacts failed
+  as expected and is not release-candidate evidence.
 
 ## Why this matters
 
@@ -226,9 +230,9 @@ Expected:
 ## Done criteria
 
 - [x] Release preflight exists and prints only redacted credential status.
-- [ ] Signed artifact validation exists and checks signature, notarization, and
+- [x] Signed artifact validation exists and checks signature, notarization, and
       Gatekeeper acceptance.
-- [ ] Release workflow runs the new validation.
+- [x] Release workflow runs the new validation.
 - [ ] `docs/distribution.md` has a clean-machine release-candidate checklist.
 - [ ] Packaged bundled FFmpeg and native CAMetalLayer preview smokes pass.
 - [ ] A dated clean-machine evidence note exists under `docs/acceptance/`.

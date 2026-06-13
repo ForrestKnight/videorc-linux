@@ -61,6 +61,9 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
+      - name: Validate signed macOS artifact
+        run: pnpm release:validate:macos
+
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:

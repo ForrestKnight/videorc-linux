@@ -98,9 +98,21 @@ The preflight checks the signing/notarization environment variable names,
 plist, and the writable release output directory. It reports only present/missing
 status for credential variables; it must not print credential values.
 
+After `pnpm dist:desktop:signed` produces release artifacts, validate the latest
+`.app` and `.dmg` under `apps/desktop/release`:
+
+```sh
+pnpm release:validate:macos
+```
+
+The validator runs `codesign --verify`, `codesign -dv`, Gatekeeper assessment via
+`spctl`, and `xcrun stapler validate`. It redacts repository and home-directory
+paths from command output. You can pass explicit artifact paths when validating a
+copied release candidate.
+
 The GitHub Actions workflow at `.github/workflows/ci.yml` runs the same non-packaged local acceptance checks as `pnpm smoke:local-gates` for pushes to `main` and pull requests, split into named steps so hosted-runner failures identify the exact gate.
 
-The release workflow at `.github/workflows/release-macos.yml` installs a smoke-test FFmpeg binary if the runner does not already provide one, runs the same local gates, and then runs `pnpm dist:desktop:signed` for manual dispatches and `v*` tags. The smoke-test FFmpeg install is only for CI verification; packaged releases still use the bundled LGPL-compatible FFmpeg built by `pnpm ffmpeg:build:macos`.
+The release workflow at `.github/workflows/release-macos.yml` installs a smoke-test FFmpeg binary if the runner does not already provide one, runs the same local gates, runs `pnpm dist:desktop:signed`, then validates the signed artifacts with `pnpm release:validate:macos` for manual dispatches and `v*` tags. The smoke-test FFmpeg install is only for CI verification; packaged releases still use the bundled LGPL-compatible FFmpeg built by `pnpm ffmpeg:build:macos`.
 
 Required GitHub secrets:
 
