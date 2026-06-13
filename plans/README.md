@@ -18,7 +18,7 @@ row when done.
 | 003 | Pin the new platform seams (fifo.rs, capture_input.rs) with unit tests | P2 | S-M | - | DONE (2026-06-12; 12 tests added) |
 | 004 | Bundle the native CAMetalLayer helper and gate packaged preview | P0 | M | - | DONE (2026-06-13; packaged helper bundled and `pnpm smoke:packaged:native-preview` passes) |
 | 005 | Make platform-safe livestreaming use VideoToolbox by default | P0 | L | - | DONE (2026-06-13; multistream passes; A/V gate blocked locally before encoding by ScreenCaptureKit stream-start timeout) |
-| 006 | Implement true 4K record plus 1080p stream split output | P0 | L | 005 | TODO |
+| 006 | Implement true 4K record plus 1080p stream split output | P0 | L | 005 | IN PROGRESS (2026-06-13; stream-output profile resolver landed) |
 | 007 | Characterize Studio and session orchestration before refactoring | P1 | M | - | TODO |
 | 008 | Fix dependency advisory failures and add JS/Rust audit gates | P1 | S-M | - | TODO |
 | 009 | Harden stream/OAuth secret storage and legacy key migration | P1 | M | - | TODO |

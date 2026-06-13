@@ -4829,7 +4829,12 @@ fn validate_video_profile_policy(params: &StartSessionParams) -> Result<()> {
                 "4K livestreaming is not enabled for v1. Disable streaming for 4K local recording or select a stream-safe 1080p profile."
             );
         }
-        if video.bitrate_kbps > 6000 {
+        let split_output_profiles = resolve_split_output_profiles(params)?;
+        let stream_video = split_output_profiles
+            .stream
+            .as_ref()
+            .unwrap_or(&params.output.video);
+        if stream_video.bitrate_kbps > 6000 {
             bail!(
                 "Streaming bitrate must be 6000 kbps or lower for the v1 platform-safe path. Select stream-safe-1080p30/60 or reduce the custom bitrate."
             );
@@ -4848,6 +4853,116 @@ fn validate_video_profile_policy(params: &StartSessionParams) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SplitOutputProfiles {
+    recording: Option<VideoSettings>,
+    stream: Option<VideoSettings>,
+}
+
+fn resolve_split_output_profiles(params: &StartSessionParams) -> Result<SplitOutputProfiles> {
+    let recording = params
+        .output
+        .record_enabled
+        .then(|| params.output.video.clone());
+    let stream = if params.output.stream_enabled {
+        Some(resolve_stream_output_video(params)?)
+    } else {
+        None
+    };
+
+    Ok(SplitOutputProfiles { recording, stream })
+}
+
+fn resolve_stream_output_video(params: &StartSessionParams) -> Result<VideoSettings> {
+    let stream_video = match params
+        .streaming
+        .as_ref()
+        .filter(|streaming| streaming.enabled)
+    {
+        Some(streaming) => {
+            let mut video = video_preset_defaults(streaming.default_output_preset.clone());
+            video.bitrate_kbps = streaming.default_bitrate_kbps;
+            video
+        }
+        None => params.output.video.clone(),
+    };
+
+    if stream_video.width > 1920 || stream_video.height > 1080 {
+        bail!(
+            "Stream output preset {:?} resolves to {}x{}; v1 stream output must be 1080p or lower.",
+            stream_video.preset,
+            stream_video.width,
+            stream_video.height
+        );
+    }
+    if stream_video.bitrate_kbps > 6000 {
+        bail!("Stream output bitrate must be 6000 kbps or lower for the v1 platform-safe path.");
+    }
+
+    Ok(stream_video)
+}
+
+fn video_preset_defaults(preset: VideoPreset) -> VideoSettings {
+    match preset {
+        VideoPreset::Tutorial1080p30 => VideoSettings {
+            preset,
+            width: 1920,
+            height: 1080,
+            fps: 30,
+            bitrate_kbps: 6000,
+        },
+        VideoPreset::Tutorial1440p30 => VideoSettings {
+            preset,
+            width: 2560,
+            height: 1440,
+            fps: 30,
+            bitrate_kbps: 8000,
+        },
+        VideoPreset::Record4k30 => VideoSettings {
+            preset,
+            width: 3840,
+            height: 2160,
+            fps: 30,
+            bitrate_kbps: 30_000,
+        },
+        VideoPreset::Record4k60Experimental => VideoSettings {
+            preset,
+            width: 3840,
+            height: 2160,
+            fps: 60,
+            bitrate_kbps: 50_000,
+        },
+        VideoPreset::StreamSafe1080p30 => VideoSettings {
+            preset,
+            width: 1920,
+            height: 1080,
+            fps: 30,
+            bitrate_kbps: 6000,
+        },
+        VideoPreset::StreamSafe1080p60 => VideoSettings {
+            preset,
+            width: 1920,
+            height: 1080,
+            fps: 60,
+            bitrate_kbps: 6000,
+        },
+        VideoPreset::Stream1080p60 => VideoSettings {
+            preset,
+            width: 1920,
+            height: 1080,
+            fps: 60,
+            bitrate_kbps: 9000,
+        },
+        VideoPreset::Custom => VideoSettings {
+            preset,
+            width: 1920,
+            height: 1080,
+            fps: 30,
+            bitrate_kbps: 6000,
+        },
+    }
 }
 
 fn validate_named_video_profile(video: &VideoSettings) -> Result<()> {
@@ -8102,6 +8217,103 @@ mod tests {
         params.output.video.preset = VideoPreset::Custom;
         let error = validate_outputs(&params).unwrap_err().to_string();
         assert!(error.contains("4K60 is experimental"), "{error}");
+    }
+
+    #[test]
+    fn split_output_profiles_resolve_4k_record_and_1080p_stream() {
+        let mut params = base_params(true, true);
+        params.output.video = VideoSettings {
+            preset: VideoPreset::Record4k30,
+            width: 3840,
+            height: 2160,
+            fps: 30,
+            bitrate_kbps: 30_000,
+        };
+        let mut streaming = streaming_for(&[(
+            StreamPlatform::Youtube,
+            "rtmp://a.rtmp.youtube.com/live2",
+            "yt",
+        )]);
+        streaming.default_output_preset = VideoPreset::StreamSafe1080p30;
+        streaming.default_bitrate_kbps = 6000;
+        params.streaming = Some(streaming);
+
+        let profiles = resolve_split_output_profiles(&params).unwrap();
+
+        assert_eq!(profiles.recording.as_ref().unwrap().width, 3840);
+        assert_eq!(profiles.recording.as_ref().unwrap().height, 2160);
+        assert_eq!(
+            profiles.stream,
+            Some(VideoSettings {
+                preset: VideoPreset::StreamSafe1080p30,
+                width: 1920,
+                height: 1080,
+                fps: 30,
+                bitrate_kbps: 6000,
+            })
+        );
+    }
+
+    #[test]
+    fn split_output_profiles_reject_stream_preset_above_1080p() {
+        let mut params = base_params(true, true);
+        let mut streaming = streaming_for(&[(
+            StreamPlatform::Youtube,
+            "rtmp://a.rtmp.youtube.com/live2",
+            "yt",
+        )]);
+        streaming.default_output_preset = VideoPreset::Tutorial1440p30;
+        streaming.default_bitrate_kbps = 6000;
+        params.streaming = Some(streaming);
+
+        let error = resolve_split_output_profiles(&params)
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("1080p or lower"), "{error}");
+    }
+
+    #[test]
+    fn split_output_profiles_reject_stream_bitrate_above_platform_limit() {
+        let mut params = base_params(true, true);
+        let mut streaming = streaming_for(&[(
+            StreamPlatform::Youtube,
+            "rtmp://a.rtmp.youtube.com/live2",
+            "yt",
+        )]);
+        streaming.default_output_preset = VideoPreset::StreamSafe1080p30;
+        streaming.default_bitrate_kbps = 9000;
+        params.streaming = Some(streaming);
+
+        let error = resolve_split_output_profiles(&params)
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("6000 kbps or lower"), "{error}");
+    }
+
+    #[test]
+    fn split_output_profiles_resolve_1080p_stream_only() {
+        let mut params = base_params(false, true);
+        let mut streaming =
+            streaming_for(&[(StreamPlatform::Twitch, "rtmp://live.twitch.tv/app", "tw")]);
+        streaming.default_output_preset = VideoPreset::StreamSafe1080p60;
+        streaming.default_bitrate_kbps = 6000;
+        params.streaming = Some(streaming);
+
+        let profiles = resolve_split_output_profiles(&params).unwrap();
+
+        assert!(profiles.recording.is_none());
+        assert_eq!(
+            profiles.stream,
+            Some(VideoSettings {
+                preset: VideoPreset::StreamSafe1080p60,
+                width: 1920,
+                height: 1080,
+                fps: 60,
+                bitrate_kbps: 6000,
+            })
+        );
     }
 
     #[test]
