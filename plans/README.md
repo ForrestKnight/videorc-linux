@@ -21,7 +21,7 @@ row when done.
 | 003 | Pin the new platform seams (fifo.rs, capture_input.rs) with unit tests | P2 | S-M | - | DONE (2026-06-12; 12 tests added) |
 | 004 | Bundle the native CAMetalLayer helper and gate packaged preview | P0 | M | - | DONE (2026-06-13; packaged helper bundled and `pnpm smoke:packaged:native-preview` passes) |
 | 005 | Make platform-safe livestreaming use VideoToolbox by default | P0 | L | - | DONE (2026-06-13; multistream passes; A/V gate blocked locally before encoding by ScreenCaptureKit stream-start timeout) |
-| 006 | Implement true 4K record plus 1080p stream split output | P0 | L | 005 | IN PROGRESS (2026-06-13; resolver/proof fields, auxiliary compositor store, dual VideoToolbox FIFO writers, split mux args, guarded validation unlock, and evidence-mode wiring landed) |
+| 006 | Implement true 4K record plus 1080p stream split output | P0 | L | 005 | BLOCKED (2026-06-13; code slices landed, local real-source gates blocked before encoding by 3024x1964 display below 4K and ScreenCaptureKit source discovery timeout) |
 | 007 | Characterize Studio and session orchestration before refactoring | P1 | M | - | TODO |
 | 008 | Fix dependency advisory failures and add JS/Rust audit gates | P1 | S-M | - | TODO |
 | 009 | Harden stream/OAuth secret storage and legacy key migration | P1 | M | - | TODO |
@@ -83,8 +83,15 @@ preview, and 1080p livestream output without raw-video fallback.
   zero raw-video copies, two active VideoToolbox output encoders, nonzero
   recording/stream encoder frames and bytes, and a stream output at 1080p or
   lower. Stream A/V evidence exports the split-output proof fields.
-- **P1-S6 Real-source gates**: Finish Plan 006 Step 6. Run 4K A/V and stream
-  A/V gates locally, or record the exact hardware/permission blocker.
+- **P1-S6 Real-source gates**: BLOCKED locally on 2026-06-13. After isolating
+  smoke app `userData`, `pnpm baseline:real-source:4k30:av-sync -- --gate`
+  launched but blocked before encoding because the selected ScreenCaptureKit
+  display was `3024x1964`, below the required `3840x2160`. `pnpm
+  baseline:stream:av-sync -- --gate` launched but the record-only baseline
+  blocked before encoding because ScreenCaptureKit source discovery timed out
+  (`screen failed frames=0`, camera healthy). Re-run these gates on a machine
+  with a detected 4K ScreenCaptureKit display and working screen-capture
+  permission/source discovery.
 
 Do not move to release signoff until Phase 1 is done or explicitly blocked by
 hardware rather than code.

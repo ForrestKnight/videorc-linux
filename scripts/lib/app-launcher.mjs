@@ -6,7 +6,9 @@
 // honest-gate harnesses) reuse one battle-tested launch/teardown path.
 
 import { spawn } from 'node:child_process'
-import { resolve } from 'node:path'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 
 export const repoRoot = resolve(import.meta.dirname, '..', '..')
 
@@ -33,11 +35,18 @@ export function launchDevApp({
     const connections = {}
     let settled = false
     let stopping = false
+    const userDataDir =
+      env.VIDEORC_USER_DATA_DIR ?? process.env.VIDEORC_USER_DATA_DIR ?? mkdtempSync(join(tmpdir(), 'videorc-smoke-user-data-'))
 
     const child = spawn('pnpm', ['dev'], {
       cwd: repoRoot,
       detached: true,
-      env: { ...process.env, VIDEORC_SMOKE_PRINT_BACKEND_READY: '1', ...env },
+      env: {
+        ...process.env,
+        VIDEORC_SMOKE_PRINT_BACKEND_READY: '1',
+        VIDEORC_USER_DATA_DIR: userDataDir,
+        ...env,
+      },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
 
