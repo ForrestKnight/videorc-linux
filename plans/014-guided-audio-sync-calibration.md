@@ -21,8 +21,9 @@
 - **Current status**: IN PROGRESS, 2026-06-13. Step 1 landed as a
   script-only slice: `measure-av-sync` now supports `--json` and emits a stable
   recommendation report with measured lag, current offset, recommended offset,
-  thresholds, pass/fail, and sample counts. Renderer calibration UI and
-  long-session drift evidence remain pending.
+  thresholds, pass/fail, and sample counts. Step 2 renderer helpers now format
+  measured lag, decide apply/reset state, and preserve explicit user-set sync
+  offsets. Guided UI wiring and long-session drift evidence remain pending.
 
 ## Why this matters
 
@@ -200,7 +201,7 @@ Update `docs/obs-acceptance-checklist.md` with the guided calibration flow:
 ## Done criteria
 
 - [x] `measure-av-sync` emits a stable machine-readable recommendation.
-- [ ] UI can apply/reset measured sync offsets without crashing or disappearing.
+- [x] Pure renderer helpers can apply/reset measured sync offsets without changing defaults.
 - [ ] Calibration never changes the default offset unless the user applies it.
 - [ ] Stream A/V evidence reports fixed offset vs drift vs stream divergence.
 - [ ] Docs explain the operator flow.

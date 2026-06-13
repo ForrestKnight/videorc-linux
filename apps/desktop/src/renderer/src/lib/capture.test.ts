@@ -3,8 +3,11 @@ import { describe, expect, it } from 'vitest'
 import type { SourceSelection } from '../../../shared/backend'
 import type { CaptureConfig } from './capture'
 import {
+  applyAudioSyncRecommendation,
+  audioSyncCalibrationState,
   applyStoredManualStreamKeyResult,
   defaultCaptureConfig,
+  formatMeasuredAudioLag,
   legacyStreamKeyMigrationCandidates,
   normalizeAudioSettings,
   normalizeMicrophoneSyncOffsetMs,
@@ -12,6 +15,7 @@ import {
   parseMicrophoneSyncOffsetInput,
   persistableCaptureConfig,
   reconcileSourceSelection,
+  resetAudioSyncCalibration,
   smokePreviewCompositorCaptureConfig,
   sourceSelectionChangeMessages,
   videoProfileCompatibility,
@@ -139,6 +143,102 @@ describe('parseMicrophoneSyncOffsetInput', () => {
     expect(parseMicrophoneSyncOffsetInput('-735', -750)).toBe(-735)
     expect(parseMicrophoneSyncOffsetInput('1200', -750)).toBe(1000)
     expect(parseMicrophoneSyncOffsetInput('-1200', -750)).toBe(-1000)
+  })
+})
+
+describe('audio sync calibration helpers', () => {
+  it('formats measured lag direction for operators', () => {
+    expect(formatMeasuredAudioLag(121.4)).toBe('Audio lags video by 121 ms')
+    expect(formatMeasuredAudioLag(-80.2)).toBe('Audio leads video by 80 ms')
+    expect(formatMeasuredAudioLag(0)).toBe('Audio is aligned at 0 ms')
+    expect(formatMeasuredAudioLag(null)).toBe('No paired flash/click measurement')
+  })
+
+  it('explains unavailable recommendations without changing audio settings', () => {
+    const audio = {
+      ...defaultCaptureConfig.audio,
+      microphoneGainDb: 3,
+      microphoneMuted: true
+    }
+    const recommendation = {
+      medianOffsetMs: null,
+      recommendedMicrophoneSyncOffsetMs: null,
+      pairCount: 0,
+      pass: false
+    }
+
+    expect(audioSyncCalibrationState(recommendation, audio)).toMatchObject({
+      status: 'unavailable',
+      canApply: false,
+      recommendedOffsetMs: null
+    })
+    expect(applyAudioSyncRecommendation(audio, recommendation)).toBe(audio)
+  })
+
+  it('applies measured recommendations while preserving other audio controls', () => {
+    const audio = {
+      ...defaultCaptureConfig.audio,
+      microphoneGainDb: 4,
+      microphoneMuted: true,
+      microphoneSyncOffsetMs: -120,
+      microphoneSyncOffsetUserSet: true
+    }
+    const recommendation = {
+      medianOffsetMs: 46,
+      currentMicrophoneSyncOffsetMs: -120,
+      recommendedMicrophoneSyncOffsetMs: -166,
+      targetMs: 100,
+      pairCount: 31,
+      pass: true
+    }
+
+    expect(audioSyncCalibrationState(recommendation, audio)).toMatchObject({
+      status: 'optional',
+      canApply: true,
+      recommendedOffsetMs: -166
+    })
+    expect(applyAudioSyncRecommendation(audio, recommendation)).toEqual({
+      ...audio,
+      microphoneSyncOffsetMs: -166,
+      microphoneSyncOffsetUserSet: true
+    })
+  })
+
+  it('recommends target misses and clamps imported recommendations', () => {
+    const audio = {
+      ...defaultCaptureConfig.audio,
+      microphoneSyncOffsetMs: -900,
+      microphoneSyncOffsetUserSet: true
+    }
+    const recommendation = {
+      medianOffsetMs: 300,
+      currentMicrophoneSyncOffsetMs: -900,
+      recommendedMicrophoneSyncOffsetMs: -1200,
+      targetMs: 100,
+      pairCount: 4,
+      pass: false
+    }
+
+    expect(audioSyncCalibrationState(recommendation, audio)).toMatchObject({
+      status: 'recommended',
+      canApply: true,
+      recommendedOffsetMs: -1000
+    })
+  })
+
+  it('resets calibration back to the structural default', () => {
+    const audio = {
+      ...defaultCaptureConfig.audio,
+      microphoneGainDb: -2,
+      microphoneSyncOffsetMs: -166,
+      microphoneSyncOffsetUserSet: true
+    }
+
+    expect(resetAudioSyncCalibration(audio)).toEqual({
+      ...audio,
+      microphoneSyncOffsetMs: 0,
+      microphoneSyncOffsetUserSet: false
+    })
   })
 })
 

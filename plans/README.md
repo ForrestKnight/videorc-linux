@@ -29,7 +29,7 @@ row when done.
 | 011 | Sandbox the main Electron renderer without breaking preload APIs | P2 | M | 004 | DONE (2026-06-13; main renderer sandboxed, privileged preload work moved to main IPC, dev/OAuth/preview/package smokes passed) |
 | 012 | Validate a signed macOS release candidate on a clean machine | P0 | L | 004, 006, 008, 009, 011 | IN PROGRESS (2026-06-13; release preflight, signed-artifact validator, workflow validation, and clean-machine checklist/template landed; clean-machine evidence pending) |
 | 013 | Close OBS parity acceptance with evidence and triage | P0 | M | 006 | TODO |
-| 014 | Add guided audio sync calibration and drift gates | P1 | M | 006, 007 | IN PROGRESS (2026-06-13; measure-av-sync JSON recommendation landed; renderer calibration UI and long-session drift evidence pending) |
+| 014 | Add guided audio sync calibration and drift gates | P1 | M | 006, 007 | IN PROGRESS (2026-06-13; measure-av-sync JSON recommendation and pure renderer apply/reset helpers landed; guided UI and long-session drift evidence pending) |
 | 015 | Prove real provider livestreaming end to end | P1 | M | 006, 009, 012 | TODO |
 | 016 | Add the open-core entitlement boundary for premium features | P1 | M | 007, 009 | DONE (2026-06-13; free/premium capability model enforced, renderer wired, premium smokes opt in explicitly) |
 | 017 | Add native system audio capture and a mixed audio graph | P1 | L | 006, 007, 014 | TODO |
@@ -108,6 +108,8 @@ This track converts subjective "looks good/bad" reports into evidence.
    - Step 1 is done: `measure-av-sync --json` emits a stable recommendation
      report for measured lag, current offset, recommended offset, thresholds,
      pass/fail, and sample counts.
+   - Step 2 pure helpers are done: renderer code can format measured lag,
+     decide apply/reset state, and preserve explicit user-set offsets.
    - Continue the UI and drift-reporting slices after Plans 006 and 007.
    - Use this when recordings are visually good but audio is late or drifting.
    - Do not hide pipeline issues behind a new nonzero default offset.

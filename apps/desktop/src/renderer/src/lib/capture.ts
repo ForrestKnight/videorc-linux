@@ -39,6 +39,27 @@ export type LegacyStreamKeyMigrationCandidate = {
   streamKey: string
 }
 
+export type AudioSyncRecommendationReport = {
+  pass?: boolean
+  medianOffsetMs?: number | null
+  currentMicrophoneSyncOffsetMs?: number | null
+  recommendedMicrophoneSyncOffsetMs?: number | null
+  targetMs?: number | null
+  pairCount?: number | null
+  failures?: string[]
+  warnings?: string[]
+}
+
+export type AudioSyncCalibrationStatus = 'unavailable' | 'current' | 'optional' | 'recommended'
+
+export type AudioSyncCalibrationState = {
+  status: AudioSyncCalibrationStatus
+  canApply: boolean
+  measuredLagLabel: string
+  detail: string
+  recommendedOffsetMs: number | null
+}
+
 export type WsStatus = 'waiting' | 'connecting' | 'connected' | 'failed' | 'closed'
 export type SetupTone = 'good' | 'warn' | 'neutral'
 export type SetupStep = {
@@ -396,6 +417,96 @@ export function parseMicrophoneSyncOffsetInput(value: string, fallback: number):
   }
 
   return normalizeMicrophoneSyncOffsetMs(parsed, fallback)
+}
+
+export function formatMeasuredAudioLag(offsetMs: number | null | undefined): string {
+  const offset = typeof offsetMs === 'number' && Number.isFinite(offsetMs) ? offsetMs : null
+  if (offset == null) {
+    return 'No paired flash/click measurement'
+  }
+
+  const rounded = Math.round(offset)
+  if (rounded === 0) {
+    return 'Audio is aligned at 0 ms'
+  }
+
+  return rounded > 0
+    ? `Audio lags video by ${rounded} ms`
+    : `Audio leads video by ${Math.abs(rounded)} ms`
+}
+
+export function audioSyncCalibrationState(
+  recommendation: AudioSyncRecommendationReport | null | undefined,
+  currentAudio: AudioSettings = defaultCaptureConfig.audio
+): AudioSyncCalibrationState {
+  const measuredLagLabel = formatMeasuredAudioLag(recommendation?.medianOffsetMs)
+  const pairCount = Number(recommendation?.pairCount ?? 0)
+  const recommended = recommendation?.recommendedMicrophoneSyncOffsetMs
+  const currentOffset = normalizeMicrophoneSyncOffsetMs(
+    currentAudio.microphoneSyncOffsetMs,
+    defaultCaptureConfig.audio.microphoneSyncOffsetMs
+  )
+
+  if (!Number.isFinite(recommended) || pairCount <= 0) {
+    return {
+      status: 'unavailable',
+      canApply: false,
+      measuredLagLabel,
+      detail: 'Record a flash/click sample before applying calibration.',
+      recommendedOffsetMs: null
+    }
+  }
+
+  const recommendedOffsetMs = normalizeMicrophoneSyncOffsetMs(recommended, currentOffset)
+  if (recommendedOffsetMs === currentOffset) {
+    return {
+      status: 'current',
+      canApply: false,
+      measuredLagLabel,
+      detail: 'Current microphone sync offset already matches this recommendation.',
+      recommendedOffsetMs
+    }
+  }
+
+  const withinTarget =
+    recommendation?.pass === true ||
+    (Number.isFinite(recommendation?.targetMs) &&
+      Number.isFinite(recommendation?.medianOffsetMs) &&
+      Math.abs(Number(recommendation?.medianOffsetMs)) <= Number(recommendation?.targetMs))
+
+  return {
+    status: withinTarget ? 'optional' : 'recommended',
+    canApply: true,
+    measuredLagLabel,
+    detail: withinTarget
+      ? 'Measurement is within target; applying the recommendation is optional.'
+      : 'Apply the measured recommendation, then record another flash/click sample.',
+    recommendedOffsetMs
+  }
+}
+
+export function applyAudioSyncRecommendation(
+  audio: AudioSettings,
+  recommendation: AudioSyncRecommendationReport
+): AudioSettings {
+  const state = audioSyncCalibrationState(recommendation, audio)
+  if (!state.canApply || state.recommendedOffsetMs == null) {
+    return audio
+  }
+
+  return {
+    ...audio,
+    microphoneSyncOffsetMs: state.recommendedOffsetMs,
+    microphoneSyncOffsetUserSet: true
+  }
+}
+
+export function resetAudioSyncCalibration(audio: AudioSettings): AudioSettings {
+  return {
+    ...audio,
+    microphoneSyncOffsetMs: defaultCaptureConfig.audio.microphoneSyncOffsetMs,
+    microphoneSyncOffsetUserSet: false
+  }
 }
 
 const LAYOUT_PRESET_VALUES: readonly LayoutPreset[] = [
