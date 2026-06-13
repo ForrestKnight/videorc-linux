@@ -240,6 +240,57 @@ material, recordings used as secret evidence, or screenshots that show stream
 keys. Diagnostics and health payloads may include masked hints or backend kind;
 they must never include secret values.
 
+## Support Bundles
+
+Support bundles are local, redacted JSON diagnostics files for manual testing
+and bug reports. They are generated from the Diagnostics tab with **Support
+bundle -> Export**. After export, the success toast can reveal the file in
+Finder.
+
+Default location:
+
+- Development and packaged macOS: `support-bundles/` beside the app's SQLite
+  database, usually `~/Library/Application Support/Videorc/support-bundles/`.
+- If the backend cannot derive a database parent directory, it falls back to the
+  system temp directory under `videorc-support-bundles/`.
+
+Filename format:
+
+```text
+videorc-support-bundle-YYYYMMDD-HHMMSSZ.json
+```
+
+Included sections:
+
+- app version, commit when available, platform, and dev/packaged run mode
+- backend health and FFmpeg status
+- entitlement snapshot
+- current recording status
+- latest diagnostic stats
+- recent backend logs and health events
+- recent session summaries with media paths reduced to redacted basenames
+- redaction summary counters
+
+Excluded by default:
+
+- local recordings, screenshots, extracted audio, and generated media evidence
+- SQLite database files and credential-store files
+- stream keys, OAuth tokens, API keys, client secrets, and URL credentials
+- raw home-directory paths when not needed
+- AI artifact bodies such as transcripts, summaries, chapters, and generated
+  publish text
+
+Before attaching a support bundle to a bug report, run:
+
+```sh
+pnpm support-bundle:verify /path/to/videorc-support-bundle-YYYYMMDD-HHMMSSZ.json
+```
+
+The verifier checks required sections and fails if secret-shaped values, raw
+database/media paths, unredacted RTMP URLs, or AI artifact bodies appear. Attach
+the JSON bundle only when that command passes. Do not attach recordings or
+screenshots unless a maintainer explicitly asks for that evidence.
+
 ## FFmpeg Strategy
 
 Decision:

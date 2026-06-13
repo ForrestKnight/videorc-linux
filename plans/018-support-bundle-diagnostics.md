@@ -18,7 +18,7 @@
 - **Depends on**: Plan 007
 - **Category**: dx, docs, security
 - **Planned at**: commit `0ea3c66c`, 2026-06-13
-- **Status**: IN PROGRESS (Slices A6-A9 export, UI action, and verifier)
+- **Status**: DONE (2026-06-13; backend export, Diagnostics action, verifier, docs, and required gates passed)
 
 ## Why this matters
 
@@ -197,14 +197,14 @@ Update docs with:
 
 ## Done criteria
 
-- [ ] Support bundle export exists.
-- [ ] Redaction tests cover stream keys, OAuth tokens, API keys, and local paths.
-- [ ] Bundle excludes recordings, DB files, extracted audio, and AI artifact
+- [x] Support bundle export exists.
+- [x] Redaction tests cover stream keys, OAuth tokens, API keys, and local paths.
+- [x] Bundle excludes recordings, DB files, extracted audio, and AI artifact
       bodies by default.
-- [ ] Diagnostics tab can export and reveal the bundle.
-- [ ] Docs explain support-bundle usage.
-- [ ] Required gates pass.
-- [ ] `plans/README.md` status row updated.
+- [x] Diagnostics tab can export and reveal the bundle.
+- [x] Docs explain support-bundle usage.
+- [x] Required gates pass.
+- [x] `plans/README.md` status row updated.
 
 ## STOP conditions
 
