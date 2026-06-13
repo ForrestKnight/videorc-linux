@@ -34,7 +34,7 @@ row when done.
 | 016 | Add the open-core entitlement boundary for premium features | P1 | M | 007, 009 | DONE (2026-06-13; free/premium capability model enforced, renderer wired, premium smokes opt in explicitly) |
 | 017 | Add native system audio capture and a mixed audio graph | P1 | L | 006, 007, 014 | TODO |
 | 018 | Add a redacted support bundle and diagnostics export | P1 | M | 007 | DONE (2026-06-13; backend export, Diagnostics action, verifier, docs, and required gates passed) |
-| 019 | Finish Windows v1 capture and package acceptance | P2 | L | 001, 002, 003, 006, 012 | IN PROGRESS (2026-06-13; Windows status reconciled, real Windows gate/capture/signing evidence pending) |
+| 019 | Finish Windows v1 capture and package acceptance | P2 | L | 001, 002, 003, 006, 012 | IN PROGRESS (2026-06-13; Windows status and local gate script landed, real Windows package/capture/signing evidence pending) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
@@ -162,6 +162,9 @@ Run after macOS v1 stabilization unless business priority changes.
    - Step 1 is done: `docs/windows-port-plan.md` now separates completed
      packaging/chrome/seam work from missing Windows capture/package/signing
      acceptance.
+   - Step 2 is done: `smoke:local-gates:windows` exists and drives the
+     Windows-box unit/seam/package/preflight/packaged-recording gate. On-box
+     execution is still pending.
    - Packaging scaffolds are done; capture parity is not.
    - Needs a Windows 11 x64 box and dated recording evidence.
 
@@ -340,8 +343,9 @@ Windows."
 - **P7-S1 Reconcile Windows docs - DONE**: Plan 019 Step 1. Completed
   Windows package/seam slices are marked, and missing capture/package/signing
   acceptance remains explicit.
-- **P7-S2 Windows gate script**: Execute Plan 019 Step 2. Add a Windows-local
-  gate separate from macOS gates.
+- **P7-S2 Windows gate script - DONE**: Plan 019 Step 2. A Windows-local gate
+  exists separately from macOS gates and includes package preflight, packaging,
+  and packaged recording smoke.
 - **P7-S3 Windows capture MVP**: Execute Plan 019 Step 3. Implement source,
   camera, mic, and capture-input seams without forking recording policy.
 - **P7-S4 Windows package recording acceptance**: Execute Plan 019 Step 4 on a

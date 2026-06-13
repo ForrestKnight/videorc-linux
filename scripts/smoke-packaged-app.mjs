@@ -1,36 +1,29 @@
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import { spawn } from 'node:child_process'
 
+import {
+  assertPackagedSmokePlatform,
+  bundledFfmpegPathForPackagedApp,
+  defaultPackagedAppExecutable
+} from './lib/packaged-smoke-paths.mjs'
 import { runBackendRecordingSmoke } from './smoke-recording-session.mjs'
 
 const repoRoot = resolve(import.meta.dirname, '..')
-const appExecutable = resolve(
-  repoRoot,
-  process.env.VIDEORC_PACKAGED_APP_EXECUTABLE ??
-    'apps/desktop/release/mac-arm64/Videorc.app/Contents/MacOS/Videorc'
-)
+assertPackagedSmokePlatform()
+const appExecutable = process.env.VIDEORC_PACKAGED_APP_EXECUTABLE
+  ? resolve(repoRoot, process.env.VIDEORC_PACKAGED_APP_EXECUTABLE)
+  : defaultPackagedAppExecutable({ repoRoot })
 const outputDirectory = resolve(
   process.env.VIDEORC_SMOKE_OUTPUT_DIR ?? join(tmpdir(), `videorc-packaged-smoke-${Date.now()}`)
 )
-const bundledFfmpegPath = resolve(
-  dirname(appExecutable),
-  '..',
-  'Resources',
-  'ffmpeg',
-  'bin',
-  'ffmpeg'
-)
+const bundledFfmpegPath = bundledFfmpegPathForPackagedApp({ appExecutable })
 const ffmpegPath =
   process.env.VIDEORC_SMOKE_FFMPEG_PATH ??
   (existsSync(bundledFfmpegPath) ? bundledFfmpegPath : 'ffmpeg')
 const timeoutMs = Number(process.env.VIDEORC_SMOKE_TIMEOUT_MS ?? 45000)
 const launchAttempts = Number(process.env.VIDEORC_PACKAGED_SMOKE_LAUNCH_ATTEMPTS ?? 2)
-
-if (process.platform !== 'darwin') {
-  throw new Error('Packaged app smoke test currently targets macOS app bundles.')
-}
 
 if (!existsSync(appExecutable)) {
   throw new Error(`Packaged app executable not found: ${appExecutable}`)

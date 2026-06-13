@@ -272,7 +272,12 @@ app in exile.
   IDs from Phase 2), leaving the ~12 `screencapture`-based `ui-*` probes
   mac-only or on CDP screenshots.
 - Define `smoke:local-gates:windows` and run it on the Windows box as the
-  merge gate (no Actions budget).
+  merge gate (no Actions budget). **Script DONE 2026-06-13:** the gate runs
+  desktop unit tests, capture-input/FIFO backend seam tests, release backend
+  build, pinned Windows FFmpeg fetch, package preflight, Windows dir package,
+  and packaged boot plus test-pattern recording smoke. The packaged smoke now
+  understands both macOS app bundles and Windows `win-unpacked` layouts. The
+  on-box Windows 11 x64 execution is still pending.
 
 ## Risks / open questions
 
