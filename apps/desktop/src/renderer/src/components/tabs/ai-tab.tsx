@@ -31,6 +31,7 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { useStudio } from '@/hooks/use-studio'
 import type { SessionSummary } from '@/lib/backend'
+import { entitlementDisabledReason } from '@/lib/entitlements'
 import {
   artifactChapters,
   artifactField,
@@ -55,8 +56,10 @@ export function AiTab({
     runAiWorkflow,
     exportPublishPack,
     aiRunningSessionId,
-    exportRunningSessionId
+    exportRunningSessionId,
+    entitlements
   } = useStudio()
+  const cloudAiEntitlementReason = entitlementDisabledReason(entitlements, 'cloud-ai')
 
   useEffect(() => {
     if (!selectedSessionId && sessions.length > 0) {
@@ -126,15 +129,30 @@ export function AiTab({
                 present; artifacts are stored locally with each session.
               </AlertDescription>
             </Alert>
+            {cloudAiEntitlementReason ? (
+              <Alert variant="warning">
+                <Warning weight="fill" />
+                <AlertTitle>Cloud AI requires Videorc Premium</AlertTitle>
+                <AlertDescription>
+                  {cloudAiEntitlementReason} Local audio extraction still works without upload.
+                </AlertDescription>
+              </Alert>
+            ) : null}
             <Field orientation="horizontal">
               <FieldContent>
                 <FieldLabel htmlFor="ai-consent">Allow cloud upload</FieldLabel>
                 <FieldDescription>
-                  Upload extracted audio and transcript for summaries, chapters, highlights, and
-                  suggestions.
+                  {cloudAiEntitlementReason
+                    ? 'Premium unlocks cloud transcription, summaries, chapters, highlights, and suggestions.'
+                    : 'Upload extracted audio and transcript for summaries, chapters, highlights, and suggestions.'}
                 </FieldDescription>
               </FieldContent>
-              <Switch checked={aiConsent} id="ai-consent" onCheckedChange={setAiConsent} />
+              <Switch
+                checked={aiConsent && !cloudAiEntitlementReason}
+                disabled={Boolean(cloudAiEntitlementReason)}
+                id="ai-consent"
+                onCheckedChange={setAiConsent}
+              />
             </Field>
           </PanelSection>
         </div>
@@ -172,12 +190,17 @@ export function AiTab({
     )
     const aiRunning = aiRunningSessionId === session.id
     const exportRunning = exportRunningSessionId === session.id
+    const cloudAiBlocked = aiConsent && Boolean(cloudAiEntitlementReason)
 
     return (
       <div className="flex flex-wrap gap-2">
-        <Button disabled={!canRunAi || aiRunning} onClick={() => runAiWorkflow(session.id)}>
+        <Button
+          disabled={!canRunAi || aiRunning || cloudAiBlocked}
+          title={cloudAiBlocked ? (cloudAiEntitlementReason ?? undefined) : undefined}
+          onClick={() => runAiWorkflow(session.id)}
+        >
           <Lightning data-icon="inline-start" weight="fill" />
-          {aiRunning ? 'Running…' : 'Run AI workflow'}
+          {aiRunning ? 'Running…' : aiConsent ? 'Run AI workflow' : 'Extract local audio'}
         </Button>
         <Button
           disabled={!canExportPublishPack || exportRunning}

@@ -31,6 +31,7 @@ import { type StudioPanel, type WorkspaceTab } from '@/components/workspace-nav'
 import { useStudio } from '@/hooks/use-studio'
 import type { GoLiveDestinationPreflight, StreamPlatform } from '@/lib/backend'
 import { videoProfileCompatibility } from '@/lib/capture'
+import { entitlementDisabledReason } from '@/lib/entitlements'
 import { studioHealth } from '@/lib/studio-health'
 import { cn } from '@/lib/utils'
 
@@ -39,22 +40,22 @@ export function StudioTab(): ReactElement {
   const {
     recording,
     elapsed,
-    canStart,
     canStop,
     startRequestPending,
     stopRequestPending,
-    startBlockedReason,
     visibleStartBlockedReason,
     startSession,
     stopSession,
     captureConfig,
     setCaptureConfig,
+    entitlements,
     previewLiveStatus,
     previewSurfaceStatus,
     nativePreviewSurfaceEnabled,
     refreshPreview,
     openPreviewPermissions,
     wsStatus,
+    health,
     diagnosticStats,
     goLiveConfirmationOpen,
     goLiveConfirmationPending,
@@ -75,7 +76,24 @@ export function StudioTab(): ReactElement {
     ...captureConfig,
     streamEnabled: true
   })
-  const liveStreamBlockedReason = liveStreamCompatibility.blockingReason
+  const liveStreamEntitlementReason = entitlementDisabledReason(entitlements, 'livestreaming')
+  const liveStreamBlockedReason =
+    liveStreamEntitlementReason ?? liveStreamCompatibility.blockingReason
+  const recordCompatibility = videoProfileCompatibility({
+    ...captureConfig,
+    recordEnabled: true,
+    streamEnabled: false
+  })
+  const recordBlockedReason =
+    wsStatus !== 'connected'
+      ? `Backend socket is ${wsStatus}.`
+      : recordCompatibility.blockingReason
+        ? recordCompatibility.blockingReason
+        : !health
+          ? 'Checking FFmpeg before starting.'
+          : !health.ffmpeg.available
+            ? (health.ffmpeg.message ?? 'FFmpeg is not available.')
+            : null
 
   // Live-only chat rail (ux-ia plan, slice 6): exists ONLY while streaming.
   // Auto-opens once when chat providers attach; ⌘J toggles; state resets when
@@ -225,8 +243,8 @@ export function StudioTab(): ReactElement {
               <Button
                 size="lg"
                 variant="outline"
-                disabled={!canStart || startRequestPending}
-                title={startBlockedReason ?? 'Record to a file (Space)'}
+                disabled={Boolean(recordBlockedReason) || startRequestPending}
+                title={recordBlockedReason ?? 'Record to a file (Space)'}
                 onClick={handleRecord}
               >
                 <Record data-icon="inline-start" weight="fill" />
@@ -511,13 +529,17 @@ function studioBlocker(studio: ReturnType<typeof useStudio>): {
   jumpTo?: WorkspaceTab | StudioPanel
   jumpLabel?: string
 } | null {
-  const { wsStatus, outputEnabled, captureConfig, streamReady, health } = studio
+  const { wsStatus, outputEnabled, captureConfig, streamReady, health, entitlements } = studio
+  const livestreamingEntitlementReason = entitlementDisabledReason(entitlements, 'livestreaming')
 
   if (wsStatus !== 'connected') {
     return { title: 'Backend not connected' }
   }
   if (!outputEnabled) {
     return { title: 'No output enabled', jumpTo: 'recording', jumpLabel: 'Open Recording' }
+  }
+  if (captureConfig.streamEnabled && livestreamingEntitlementReason) {
+    return { title: 'Premium required', jumpTo: 'live', jumpLabel: 'Open Live' }
   }
   if (captureConfig.streamEnabled && !streamReady) {
     return { title: 'Stream target incomplete', jumpTo: 'live', jumpLabel: 'Open Live' }

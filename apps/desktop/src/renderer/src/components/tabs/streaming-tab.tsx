@@ -60,6 +60,7 @@ import type {
   YouTubeChannel
 } from '@/lib/backend'
 import { isStreamTargetReady, videoProfileCompatibility } from '@/lib/capture'
+import { entitlementDisabledReason } from '@/lib/entitlements'
 import { streamKeyPlatformMismatch, streamKeyTailHint } from '@/lib/stream-key-format'
 import { cn } from '@/lib/utils'
 
@@ -91,6 +92,7 @@ export function StreamingTab(): ReactElement {
     saveStreamMetadataDraft,
     selectYouTubeChannel,
     health,
+    entitlements,
     isSessionActive,
     streamMetadataDraft,
     streamMetadataSavePending,
@@ -108,6 +110,8 @@ export function StreamingTab(): ReactElement {
   const { video } = captureConfig
   const compatibility = videoProfileCompatibility(captureConfig)
   const compatibilityMessage = compatibility.blockingReason ?? compatibility.warning
+  const livestreamingEntitlementReason = entitlementDisabledReason(entitlements, 'livestreaming')
+  const streamingControlsDisabled = isSessionActive || Boolean(livestreamingEntitlementReason)
 
   const runtimeById = useMemo(() => {
     const map = new Map<string, StreamTargetRuntime>()
@@ -157,6 +161,12 @@ export function StreamingTab(): ReactElement {
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
       <div className="flex flex-col gap-4">
+        {livestreamingEntitlementReason && !isSessionActive ? (
+          <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm text-warning-foreground dark:text-warning">
+            <WarningCircle className="mt-0.5 size-4 shrink-0" weight="fill" />
+            <span>{livestreamingEntitlementReason}</span>
+          </div>
+        ) : null}
         {isSessionActive && problems.length > 0 && !dismissed ? (
           <StreamFailureBanner
             problems={problems}
@@ -173,7 +183,7 @@ export function StreamingTab(): ReactElement {
           <DestinationCard
             account={accountByPlatform.get(target.platform)}
             credentials={credentialsByPlatform.get(target.platform)}
-            disabled={isSessionActive}
+            disabled={streamingControlsDisabled}
             key={target.id}
             runtime={runtimeById.get(target.id)}
             target={target}
@@ -196,7 +206,7 @@ export function StreamingTab(): ReactElement {
             rows own auth/credentials, this owns what the stream says
             (ux-ia plan, slice 7). */}
         <MetadataEditor
-          disabled={isSessionActive}
+          disabled={streamingControlsDisabled}
           draft={streamMetadataDraft}
           pending={streamMetadataSavePending}
           twitchCategories={twitchCategories}
@@ -1038,7 +1048,12 @@ function MetadataEditor({
   return (
     <PanelSection
       action={
-        <Button disabled={!draft || pending} size="sm" variant="secondary" onClick={onSave}>
+        <Button
+          disabled={disabled || !draft || pending}
+          size="sm"
+          variant="secondary"
+          onClick={onSave}
+        >
           <FloppyDisk data-icon="inline-start" weight="bold" />
           {pending ? 'Saving' : 'Save'}
         </Button>

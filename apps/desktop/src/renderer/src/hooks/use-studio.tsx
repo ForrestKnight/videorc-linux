@@ -60,6 +60,7 @@ import type {
   DiagnosticStats,
   Device,
   DeviceList,
+  EntitlementsSnapshot,
   ExportPublishPackResult,
   FileAssessment,
   GateStatus,
@@ -114,6 +115,7 @@ import type {
   YouTubeStreamStatusResult
 } from '@/lib/backend'
 import { createEmptyLiveChatSnapshot } from '@/lib/backend'
+import { entitlementDisabledReason } from '@/lib/entitlements'
 import {
   applyLiveChatMessage,
   applyLiveChatProviderStatus,
@@ -201,6 +203,7 @@ export type StudioContextValue = {
   connection: BackendConnection | null
   wsStatus: WsStatus
   health: BackendHealth | null
+  entitlements: EntitlementsSnapshot | null
   deviceList: DeviceList
   recording: RecordingStatus
   logs: BackendLogEvent[]
@@ -522,6 +525,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   clientRef.current = client
   wsStatusRef.current = wsStatus
   const [health, setHealth] = useState<BackendHealth | null>(null)
+  const [entitlements, setEntitlements] = useState<EntitlementsSnapshot | null>(null)
   const [deviceList, setDeviceList] = useState<DeviceList>({ devices: [], warnings: [] })
   const [recording, setRecording] = useState<RecordingStatus>({ state: 'idle', message: 'Ready.' })
   const [logs, setLogs] = useState<BackendLogEvent[]>([])
@@ -1654,6 +1658,8 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
           ffmpegPath: settings.ffmpegPath.trim() || undefined
         })
         setHealth(nextHealth)
+        const nextEntitlements = await nextClient.request<EntitlementsSnapshot>('entitlements.get')
+        setEntitlements(nextEntitlements)
         const nextDevices = await nextClient.request<DeviceList>('devices.list', {
           ffmpegPath: settings.ffmpegPath.trim() || undefined
         })
@@ -1716,6 +1722,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       }
       nextClient.close()
       setClient(null)
+      setEntitlements(null)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -1802,6 +1809,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       setLastError(null)
       const [
         nextHealth,
+        nextEntitlements,
         nextDevices,
         nextSessions,
         nextDiagnostics,
@@ -1815,6 +1823,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
         client.request<BackendHealth>('health.ping', {
           ffmpegPath: settings.ffmpegPath.trim() || undefined
         }),
+        client.request<EntitlementsSnapshot>('entitlements.get'),
         client.request<DeviceList>('devices.list', {
           ffmpegPath: settings.ffmpegPath.trim() || undefined
         }),
@@ -1834,6 +1843,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
         nextStreamMetadataDraft
       )
       setHealth(nextHealth)
+      setEntitlements(nextEntitlements)
       setDeviceList(nextDevices)
       setSessions(nextSessions)
       setDiagnosticStats(nextDiagnostics)
@@ -2765,8 +2775,16 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   const profileCompatibility = videoProfileCompatibility(captureConfig)
   const streamReady =
     !captureConfig.streamEnabled || areEnabledStreamTargetsStartReady(captureConfig.streaming)
+  const livestreamingEntitlementReason = entitlementDisabledReason(entitlements, 'livestreaming')
+  const cloudAiEntitlementReason = entitlementDisabledReason(entitlements, 'cloud-ai')
   const isSessionActive =
     isActiveRecordingState(recording.state) || startRequestPending || stopRequestPending
+
+  useEffect(() => {
+    if (aiConsent && cloudAiEntitlementReason) {
+      setAiConsent(false)
+    }
+  }, [aiConsent, cloudAiEntitlementReason])
 
   const renameScreen = useCallback(
     async (screenId: string, name: string) => {
@@ -3098,6 +3116,9 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     }
     if (profileCompatibility.blockingReason) {
       return profileCompatibility.blockingReason
+    }
+    if (captureConfig.streamEnabled && livestreamingEntitlementReason) {
+      return livestreamingEntitlementReason
     }
     if (captureConfig.streamEnabled && !streamReady) {
       return captureConfig.streaming.targets.some((target) => target.enabled)
@@ -3669,6 +3690,12 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       if (!client) {
         return
       }
+      if (aiConsent && cloudAiEntitlementReason) {
+        toast.error('Cloud AI requires Videorc Premium.', {
+          description: cloudAiEntitlementReason
+        })
+        return
+      }
 
       try {
         setLastError(null)
@@ -3690,7 +3717,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
         setAiRunningSessionId(null)
       }
     },
-    [aiConsent, client, refreshSessions, reportError, settings.ffmpegPath]
+    [aiConsent, client, cloudAiEntitlementReason, refreshSessions, reportError, settings.ffmpegPath]
   )
 
   const exportPublishPack = useCallback(
@@ -4063,6 +4090,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       connection,
       wsStatus,
       health,
+      entitlements,
       deviceList,
       recording,
       logs,
@@ -4197,6 +4225,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       connection,
       wsStatus,
       health,
+      entitlements,
       deviceList,
       recording,
       logs,
