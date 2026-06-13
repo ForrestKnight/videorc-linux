@@ -164,6 +164,8 @@ it prints the visible OBS sources before launch and warns if the chosen scene is
 Record the outcome (pass/fail per scenario, the diagnostics/analyzer reports, and the
 manual notes) in a dated acceptance note alongside this checklist. Current note:
 [`docs/acceptance/2026-06-07-obs-parity-acceptance.md`](acceptance/2026-06-07-obs-parity-acceptance.md).
+Use [`docs/acceptance/obs-parity-acceptance-template.md`](acceptance/obs-parity-acceptance-template.md)
+for new Plan 013 runs.
 
 > **Status 2026-06-07:** the latest local motion-required MPEG-TS gates now pass at
 > 1080p30 and 1440p30 with real screen/camera/mic sources, native `CAMetalLayer`

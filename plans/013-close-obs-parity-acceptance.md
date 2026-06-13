@@ -21,8 +21,9 @@
 - **Current status**: IN PROGRESS, 2026-06-13. Step 1 landed: the OBS
   side-by-side harness writes `obs-side-by-side-manifest.json` with Videorc
   commit, command, requested output settings, OBS scene/settings summary, output
-  directory, and launch-only/no-mutation automation status. Automated media
-  gates and human OBS visual evidence remain pending.
+  directory, and launch-only/no-mutation automation status. Step 2 template
+  landed at `docs/acceptance/obs-parity-acceptance-template.md`. Automated
+  media gates and human OBS visual evidence remain pending.
 
 ## Why this matters
 

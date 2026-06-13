@@ -28,7 +28,7 @@ row when done.
 | 010 | Reconcile dead-code allowances and future media modules | P2 | S-M | 005, 006 | IN PROGRESS (2026-06-13; stale streaming comment fixed, staged media allowance registry added; destructive cleanup waits on Plan 006 acceptance) |
 | 011 | Sandbox the main Electron renderer without breaking preload APIs | P2 | M | 004 | DONE (2026-06-13; main renderer sandboxed, privileged preload work moved to main IPC, dev/OAuth/preview/package smokes passed) |
 | 012 | Validate a signed macOS release candidate on a clean machine | P0 | L | 004, 006, 008, 009, 011 | IN PROGRESS (2026-06-13; release preflight, signed-artifact validator, workflow validation, and clean-machine checklist/template landed; clean-machine evidence pending) |
-| 013 | Close OBS parity acceptance with evidence and triage | P0 | M | 006 | IN PROGRESS (2026-06-13; side-by-side harness writes comparable-settings manifest; automated gates and human visual evidence pending) |
+| 013 | Close OBS parity acceptance with evidence and triage | P0 | M | 006 | IN PROGRESS (2026-06-13; side-by-side harness manifest and acceptance-note template landed; automated gates and human visual evidence pending) |
 | 014 | Add guided audio sync calibration and drift gates | P1 | M | 006, 007 | IN PROGRESS (2026-06-13; JSON recommendation, Sources-tab import/apply/reset flow, and drift classification evidence landed; real long-session gate evidence pending) |
 | 015 | Prove real provider livestreaming end to end | P1 | M | 006, 009, 012 | TODO |
 | 016 | Add the open-core entitlement boundary for premium features | P1 | M | 007, 009 | DONE (2026-06-13; free/premium capability model enforced, renderer wired, premium smokes opt in explicitly) |
@@ -103,6 +103,8 @@ This track converts subjective "looks good/bad" reports into evidence.
 1. **Plan 013 - OBS parity evidence**
    - Step 1 is done: the side-by-side harness writes a comparable-settings
      manifest without mutating OBS settings.
+   - Step 2 template is done: new runs can copy
+     `docs/acceptance/obs-parity-acceptance-template.md`.
    - Continue after Plan 006. Automated gates first, then human OBS
      side-by-side.
    - Output must be PASS, FAIL, or BLOCKED with owner bucket.
