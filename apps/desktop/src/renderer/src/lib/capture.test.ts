@@ -12,6 +12,7 @@ import {
   normalizeAudioSettings,
   normalizeMicrophoneSyncOffsetMs,
   normalizeVideoSettings,
+  parseAudioSyncRecommendationJson,
   parseMicrophoneSyncOffsetInput,
   persistableCaptureConfig,
   reconcileSourceSelection,
@@ -147,6 +148,44 @@ describe('parseMicrophoneSyncOffsetInput', () => {
 })
 
 describe('audio sync calibration helpers', () => {
+  it('parses stable measure-av-sync JSON reports', () => {
+    const parsed = parseAudioSyncRecommendationJson(
+      JSON.stringify({
+        schemaVersion: 1,
+        pass: true,
+        medianOffsetMs: 46,
+        currentMicrophoneSyncOffsetMs: -120,
+        recommendedMicrophoneSyncOffsetMs: -166,
+        targetMs: 100,
+        pairCount: 31,
+        failures: [],
+        warnings: ['within target']
+      })
+    )
+
+    expect(parsed).toEqual({
+      ok: true,
+      recommendation: {
+        pass: true,
+        medianOffsetMs: 46,
+        currentMicrophoneSyncOffsetMs: -120,
+        recommendedMicrophoneSyncOffsetMs: -166,
+        targetMs: 100,
+        pairCount: 31,
+        failures: [],
+        warnings: ['within target']
+      }
+    })
+  })
+
+  it('rejects unsupported or malformed measurement JSON', () => {
+    expect(parseAudioSyncRecommendationJson('nope')).toMatchObject({ ok: false })
+    expect(parseAudioSyncRecommendationJson('{}')).toEqual({
+      ok: false,
+      error: 'Measurement JSON must use schemaVersion 1.'
+    })
+  })
+
   it('formats measured lag direction for operators', () => {
     expect(formatMeasuredAudioLag(121.4)).toBe('Audio lags video by 121 ms')
     expect(formatMeasuredAudioLag(-80.2)).toBe('Audio leads video by 80 ms')

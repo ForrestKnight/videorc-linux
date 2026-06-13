@@ -60,6 +60,10 @@ export type AudioSyncCalibrationState = {
   recommendedOffsetMs: number | null
 }
 
+export type AudioSyncRecommendationParseResult =
+  | { ok: true; recommendation: AudioSyncRecommendationReport }
+  | { ok: false; error: string }
+
 export type WsStatus = 'waiting' | 'connecting' | 'connected' | 'failed' | 'closed'
 export type SetupTone = 'good' | 'warn' | 'neutral'
 export type SetupStep = {
@@ -419,6 +423,40 @@ export function parseMicrophoneSyncOffsetInput(value: string, fallback: number):
   return normalizeMicrophoneSyncOffsetMs(parsed, fallback)
 }
 
+export function parseAudioSyncRecommendationJson(text: string): AudioSyncRecommendationParseResult {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return { ok: false, error: 'Measurement JSON could not be parsed.' }
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    return { ok: false, error: 'Measurement JSON must be an object.' }
+  }
+
+  const candidate = parsed as Record<string, unknown>
+  if (candidate.schemaVersion !== 1) {
+    return { ok: false, error: 'Measurement JSON must use schemaVersion 1.' }
+  }
+
+  return {
+    ok: true,
+    recommendation: {
+      pass: candidate.pass === true,
+      medianOffsetMs: optionalNumber(candidate.medianOffsetMs),
+      currentMicrophoneSyncOffsetMs: optionalNumber(candidate.currentMicrophoneSyncOffsetMs),
+      recommendedMicrophoneSyncOffsetMs: optionalNumber(
+        candidate.recommendedMicrophoneSyncOffsetMs
+      ),
+      targetMs: optionalNumber(candidate.targetMs),
+      pairCount: optionalNumber(candidate.pairCount),
+      failures: stringList(candidate.failures),
+      warnings: stringList(candidate.warnings)
+    }
+  }
+}
+
 export function formatMeasuredAudioLag(offsetMs: number | null | undefined): string {
   const offset = typeof offsetMs === 'number' && Number.isFinite(offsetMs) ? offsetMs : null
   if (offset == null) {
@@ -507,6 +545,16 @@ export function resetAudioSyncCalibration(audio: AudioSettings): AudioSettings {
     microphoneSyncOffsetMs: defaultCaptureConfig.audio.microphoneSyncOffsetMs,
     microphoneSyncOffsetUserSet: false
   }
+}
+
+function optionalNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : []
 }
 
 const LAYOUT_PRESET_VALUES: readonly LayoutPreset[] = [

@@ -1,13 +1,16 @@
 import {
+  ArrowCounterClockwise,
   ArrowsClockwise,
   CaretDown,
+  Check,
   Monitor,
   SpeakerHigh,
   SpeakerSlash,
+  UploadSimple,
   Warning,
   Waveform
 } from '@phosphor-icons/react'
-import { useEffect, useState, type ReactElement } from 'react'
+import { useEffect, useRef, useState, type ReactElement } from 'react'
 
 import { PanelSection } from '@/components/panel-section'
 import { SourceSelect } from '@/components/source-select'
@@ -25,8 +28,13 @@ import { useStudio } from '@/hooks/use-studio'
 import {
   MICROPHONE_SYNC_OFFSET_MAX_MS,
   MICROPHONE_SYNC_OFFSET_MIN_MS,
+  applyAudioSyncRecommendation,
+  audioSyncCalibrationState,
   normalizeMicrophoneSyncOffsetMs,
-  parseMicrophoneSyncOffsetInput
+  parseAudioSyncRecommendationJson,
+  parseMicrophoneSyncOffsetInput,
+  resetAudioSyncCalibration,
+  type AudioSyncRecommendationReport
 } from '@/lib/capture'
 import type { Device, DeviceStatus, SourceSelection } from '@/lib/backend'
 import { formatDb } from '@/lib/format'
@@ -125,6 +133,12 @@ export function SourcesTab(): ReactElement {
   const microphones = deviceList.devices.filter((device) => device.kind === 'microphone')
   const syncOffsetMs = captureConfig.audio.microphoneSyncOffsetMs
   const [syncOffsetDraft, setSyncOffsetDraft] = useState(() => String(syncOffsetMs))
+  const [syncRecommendation, setSyncRecommendation] =
+    useState<AudioSyncRecommendationReport | null>(null)
+  const [syncCalibrationMessage, setSyncCalibrationMessage] = useState<string | null>(null)
+  const [showSyncStimulusInstructions, setShowSyncStimulusInstructions] = useState(false)
+  const syncMeasurementInputRef = useRef<HTMLInputElement | null>(null)
+  const syncCalibration = audioSyncCalibrationState(syncRecommendation, captureConfig.audio)
 
   const meterTone =
     audioMeter?.status === 'ready'
@@ -195,6 +209,45 @@ export function SourcesTab(): ReactElement {
         microphoneSyncOffsetUserSet: true
       }
     }))
+  }
+
+  const importSyncMeasurementFile = async (file: File | null): Promise<void> => {
+    if (!file) {
+      return
+    }
+
+    const parsed = parseAudioSyncRecommendationJson(await file.text())
+    if (!parsed.ok) {
+      setSyncRecommendation(null)
+      setSyncCalibrationMessage(parsed.error)
+      return
+    }
+
+    const nextState = audioSyncCalibrationState(parsed.recommendation, captureConfig.audio)
+    setSyncRecommendation(parsed.recommendation)
+    setSyncCalibrationMessage(`${nextState.measuredLagLabel}. ${nextState.detail}`)
+  }
+
+  const applySyncRecommendation = (): void => {
+    if (!syncRecommendation) {
+      return
+    }
+
+    setCaptureConfig((current) => ({
+      ...current,
+      audio: applyAudioSyncRecommendation(current.audio, syncRecommendation)
+    }))
+    if (syncCalibration.recommendedOffsetMs != null) {
+      setSyncCalibrationMessage(`Applied ${syncCalibration.recommendedOffsetMs} ms sync offset.`)
+    }
+  }
+
+  const resetSyncCalibration = (): void => {
+    setCaptureConfig((current) => ({
+      ...current,
+      audio: resetAudioSyncCalibration(current.audio)
+    }))
+    setSyncCalibrationMessage('Reset microphone sync to structural default.')
   }
 
   return (
@@ -430,6 +483,76 @@ export function SourcesTab(): ReactElement {
                   }
                 }}
               />
+            </div>
+            <div className="grid gap-2 rounded-md border border-border/70 bg-muted/20 p-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Badge
+                  variant={
+                    syncCalibration.status === 'recommended'
+                      ? 'warning'
+                      : syncCalibration.status === 'unavailable'
+                        ? 'outline'
+                        : 'secondary'
+                  }
+                >
+                  {syncCalibration.measuredLagLabel}
+                </Badge>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    size="xs"
+                    type="button"
+                    variant="outline"
+                    onClick={() => setShowSyncStimulusInstructions((open) => !open)}
+                  >
+                    <Waveform data-icon="inline-start" />
+                    Stimulus
+                  </Button>
+                  <Button
+                    size="xs"
+                    type="button"
+                    variant="outline"
+                    onClick={() => syncMeasurementInputRef.current?.click()}
+                  >
+                    <UploadSimple data-icon="inline-start" />
+                    Import JSON
+                  </Button>
+                  <Button
+                    disabled={!syncCalibration.canApply}
+                    size="xs"
+                    type="button"
+                    variant="secondary"
+                    onClick={applySyncRecommendation}
+                  >
+                    <Check data-icon="inline-start" />
+                    Apply
+                  </Button>
+                  <Button size="xs" type="button" variant="ghost" onClick={resetSyncCalibration}>
+                    <ArrowCounterClockwise data-icon="inline-start" />
+                    Reset
+                  </Button>
+                </div>
+              </div>
+              <input
+                ref={syncMeasurementInputRef}
+                accept="application/json,.json"
+                className="hidden"
+                type="file"
+                onChange={(event) => {
+                  void importSyncMeasurementFile(event.currentTarget.files?.[0] ?? null)
+                  event.currentTarget.value = ''
+                }}
+              />
+              <p className="text-xs text-muted-foreground">
+                {syncCalibrationMessage ?? syncCalibration.detail}
+              </p>
+              {showSyncStimulusInstructions ? (
+                <div className="grid gap-1 rounded border border-border/70 bg-background p-2 font-mono text-[11px] leading-5 text-muted-foreground">
+                  <span>
+                    pnpm measure:av-sync --make-fixture /tmp/videorc-sync.mp4 --seconds 120
+                  </span>
+                  <span>pnpm measure:av-sync &lt;recording-or-evidence.json&gt; --json</span>
+                </div>
+              ) : null}
             </div>
           </div>
         </div>

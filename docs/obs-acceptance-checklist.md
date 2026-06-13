@@ -109,6 +109,11 @@ is over the 100 ms target but under the 150 ms hard fail, set
 `VIDEORC_BASELINE_MIC_SYNC_OFFSET_MS` to verify the matching microphone calibration and
 re-measure before considering mouth/voice sync accepted.
 
+In the Sources tab, the microphone Sync control can import the JSON output,
+apply the measured recommendation, or reset back to the structural `0 ms`
+default. Importing a measurement never changes the offset until Apply is
+pressed.
+
 ## Manual acceptance — OBS side-by-side
 
 No metric replaces a human watching both. Open **OBS** and **Videorc** side by side with
