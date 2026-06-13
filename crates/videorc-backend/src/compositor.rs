@@ -172,6 +172,7 @@ pub struct CompositorRuntime {
     scene: Option<CompositorSceneSnapshot>,
     image_sources: HashMap<String, CompositorImageSource>,
     frame_store: CompositorFrameStore,
+    stream_frame_store: Option<CompositorFrameStore>,
     latest_frame_evidence: Option<CompositorFrameEvidence>,
     run_id: Option<String>,
     stop_tx: Option<watch::Sender<bool>>,
@@ -184,6 +185,24 @@ pub struct CompositorStartParams {
     pub width: u32,
     pub height: u32,
     pub publish_yuv_frames: bool,
+    pub stream_output: Option<CompositorAuxiliaryOutput>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompositorAuxiliaryOutput {
+    pub width: u32,
+    pub height: u32,
+    pub publish_yuv_frames: bool,
+}
+
+#[derive(Debug, Clone)]
+struct CompositorRenderLoopParams {
+    run_id: String,
+    target_fps: u32,
+    width: u32,
+    height: u32,
+    publish_yuv_frames: bool,
+    stream_output: Option<CompositorAuxiliaryOutput>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -274,6 +293,7 @@ impl LiveSourceFetchState {
 #[derive(Clone)]
 struct CompositorRenderCache {
     frame_store: CompositorFrameStore,
+    stream_frame_store: Option<CompositorFrameStore>,
     snapshot: Option<CompositorSceneSnapshot>,
     active_image_source: Option<CompositorImageSource>,
 }
@@ -299,6 +319,7 @@ impl CompositorRenderCache {
             .cloned();
         Self {
             frame_store: compositor.frame_store.clone(),
+            stream_frame_store: compositor.stream_frame_store.clone(),
             snapshot: compositor.scene.clone(),
             active_image_source,
         }
@@ -522,6 +543,7 @@ pub fn initial_compositor_state() -> CompositorRuntime {
         scene: None,
         image_sources: HashMap::new(),
         frame_store: Arc::new(StdMutex::new(FrameStore::new(2))),
+        stream_frame_store: None,
         latest_frame_evidence: None,
         run_id: None,
         stop_tx: None,
@@ -572,10 +594,14 @@ pub async fn start_synthetic_compositor(
         message: Some("Synthetic compositor running.".to_string()),
     };
     let (stop_tx, stop_rx) = watch::channel(false);
+    let stream_frame_store = params
+        .stream_output
+        .map(|_| Arc::new(StdMutex::new(FrameStore::new(2))));
 
     {
         let mut compositor = state.compositor.lock().await;
         compositor.frame_store = Arc::new(StdMutex::new(FrameStore::new(2)));
+        compositor.stream_frame_store = stream_frame_store;
         compositor.latest_frame_evidence = None;
         compositor.status = status.clone();
         compositor.run_id = Some(run_id.clone());
@@ -585,11 +611,14 @@ pub async fn start_synthetic_compositor(
 
     let render_task = spawn_compositor_render_loop(
         state.clone(),
-        run_id.clone(),
-        target_fps,
-        status.width,
-        status.height,
-        params.publish_yuv_frames,
+        CompositorRenderLoopParams {
+            run_id: run_id.clone(),
+            target_fps,
+            width: status.width,
+            height: status.height,
+            publish_yuv_frames: params.publish_yuv_frames,
+            stream_output: params.stream_output,
+        },
         stop_rx,
     );
 
@@ -639,6 +668,7 @@ pub async fn stop_compositor(state: &AppState) -> CompositorStatus {
         let mut compositor = state.compositor.lock().await;
         compositor.status = status.clone();
         compositor.latest_frame_evidence = None;
+        compositor.stream_frame_store = None;
     }
     state.emit_event("compositor.status", status.clone());
     status
@@ -646,11 +676,7 @@ pub async fn stop_compositor(state: &AppState) -> CompositorStatus {
 
 fn spawn_compositor_render_loop(
     state: AppState,
-    run_id: String,
-    target_fps: u32,
-    width: u32,
-    height: u32,
-    publish_yuv_frames: bool,
+    params: CompositorRenderLoopParams,
     stop_rx: watch::Receiver<bool>,
 ) -> JoinHandle<()> {
     tokio::task::spawn_blocking(move || {
@@ -667,15 +693,7 @@ fn spawn_compositor_render_loop(
                 return;
             }
         };
-        runtime.block_on(run_synthetic_compositor_loop(
-            state,
-            run_id,
-            target_fps,
-            width,
-            height,
-            publish_yuv_frames,
-            stop_rx,
-        ));
+        runtime.block_on(run_synthetic_compositor_loop(state, params, stop_rx));
     })
 }
 
@@ -685,6 +703,11 @@ pub async fn compositor_status(state: &AppState) -> CompositorStatus {
 
 pub async fn compositor_frame_store(state: &AppState) -> CompositorFrameStore {
     state.compositor.lock().await.frame_store.clone()
+}
+
+#[cfg(test)]
+pub async fn compositor_stream_frame_store(state: &AppState) -> Option<CompositorFrameStore> {
+    state.compositor.lock().await.stream_frame_store.clone()
 }
 
 pub async fn compositor_latest_frame_evidence(state: &AppState) -> Option<CompositorFrameEvidence> {
@@ -966,6 +989,7 @@ async fn stop_current_compositor(state: &AppState) {
     }
     let mut compositor = state.compositor.lock().await;
     compositor.latest_frame_evidence = None;
+    compositor.stream_frame_store = None;
 }
 
 fn emit_runtime_diagnostics_event(state: &AppState, diagnostic_stats: DiagnosticStats) {
@@ -981,19 +1005,24 @@ fn emit_runtime_diagnostics_event(state: &AppState, diagnostic_stats: Diagnostic
 
 async fn run_synthetic_compositor_loop(
     state: AppState,
-    run_id: String,
-    target_fps: u32,
-    width: u32,
-    height: u32,
-    publish_yuv_frames: bool,
+    params: CompositorRenderLoopParams,
     mut stop_rx: watch::Receiver<bool>,
 ) {
+    let CompositorRenderLoopParams {
+        run_id,
+        target_fps,
+        width,
+        height,
+        publish_yuv_frames,
+        stream_output,
+    } = params;
     let frame_interval = Duration::from_secs_f64(1.0 / f64::from(target_fps.max(1)));
     let mut ticker = tokio::time::interval(frame_interval);
     ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
     // Persisted GPU compositor (Some only on macOS when not disabled and a GPU exists);
     // built once and reused per frame. Held across the loop's awaits (it is Send).
     let mut gpu_compositor = new_gpu_compositor();
+    let mut stream_gpu_compositor = stream_output.and_then(|_| new_gpu_compositor());
     let mut live_sources = CompositorLiveSources::refresh(&state).await;
     let mut render_cache = CompositorRenderCache::refresh_initial(&state).await;
     let mut next_live_source_refresh_at = Instant::now() + COMPOSITOR_LIVE_SOURCE_REFRESH_INTERVAL;
@@ -1070,6 +1099,8 @@ async fn run_synthetic_compositor_loop(
                         &mut render_cache,
                         gpu_compositor.as_mut(),
                         publish_yuv_frames,
+                        stream_output,
+                        stream_gpu_compositor.as_mut(),
                     )
                         .await;
                 let fallback_frame_age_ms = published.fallback_frame_age_ms;
@@ -2071,11 +2102,14 @@ async fn publish_compositor_frame(
     render_cache: &mut CompositorRenderCache,
     gpu: Option<&mut GpuCompositor>,
     publish_yuv_frame: bool,
+    stream_output: Option<CompositorAuxiliaryOutput>,
+    stream_gpu: Option<&mut GpuCompositor>,
 ) -> CompositorPublishResult {
     let source_fetch_started_at = Instant::now();
     let scene_snapshot_started_at = Instant::now();
     render_cache.refresh_nonblocking(state);
     let frame_store = render_cache.frame_store.clone();
+    let stream_frame_store = render_cache.stream_frame_store.clone();
     let snapshot = render_cache.snapshot.clone();
     let active_image_source = render_cache.active_image_source.clone();
     let scene_snapshot_ms = scene_snapshot_started_at.elapsed().as_secs_f64() * 1000.0;
@@ -2172,6 +2206,25 @@ async fn publish_compositor_frame(
         );
         timings.frame_store_publish_ms = publish_started_at.elapsed().as_secs_f64() * 1000.0;
     }
+    if let (Some(stream_output), Some(stream_frame_store)) = (stream_output, stream_frame_store) {
+        let inputs = CompositorRenderInputs {
+            sequence,
+            width: stream_output.width.max(1),
+            height: stream_output.height.max(1),
+            snapshot: snapshot.as_ref(),
+            active_image_source: active_image_source.as_ref(),
+            camera_frame: camera_frame.as_ref().map(|(frame, _layout)| frame),
+            screen_frame: screen_frame.as_ref(),
+        };
+        publish_auxiliary_compositor_frame(
+            sequence,
+            captured_at,
+            stream_frame_store,
+            inputs,
+            stream_gpu,
+            stream_output.publish_yuv_frames,
+        );
+    }
     let evidence = CompositorFrameEvidence {
         sequence,
         scene_revision: snapshot.as_ref().map(|snapshot| snapshot.revision),
@@ -2196,6 +2249,51 @@ async fn publish_compositor_frame(
     }
 }
 
+fn publish_auxiliary_compositor_frame(
+    sequence: u64,
+    captured_at: Instant,
+    frame_store: CompositorFrameStore,
+    inputs: CompositorRenderInputs<'_>,
+    gpu: Option<&mut GpuCompositor>,
+    publish_yuv_frame: bool,
+) {
+    let width = inputs.width;
+    let height = inputs.height;
+    let mut pixel_format = CompositorPixelFormat::yuv420p_cpu_buffer();
+    let mut export_handle = CompositorFrameExportHandle::default();
+    let bytes = match try_gpu_compose(gpu, &inputs, publish_yuv_frame) {
+        Ok(frame) => {
+            pixel_format = frame.pixel_format;
+            export_handle = frame.export_handle;
+            frame.yuv
+        }
+        Err(_) if publish_yuv_frame => {
+            let mut bytes = {
+                let mut store = frame_store
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                store.checkout_buffer(raw_yuv420p_len(width, height))
+            };
+            render_compositor_yuv420p_frame(inputs, &mut bytes);
+            bytes
+        }
+        Err(_) => return,
+    };
+    let mut store = frame_store
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    store.publish_with_metadata(
+        sequence,
+        width,
+        height,
+        pixel_format,
+        export_handle,
+        captured_at,
+        bytes,
+    );
+}
+
+#[derive(Clone, Copy)]
 struct CompositorRenderInputs<'a> {
     sequence: u64,
     width: u32,
@@ -3843,6 +3941,8 @@ mod tests {
             &mut render_cache,
             Some(&mut gpu),
             true,
+            None,
+            None,
         )
         .await;
         if result.compositor_backend != CompositorBackend::Metal {
@@ -3919,6 +4019,8 @@ mod tests {
             &mut render_cache,
             Some(&mut gpu),
             false,
+            None,
+            None,
         )
         .await;
         if result.compositor_backend != CompositorBackend::Metal {
@@ -4176,12 +4278,13 @@ mod tests {
                 width: 640,
                 height: 360,
                 publish_yuv_frames: true,
+                stream_output: None,
             },
         )
         .await;
 
         let mut latest_evidence = None;
-        for _ in 0..50 {
+        for _ in 0..100 {
             latest_evidence = compositor_latest_frame_evidence(&state).await;
             if latest_evidence
                 .as_ref()
@@ -4209,6 +4312,182 @@ mod tests {
         );
         assert_eq!(status.width, 640);
         assert_eq!(status.height, 360);
+    }
+
+    #[tokio::test]
+    async fn compositor_publishes_auxiliary_stream_output_store() {
+        let state = test_state();
+        start_synthetic_compositor(
+            state.clone(),
+            CompositorStartParams {
+                target_fps: 30,
+                width: 640,
+                height: 360,
+                publish_yuv_frames: true,
+                stream_output: Some(CompositorAuxiliaryOutput {
+                    width: 320,
+                    height: 180,
+                    publish_yuv_frames: true,
+                }),
+            },
+        )
+        .await;
+        let layout = crate::protocol::default_layout_settings();
+        let scene = crate::scene::scene_from_capture_config(SceneConfigParams {
+            sources: SourceSelection {
+                screen_id: None,
+                window_id: None,
+                camera_id: None,
+                microphone_id: None,
+                test_pattern: true,
+            },
+            layout: layout.clone(),
+            video: Some(VideoSettings {
+                preset: VideoPreset::Custom,
+                width: 64,
+                height: 36,
+                fps: 30,
+                bitrate_kbps: 2000,
+            }),
+        });
+        update_compositor_scene(
+            &state,
+            CompositorSceneUpdateParams {
+                revision: 1,
+                scene: Some(scene),
+                layout,
+                active_screen: None,
+            },
+        )
+        .await;
+
+        let recording_store = compositor_frame_store(&state).await;
+        let stream_store = compositor_stream_frame_store(&state)
+            .await
+            .expect("stream frame store");
+        let mut recording_latest = None;
+        let mut stream_latest = None;
+        for _ in 0..50 {
+            recording_latest = recording_store
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .latest();
+            stream_latest = stream_store
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .latest();
+            if recording_latest.is_some() && stream_latest.is_some() {
+                break;
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+        stop_compositor(&state).await;
+
+        let recording = recording_latest.expect("recording frame");
+        let stream = stream_latest.expect("stream frame");
+        assert_eq!((recording.width, recording.height), (640, 360));
+        assert_eq!(recording.bytes.len(), raw_yuv420p_len(640, 360));
+        assert_eq!((stream.width, stream.height), (320, 180));
+        assert_eq!(stream.bytes.len(), raw_yuv420p_len(320, 180));
+        assert!(compositor_stream_frame_store(&state).await.is_none());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn compositor_publishes_auxiliary_stream_metal_target_or_skips() {
+        if !metal_compositor_enabled() {
+            eprintln!("skipping: Metal compositor disabled");
+            return;
+        }
+        let Some(mut recording_gpu) = new_gpu_compositor() else {
+            eprintln!("skipping: recording Metal compositor unavailable");
+            return;
+        };
+        let Some(mut stream_gpu) = new_gpu_compositor() else {
+            eprintln!("skipping: stream Metal compositor unavailable");
+            return;
+        };
+        let state = test_state();
+        let layout = crate::protocol::default_layout_settings();
+        let scene = crate::scene::scene_from_capture_config(SceneConfigParams {
+            sources: SourceSelection {
+                screen_id: None,
+                window_id: None,
+                camera_id: None,
+                microphone_id: None,
+                test_pattern: true,
+            },
+            layout: layout.clone(),
+            video: Some(VideoSettings {
+                preset: VideoPreset::Custom,
+                width: 64,
+                height: 36,
+                fps: 30,
+                bitrate_kbps: 2000,
+            }),
+        });
+        let stream_store = Arc::new(StdMutex::new(FrameStore::new(2)));
+        {
+            let mut compositor = state.compositor.lock().await;
+            compositor.stream_frame_store = Some(stream_store.clone());
+            compositor.scene = Some(CompositorSceneSnapshot {
+                revision: 1,
+                scene: Some(scene),
+                layout,
+                active_screen: None,
+            });
+        }
+
+        let recording_store = compositor_frame_store(&state).await;
+        let mut live_sources = CompositorLiveSources::default();
+        let mut render_cache = CompositorRenderCache::refresh_initial(&state).await;
+        let result = publish_compositor_frame(
+            &state,
+            7,
+            64,
+            36,
+            &mut live_sources,
+            &mut render_cache,
+            Some(&mut recording_gpu),
+            false,
+            Some(CompositorAuxiliaryOutput {
+                width: 32,
+                height: 18,
+                publish_yuv_frames: false,
+            }),
+            Some(&mut stream_gpu),
+        )
+        .await;
+        if result.compositor_backend != CompositorBackend::Metal {
+            eprintln!("skipping: Metal compositor did not render recording target");
+            return;
+        }
+
+        let Some(recording) = recording_store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .latest()
+        else {
+            eprintln!("skipping: recording Metal target unavailable");
+            return;
+        };
+        if !recording.metadata.has_metal_iosurface_target() {
+            eprintln!("skipping: recording Metal target IOSurface backing unavailable");
+            return;
+        }
+        let stream = stream_store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .latest()
+            .expect("stream Metal target");
+
+        assert_eq!((recording.width, recording.height), (64, 36));
+        assert_eq!(recording.bytes.len(), 0);
+        assert_eq!(recording.metadata.metal_target_dimensions(), Some((64, 36)));
+        assert_eq!((stream.width, stream.height), (32, 18));
+        assert_eq!(stream.bytes.len(), 0);
+        assert_eq!(stream.metadata.metal_target_dimensions(), Some((32, 18)));
+        assert!(stream.metadata.has_metal_iosurface_target());
     }
 
     #[tokio::test]
@@ -4478,6 +4757,7 @@ mod tests {
                 width: 1920,
                 height: 1080,
                 publish_yuv_frames: true,
+                stream_output: None,
             },
         )
         .await;
@@ -4497,6 +4777,7 @@ mod tests {
                 width: 703,
                 height: 395,
                 publish_yuv_frames: true,
+                stream_output: None,
             },
         )
         .await;
@@ -4525,6 +4806,7 @@ mod tests {
                 width: 1920,
                 height: 1080,
                 publish_yuv_frames: true,
+                stream_output: None,
             },
         )
         .await;

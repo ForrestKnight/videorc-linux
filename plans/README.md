@@ -21,7 +21,7 @@ row when done.
 | 003 | Pin the new platform seams (fifo.rs, capture_input.rs) with unit tests | P2 | S-M | - | DONE (2026-06-12; 12 tests added) |
 | 004 | Bundle the native CAMetalLayer helper and gate packaged preview | P0 | M | - | DONE (2026-06-13; packaged helper bundled and `pnpm smoke:packaged:native-preview` passes) |
 | 005 | Make platform-safe livestreaming use VideoToolbox by default | P0 | L | - | DONE (2026-06-13; multistream passes; A/V gate blocked locally before encoding by ScreenCaptureKit stream-start timeout) |
-| 006 | Implement true 4K record plus 1080p stream split output | P0 | L | 005 | IN PROGRESS (2026-06-13; stream-output profile resolver and diagnostics proof fields landed) |
+| 006 | Implement true 4K record plus 1080p stream split output | P0 | L | 005 | IN PROGRESS (2026-06-13; stream-output profile resolver, diagnostics proof fields, and auxiliary compositor output store landed) |
 | 007 | Characterize Studio and session orchestration before refactoring | P1 | M | - | TODO |
 | 008 | Fix dependency advisory failures and add JS/Rust audit gates | P1 | S-M | - | TODO |
 | 009 | Harden stream/OAuth secret storage and legacy key migration | P1 | M | - | TODO |
@@ -69,8 +69,10 @@ preview, and 1080p livestream output without raw-video fallback.
   and stream profiles can resolve separately.
 - **P1-S2 Split-output proof fields**: Plan 006 Step 2 is done. Diagnostics can
   expose recording/stream output settings and per-output VideoToolbox counters.
-- **P1-S3 Real dual output path**: Finish Plan 006 Step 3. Add separate
-  4K-record and 1080p-stream Metal/VideoToolbox outputs with independent encoded
+- **P1-S3 Real dual output path**: IN PROGRESS. The compositor can publish an
+  optional auxiliary stream-sized output store with its own GPU compositor
+  instance; finish Plan 006 Step 3 by wiring that store into separate
+  4K-record and 1080p-stream VideoToolbox encoders with independent encoded
   FIFOs or mux legs. STOP if the only stream-scale path is FFmpeg rawvideo.
 - **P1-S4 Validation unlock**: Finish Plan 006 Step 4. Allow 4K recording plus
   1080p streaming only when the split-output path is actually available; keep

@@ -547,6 +547,7 @@ pub async fn start_session(
                     encoder_bridge_video_output,
                     EncoderBridgeVideoOutput::RawYuv420p
                 ),
+                stream_output: None,
             },
         )
         .await;

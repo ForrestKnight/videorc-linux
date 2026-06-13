@@ -100,6 +100,7 @@ pub async fn create_preview_surface(
             width: status.width,
             height: status.height,
             publish_yuv_frames: true,
+            stream_output: None,
         },
     )
     .await;
