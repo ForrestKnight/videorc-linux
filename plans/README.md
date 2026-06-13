@@ -39,6 +39,97 @@ row when done.
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
 
+## Current execution queue
+
+This is the practical queue as of 2026-06-13 after Plans 009 and 011 landed.
+The plan files below remain the source of truth; this section is the operator
+view for what to run next.
+
+### Track A - Unblocked product boundary
+
+Run this track now while media hardware gates are being arranged.
+
+1. **Plan 016 - open-core entitlement boundary**
+   - Slice A1: document the free/premium capability matrix.
+   - Slice A2: add backend entitlement snapshot/protocol.
+   - Slice A3: enforce livestreaming and cloud AI server-side.
+   - Slice A4: wire renderer premium/free states from backend data.
+   - Slice A5: update streaming/cloud AI smokes to opt into developer premium.
+   - Proof gates: `cargo test -p videorc-backend entitlement`,
+     `cargo test -p videorc-backend`, `pnpm --filter @videorc/desktop test`,
+     `pnpm typecheck`, `pnpm lint`, `pnpm smoke:dev`,
+     `pnpm smoke:multistream`, `pnpm test:scripts`.
+
+2. **Plan 018 - redacted support bundle**
+   - Slice A6: define bundle schema and redaction helpers.
+   - Slice A7: add backend/main export command.
+   - Slice A8: add Diagnostics export action.
+   - Slice A9: add script verifier.
+   - Slice A10: document bundle contents/exclusions.
+   - Proof gates: `cargo test -p videorc-backend diagnostics`,
+     `pnpm --filter @videorc/desktop test`, `pnpm typecheck`, `pnpm lint`,
+     `pnpm test:scripts`, `pnpm smoke:dev`.
+
+### Track B - Media-core unblock
+
+Do not claim OBS parity or release readiness until this track is green or has a
+fresh, specific hardware/permission blocker.
+
+1. **Plan 006 - complete the real-source gates**
+   - Slice B1: re-run drift check and confirm current split-output code still
+     matches Plan 006.
+   - Slice B2: verify ScreenCaptureKit source discovery and permissions before
+     running media gates.
+   - Slice B3: run `pnpm baseline:real-source:4k30:av-sync -- --gate` on a
+     detected 3840x2160 or better source.
+   - Slice B4: run `pnpm baseline:stream:av-sync -- --gate`.
+   - Slice B5: if both pass, mark Plan 006 DONE; if either fails before
+     encoding, mark BLOCKED with exact source/permission reason; if either
+     fails after encoding starts, create/fix the smallest code slice and rerun.
+
+2. **Plan 010 - dead-code reconciliation**
+   - Run only after Plan 006 is accepted, because the final split-output engine
+     decides which staged media modules are retained or retired.
+
+### Track C - Acceptance and audio
+
+This track converts subjective "looks good/bad" reports into evidence.
+
+1. **Plan 013 - OBS parity evidence**
+   - Run after Plan 006. Automated gates first, then human OBS side-by-side.
+   - Output must be PASS, FAIL, or BLOCKED with owner bucket.
+
+2. **Plan 014 - guided audio sync calibration**
+   - Run after Plans 006 and 007.
+   - Use this when recordings are visually good but audio is late or drifting.
+   - Do not hide pipeline issues behind a new nonzero default offset.
+
+3. **Plan 017 - native system audio**
+   - Run after Plans 006, 007, and 014.
+   - Mac-first mixed audio graph; Windows loopback stays out of scope.
+
+### Track D - Release and provider proof
+
+This track is for public launch confidence, not local dev confidence.
+
+1. **Plan 012 - signed macOS release validation**
+   - Run after Plans 004, 006, 008, 009, and 011.
+   - Must prove signed/notarized/stapled app, bundled backend/FFmpeg, and
+     packaged native CAMetalLayer preview on a clean machine.
+
+2. **Plan 015 - real provider livestreaming**
+   - Run after Plans 006, 009, and 012.
+   - Must prove YouTube/Twitch/X eligibility or record exact non-code blockers.
+   - Manual RTMP must not masquerade as native provider success.
+
+### Track E - Windows follow-through
+
+Run after macOS v1 stabilization unless business priority changes.
+
+1. **Plan 019 - Windows v1 capture/package acceptance**
+   - Packaging scaffolds are done; capture parity is not.
+   - Needs a Windows 11 x64 box and dated recording evidence.
+
 ## Master phase roadmap
 
 This roadmap is the execution overlay for the plans above. The individual plan
@@ -101,11 +192,10 @@ hardware rather than code.
 Goal: make future changes safer before adding premium, provider, and support
 surface area.
 
-- **P2-S1 Characterize Studio orchestration**: Execute Plan 007. Extract pure
-  helpers for session params, Go Live decisions, and native preview present
-  policy. No UI redesign.
-- **P2-S2 Dependency/advisory gates**: Execute Plan 008. Clean JS advisories,
-  add Rust advisory checks, and wire CI/release gates.
+- **P2-S1 Characterize Studio orchestration**: Plan 007 is done. Pure helpers
+  now cover session params, Go Live decisions, and native preview present policy.
+- **P2-S2 Dependency/advisory gates**: Plan 008 is done. JS/Rust advisory gates
+  are wired into CI/release checks.
 - **P2-S3 Secret storage posture**: Plan 009 is done. Credential storage is
   explicit, legacy renderer-persisted stream keys migrate through the backend,
   and masked hints/delete flows are preserved.
@@ -115,8 +205,8 @@ surface area.
   lands, because the fate of the staged live media modules depends on the final
   split-output architecture.
 
-Plans 007, 008, and 009 can run in parallel if separate executors own them.
-Plan 011 should be isolated because it can break preload/native-preview IPC.
+Plan 016 and Plan 018 are the main unblocked stabilizers now. Plan 010 waits on
+Plan 006.
 
 ### Phase 3 - Close acceptance, not vibes
 
