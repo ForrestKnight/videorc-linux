@@ -185,7 +185,67 @@ export function StudioTab(): ReactElement {
           />
         ) : null}
 
-        {/* Big preview on top */}
+        {/* Session command module in the stage header (top-right). It reuses the
+            existing record/stop/go-live handlers — no second session state
+            machine — and replaces the old below-preview transport (A7). */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span
+              className={cn(
+                'size-2.5 shrink-0 rounded-full',
+                recording.state === 'recording' && 'bg-destructive',
+                recording.state === 'streaming' && 'bg-success',
+                (recording.state === 'starting' || recording.state === 'stopping') && 'bg-warning',
+                recording.state === 'failed' && 'bg-destructive',
+                recording.state === 'idle' && 'bg-muted-foreground/40',
+                active && 'animate-pulse'
+              )}
+            />
+            <div className="flex min-w-0 flex-col">
+              <span className="text-sm font-semibold capitalize">{recording.state}</span>
+              <span className="truncate text-xs text-muted-foreground">
+                {recording.message ?? 'Idle'}
+              </span>
+            </div>
+            {previewHealth.tone !== 'neutral' ? (
+              <StatusBadge label="Preview" tone={previewHealth.tone} value={previewHealth.value} />
+            ) : null}
+          </div>
+          <StudioSessionModule
+            active={active}
+            canStop={canStop}
+            elapsed={elapsed}
+            liveStreamBlockedReason={liveStreamBlockedReason}
+            recordBlockedReason={recordBlockedReason}
+            startRequestPending={startRequestPending}
+            stopLabel={stopLabel}
+            wsStatus={wsStatus}
+            onLiveStream={handleLiveStream}
+            onRecord={handleRecord}
+            onStop={stopSession}
+          />
+        </div>
+
+        {previewHealth.tone === 'error' && previewHealth.detail ? (
+          <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-1.5 text-xs font-medium text-destructive">
+            <WarningCircle className="size-4 shrink-0" weight="fill" />
+            <span className="min-w-0">{previewHealth.detail}</span>
+          </div>
+        ) : null}
+        {!active && liveStreamBlockedReason ? (
+          <div className="flex items-center gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-1.5 text-xs font-medium text-warning-foreground dark:text-warning">
+            <WarningCircle className="size-4 shrink-0" weight="fill" />
+            <span>{liveStreamBlockedReason}</span>
+          </div>
+        ) : null}
+        <div className="flex items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+          <FolderOpen className="size-4 shrink-0" weight="duotone" />
+          <span className="truncate">
+            {recording.outputPath ?? recording.streamUrl ?? 'Output appears after session start.'}
+          </span>
+        </div>
+
+        {/* Big preview below the command module. */}
         <PreviewStage
           onOpenPermissions={openPreviewPermissions}
           onRetry={refreshPreview}
@@ -193,94 +253,6 @@ export function StudioTab(): ReactElement {
           previewSurfaceStatus={previewSurfaceStatus}
           nativePreviewSurfaceEnabled={nativePreviewSurfaceEnabled}
         />
-
-        {/* Action bar: status + the two primary buttons + output */}
-        <div className="flex flex-col gap-3 rounded-2xl border bg-muted/20 p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5">
-              <span
-                className={cn(
-                  'size-2.5 shrink-0 rounded-full',
-                  recording.state === 'recording' && 'bg-destructive',
-                  recording.state === 'streaming' && 'bg-success',
-                  (recording.state === 'starting' || recording.state === 'stopping') &&
-                    'bg-warning',
-                  recording.state === 'failed' && 'bg-destructive',
-                  recording.state === 'idle' && 'bg-muted-foreground/40',
-                  active && 'animate-pulse'
-                )}
-              />
-              <div className="flex flex-col">
-                <span className="text-sm font-semibold capitalize">{recording.state}</span>
-                <span className="text-xs text-muted-foreground">{recording.message ?? 'Idle'}</span>
-              </div>
-              {previewHealth.tone !== 'neutral' ? (
-                <StatusBadge
-                  label="Preview"
-                  tone={previewHealth.tone}
-                  value={previewHealth.value}
-                />
-              ) : null}
-            </div>
-            <time className="font-heading text-2xl font-semibold tabular-nums">{elapsed}</time>
-          </div>
-
-          {previewHealth.tone === 'error' && previewHealth.detail ? (
-            <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-1.5 text-xs font-medium text-destructive">
-              <WarningCircle className="size-4 shrink-0" weight="fill" />
-              <span className="min-w-0">{previewHealth.detail}</span>
-            </div>
-          ) : null}
-
-          {active ? (
-            <Button size="lg" variant="destructive" disabled={!canStop} onClick={stopSession}>
-              <StopCircle data-icon="inline-start" weight="fill" />
-              {stopLabel}
-              <Kbd className="ml-1.5">␣</Kbd>
-            </Button>
-          ) : (
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              <Button
-                size="lg"
-                variant="outline"
-                disabled={Boolean(recordBlockedReason) || startRequestPending}
-                title={recordBlockedReason ?? 'Record to a file (Space)'}
-                onClick={handleRecord}
-              >
-                <Record data-icon="inline-start" weight="fill" />
-                {startRequestPending ? 'Starting…' : 'Record'}
-                <Kbd className="ml-1.5">␣</Kbd>
-              </Button>
-              <Button
-                size="lg"
-                variant="outline"
-                disabled={
-                  wsStatus !== 'connected' ||
-                  startRequestPending ||
-                  Boolean(liveStreamBlockedReason)
-                }
-                title={liveStreamBlockedReason ?? 'Start livestream'}
-                onClick={handleLiveStream}
-              >
-                <Broadcast data-icon="inline-start" weight="fill" />
-                Live Stream
-              </Button>
-            </div>
-          )}
-          {!active && liveStreamBlockedReason ? (
-            <div className="flex items-center gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-1.5 text-xs font-medium text-warning-foreground dark:text-warning">
-              <WarningCircle className="size-4 shrink-0" weight="fill" />
-              <span>{liveStreamBlockedReason}</span>
-            </div>
-          ) : null}
-
-          <div className="flex items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-            <FolderOpen className="size-4 shrink-0" weight="duotone" />
-            <span className="truncate">
-              {recording.outputPath ?? recording.streamUrl ?? 'Output appears after session start.'}
-            </span>
-          </div>
-        </div>
 
         {/* Session strip: every former accordion is now a chip that shows
             state and deep-links to its owning page (ux-ia plan, slice 5). */}
@@ -294,6 +266,77 @@ export function StudioTab(): ReactElement {
           onClose={() => setChatRailOpen(false)}
         />
       ) : null}
+    </div>
+  )
+}
+
+// Compact top-right session command module (A7). Pure presentation: it calls the
+// same handlers StudioTab already owns (record/go-live set the mode then start;
+// Go Live still flows through the existing preflight dialog), so there is no
+// second session state machine. Blocked reasons surface as the button title.
+function StudioSessionModule({
+  active,
+  canStop,
+  elapsed,
+  startRequestPending,
+  stopLabel,
+  recordBlockedReason,
+  liveStreamBlockedReason,
+  wsStatus,
+  onRecord,
+  onLiveStream,
+  onStop
+}: {
+  active: boolean
+  canStop: boolean
+  elapsed: string
+  startRequestPending: boolean
+  stopLabel: string
+  recordBlockedReason: string | null
+  liveStreamBlockedReason: string | null
+  wsStatus: string
+  onRecord: () => void
+  onLiveStream: () => void
+  onStop: () => void
+}): ReactElement {
+  return (
+    <div className="flex shrink-0 items-center gap-2 rounded-xl border bg-muted/30 px-2 py-1.5">
+      {active ? (
+        <>
+          <time className="px-1.5 font-heading text-lg font-semibold tabular-nums">{elapsed}</time>
+          <Button disabled={!canStop} size="sm" variant="destructive" onClick={onStop}>
+            <StopCircle data-icon="inline-start" weight="fill" />
+            {stopLabel}
+            <Kbd className="ml-1.5">␣</Kbd>
+          </Button>
+        </>
+      ) : (
+        <>
+          <Button
+            disabled={Boolean(recordBlockedReason) || startRequestPending}
+            size="sm"
+            title={recordBlockedReason ?? 'Record to a file (Space)'}
+            variant="destructive"
+            onClick={onRecord}
+          >
+            <Record data-icon="inline-start" weight="fill" />
+            {startRequestPending ? 'Starting…' : 'Record'}
+            <Kbd className="ml-1.5">␣</Kbd>
+          </Button>
+          <Button
+            disabled={
+              wsStatus !== 'connected' || startRequestPending || Boolean(liveStreamBlockedReason)
+            }
+            size="sm"
+            title={liveStreamBlockedReason ?? 'Start livestream'}
+            variant="outline"
+            onClick={onLiveStream}
+          >
+            <Broadcast data-icon="inline-start" weight="fill" />
+            Go Live
+          </Button>
+        </>
+      )}
     </div>
   )
 }
