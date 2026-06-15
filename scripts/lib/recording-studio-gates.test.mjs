@@ -18,7 +18,9 @@ describe('buildRecordingStudioGateSteps', () => {
       'backend scene layout tests',
       'backend recording pipeline tests',
       'backend audio pipeline tests',
-      'dev app all-layout recording artifact smoke'
+      'dev app all-layout recording artifact smoke',
+      'imported screen image recording smoke',
+      'real ScreenCaptureKit screen recording smoke'
     ])
     assert.deepEqual(steps[0].args, [
       '--filter',
@@ -30,7 +32,9 @@ describe('buildRecordingStudioGateSteps', () => {
       'native-preview-present-policy.test.ts'
     ])
     assert.deepEqual(steps[1].args, ['test:scripts'])
-    assert.deepEqual(steps.at(-1).args, ['smoke:dev'])
+    assert.deepEqual(steps.at(-3).args, ['smoke:dev'])
+    assert.deepEqual(steps.at(-2).args, ['smoke:screens'])
+    assert.deepEqual(steps.at(-1).args, ['smoke:screen-recording-real'])
   })
 
   it('can include the heavier native preview layout-stress smoke', () => {
@@ -53,6 +57,8 @@ describe('buildRecordingStudioGateSteps', () => {
     assert.match(report, /test:scripts/)
     assert.match(report, /live_layout::tests::/)
     assert.match(report, /smoke:dev/)
+    assert.match(report, /smoke:screens/)
+    assert.match(report, /smoke:screen-recording-real/)
     assert.match(report, /VIDEORC_NATIVE_PREVIEW_SOURCE_COMPLETE_SCENE=1/)
     assert.match(report, /VIDEORC_NATIVE_PREVIEW_LAYOUT_STRESS_UPDATES=4/)
     assert.match(report, /pnpm smoke:recording-native-preview/)

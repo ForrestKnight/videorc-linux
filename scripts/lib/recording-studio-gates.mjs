@@ -44,11 +44,23 @@ export function buildRecordingStudioGateSteps({
   ]
 
   if (includeAppSmoke) {
-    steps.push({
-      label: 'dev app all-layout recording artifact smoke',
-      command: 'pnpm',
-      args: ['smoke:dev']
-    })
+    steps.push(
+      {
+        label: 'dev app all-layout recording artifact smoke',
+        command: 'pnpm',
+        args: ['smoke:dev']
+      },
+      {
+        label: 'imported screen image recording smoke',
+        command: 'pnpm',
+        args: ['smoke:screens']
+      },
+      {
+        label: 'real ScreenCaptureKit screen recording smoke',
+        command: 'pnpm',
+        args: ['smoke:screen-recording-real']
+      }
+    )
   }
 
   if (includeDeviceSmoke) {

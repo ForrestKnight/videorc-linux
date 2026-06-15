@@ -1,23 +1,26 @@
 export function pickDevice(
   devices,
   kind,
-  { override, disabled, nativePrefix, minimumWidth, minimumHeight } = {}
+  { override, disabled, nativePrefix, requireNative = false, minimumWidth, minimumHeight } = {}
 ) {
   if (disabled) return null
   if (override) {
-    return devices.find((device) => device.id === override) ?? {
-      id: override,
-      name: '(forced)',
-      kind,
-      status: 'forced',
-    }
+    return (
+      devices.find((device) => device.id === override) ?? {
+        id: override,
+        name: '(forced)',
+        kind,
+        status: 'forced'
+      }
+    )
   }
 
   const ofKind = devices.filter((device) => device.kind === kind)
   const available = ofKind.filter((device) => device.status === 'available')
   const pool = available.length ? available : ofKind
   const nativePool = nativePrefix ? pool.filter((device) => device.id.startsWith(nativePrefix)) : []
-  const preferredPool = nativePool.length ? nativePool : pool
+  const preferredPool =
+    requireNative && nativePrefix ? nativePool : nativePool.length ? nativePool : pool
   if (!preferredPool.length) return null
 
   if (hasMinimumDimensions(minimumWidth, minimumHeight)) {

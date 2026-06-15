@@ -1024,16 +1024,11 @@ function isNativeWindowSourceId(sourceId: string | undefined): boolean {
   return sourceId?.startsWith('window:screencapturekit:') === true
 }
 
-function isNativeCaptureDevice(device: Device): boolean {
+export function isNativeCaptureDevice(device: Device): boolean {
   return (
     (device.kind === 'screen' && isNativeScreenSourceId(device.id)) ||
     (device.kind === 'window' && isNativeWindowSourceId(device.id))
   )
-}
-
-function preferNativeCaptureDevices(devices: Device[]): Device[] {
-  const nativeDevices = devices.filter(isNativeCaptureDevice)
-  return nativeDevices.length > 0 ? nativeDevices : devices
 }
 
 export function reconcileSourceSelection(
@@ -1053,7 +1048,7 @@ export function reconcileSourceSelection(
   const captureDevices = devices.filter(
     (device) => ['screen', 'window'].includes(device.kind) && device.status === 'available'
   )
-  const selectableCaptureDevices = preferNativeCaptureDevices(captureDevices)
+  const selectableCaptureDevices = captureDevices.filter(isNativeCaptureDevice)
   const cameras = devices.filter(
     (device) => device.kind === 'camera' && device.status === 'available'
   )

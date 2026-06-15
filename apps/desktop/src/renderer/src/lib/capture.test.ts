@@ -85,6 +85,31 @@ describe('reconcileSourceSelection', () => {
     expect(next.screenName).toBe('Display 2')
     expect(next.windowId).toBeUndefined()
   })
+
+  it('clears legacy avfoundation screen sources when no native capture source is available', () => {
+    const remembered: SourceSelection = {
+      screenId: 'screen:avfoundation:7',
+      screenName: 'Capture screen 1'
+    }
+    const devices: Device[] = [
+      {
+        id: 'screen:avfoundation:7',
+        name: 'Capture screen 1',
+        kind: 'screen',
+        status: 'available'
+      }
+    ]
+
+    const next = reconcileSourceSelection(remembered, devices)
+
+    expect(next.screenId).toBeUndefined()
+    expect(next.screenName).toBeUndefined()
+    expect(next.windowId).toBeUndefined()
+    expect(next.windowName).toBeUndefined()
+    expect(sourceSelectionChangeMessages(remembered, next)).toEqual([
+      'Capture source "Capture screen 1" is unavailable, so it was cleared.'
+    ])
+  })
 })
 
 describe('smokePreviewCompositorCaptureConfig', () => {

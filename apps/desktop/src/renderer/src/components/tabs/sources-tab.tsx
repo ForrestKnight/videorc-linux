@@ -30,6 +30,7 @@ import {
   MICROPHONE_SYNC_OFFSET_MIN_MS,
   applyAudioSyncRecommendation,
   audioSyncCalibrationState,
+  isNativeCaptureDevice,
   normalizeMicrophoneSyncOffsetMs,
   parseAudioSyncRecommendationJson,
   parseMicrophoneSyncOffsetInput,
@@ -126,9 +127,7 @@ export function SourcesTab(): ReactElement {
   const problemDeviceCount = deviceList.devices.filter(
     (device) => device.status !== 'available'
   ).length
-  const captureDevices = deviceList.devices.filter((device) =>
-    ['screen', 'window'].includes(device.kind)
-  )
+  const captureDevices = deviceList.devices.filter(isNativeCaptureDevice)
   const cameras = deviceList.devices.filter((device) => device.kind === 'camera')
   const microphones = deviceList.devices.filter((device) => device.kind === 'microphone')
   const syncOffsetMs = captureConfig.audio.microphoneSyncOffsetMs

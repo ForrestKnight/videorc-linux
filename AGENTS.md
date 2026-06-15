@@ -25,7 +25,7 @@ CI covers Rust advisory audit, Rust fmt, clippy, Rust tests, JS production advis
 ## Recording Studio Regression Rules
 
 - Run `pnpm smoke:recording-studio` before handing off changes that touch capture selection, preview, layout composition, recording output, FFmpeg/video encoding, audio capture, or audio sync.
-- The recording-studio gate must cover desktop capture/session params, Node artifact analyzer and A/V sync tests, backend live layout/scene/recording/audio tests, and the dev-app all-layout recording smoke.
+- The recording-studio gate must cover desktop capture/session params, Node artifact analyzer and A/V sync tests, backend live layout/scene/recording/audio tests, the dev-app all-layout recording smoke, imported screen recording smoke, and the real ScreenCaptureKit screen recording smoke.
 - The dev-app all-layout recording smoke must inspect the finished recording artifacts with ffprobe/ffmpeg. A file-size-only recording smoke is not enough.
 - For native preview, source compatibility, layout liveness, or real-device capture changes, run `pnpm smoke:recording-studio:devices` when the local macOS host has the required screen/camera/mic permissions. If that cannot run, say why and run the closest focused native-preview probe or smoke.
 - For audio sync changes, keep `pnpm test:scripts` and a final-artifact A/V analysis in the verification set. Do not rely on manual playback alone.

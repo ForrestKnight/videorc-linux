@@ -453,6 +453,7 @@ function selectSources(devices) {
       override: process.env.VIDEORC_BASELINE_SCREEN_ID,
       disabled: process.env.VIDEORC_BASELINE_NO_SCREEN === '1',
       nativePrefix: NATIVE_PREFIX.screen,
+      requireNative: true,
       minimumWidth: requested4k?.width,
       minimumHeight: requested4k?.height,
     }),
@@ -475,6 +476,7 @@ function assertRequiredSourcesAvailable(sources) {
       disabled: process.env.VIDEORC_BASELINE_NO_SCREEN === '1',
       override: process.env.VIDEORC_BASELINE_SCREEN_ID,
       disableHint: 'VIDEORC_BASELINE_NO_SCREEN=1',
+      requiredPrefix: NATIVE_PREFIX.screen,
       allowForcedOverride: true,
     }),
     requiredSourceBlocker('camera', sources.camera, {
