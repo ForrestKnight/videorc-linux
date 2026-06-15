@@ -31,6 +31,12 @@ import type {
   SideBySideCameraSide,
   SideBySideSplit
 } from '@/lib/backend'
+import {
+  hasSelectedCameraSource,
+  hasSelectedScreenSource,
+  layoutPresetNeedsCamera,
+  layoutPresetNeedsScreen
+} from '@/lib/capture'
 import { cn } from '@/lib/utils'
 
 const LAYOUT_PRESETS = [
@@ -64,7 +70,8 @@ export function LayoutTab(): ReactElement {
   } = useStudio()
   const layout = captureConfig.layout
   const selectedSource = scene?.sources.find((source) => source.id === selectedSceneSourceId)
-  const hasCamera = Boolean(captureConfig.sources.cameraId)
+  const hasCamera = hasSelectedCameraSource(captureConfig.sources)
+  const hasScreen = hasSelectedScreenSource(captureConfig.sources)
   const isScreenOnly = layout.layoutPreset === 'screen-only'
   const isCameraOnly = layout.layoutPreset === 'camera-only'
   const isSideBySide = layout.layoutPreset === 'side-by-side'
@@ -81,12 +88,16 @@ export function LayoutTab(): ReactElement {
           >
             <div className="flex flex-wrap gap-2">
               {LAYOUT_PRESETS.map((preset) => {
-                const needsCamera = preset.id === 'camera-only' || preset.id === 'side-by-side'
+                const needsCamera = layoutPresetNeedsCamera(preset.id)
+                const needsScreen = layoutPresetNeedsScreen(preset.id)
                 const switching = layoutSwitchPending === preset.id
                 // Live sessions switch presets through the backend swap engine
-                // (swap-on-ready); only an in-flight switch or a missing camera blocks.
+                // (swap-on-ready); only an in-flight switch or missing sources block.
                 const disabled =
-                  !preset.enabled || (needsCamera && !hasCamera) || layoutSwitchPending !== null
+                  !preset.enabled ||
+                  (needsCamera && !hasCamera) ||
+                  (needsScreen && !hasScreen) ||
+                  layoutSwitchPending !== null
                 return (
                   <button
                     aria-pressed={layout.layoutPreset === preset.id}
@@ -110,6 +121,10 @@ export function LayoutTab(): ReactElement {
             {isSessionActive ? (
               <p className="text-xs text-muted-foreground">
                 Switching applies live — recording and streaming keep running.
+              </p>
+            ) : !hasScreen ? (
+              <p className="text-xs text-muted-foreground">
+                Select a screen or window in Studio to enable screen layouts.
               </p>
             ) : !hasCamera ? (
               <p className="text-xs text-muted-foreground">

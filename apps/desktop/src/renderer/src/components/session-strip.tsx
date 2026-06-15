@@ -18,7 +18,13 @@ import { Separator } from '@/components/ui/separator'
 import { useWorkspaceNav } from '@/components/workspace-nav'
 import { useStudio } from '@/hooks/use-studio'
 import type { LayoutPreset } from '@/lib/backend'
-import { isStreamTargetStartReady } from '@/lib/capture'
+import {
+  hasSelectedCameraSource,
+  hasSelectedScreenSource,
+  isStreamTargetStartReady,
+  layoutPresetNeedsCamera,
+  layoutPresetNeedsScreen
+} from '@/lib/capture'
 import { cn } from '@/lib/utils'
 
 // The Studio session strip (ux-ia plan, slice 5): one row of stateful chips
@@ -28,11 +34,11 @@ import { cn } from '@/lib/utils'
 const CHIP_CLASS =
   'flex min-w-0 items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2 text-sm transition-colors hover:bg-muted/50'
 
-const LAYOUT_QUICK_PRESETS: { id: LayoutPreset; label: string; needsCamera: boolean }[] = [
-  { id: 'screen-camera', label: 'Screen + Cam', needsCamera: false },
-  { id: 'screen-only', label: 'Screen', needsCamera: false },
-  { id: 'camera-only', label: 'Camera', needsCamera: true },
-  { id: 'side-by-side', label: 'Side by side', needsCamera: true }
+const LAYOUT_QUICK_PRESETS: { id: LayoutPreset; label: string }[] = [
+  { id: 'screen-camera', label: 'Screen + Cam' },
+  { id: 'screen-only', label: 'Screen' },
+  { id: 'camera-only', label: 'Camera' },
+  { id: 'side-by-side', label: 'Side by side' }
 ]
 
 function presetLabel(preset: LayoutPreset): string {
@@ -76,6 +82,8 @@ export function SessionStrip(): ReactElement {
     wsStatus
   } = useStudio()
   const { openStudioPanel } = useWorkspaceNav()
+  const hasCamera = hasSelectedCameraSource(captureConfig.sources)
+  const hasScreen = hasSelectedScreenSource(captureConfig.sources)
 
   const sourceDetail = [
     selectedCaptureDevice?.name ?? 'No screen',
@@ -83,7 +91,6 @@ export function SessionStrip(): ReactElement {
   ].join(' · ')
 
   const muted = captureConfig.audio.microphoneMuted
-  const hasCamera = Boolean(captureConfig.sources.cameraId)
   const MuteIcon = muted ? SpeakerSlash : SpeakerHigh
 
   const destinationChips = captureConfig.streaming.targets
@@ -175,7 +182,11 @@ export function SessionStrip(): ReactElement {
             {LAYOUT_QUICK_PRESETS.map((preset) => (
               <Button
                 key={preset.id}
-                disabled={layoutSwitchPending !== null || (preset.needsCamera && !hasCamera)}
+                disabled={
+                  layoutSwitchPending !== null ||
+                  (layoutPresetNeedsCamera(preset.id) && !hasCamera) ||
+                  (layoutPresetNeedsScreen(preset.id) && !hasScreen)
+                }
                 size="sm"
                 variant={captureConfig.layout.layoutPreset === preset.id ? 'secondary' : 'outline'}
                 onClick={() => applyCameraPreset({ layoutPreset: preset.id })}

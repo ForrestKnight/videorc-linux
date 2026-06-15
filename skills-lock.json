@@ -1,6 +1,18 @@
 {
   "version": 1,
   "skills": {
+    "creem": {
+      "source": "https://www.creem.io/SKILL.md",
+      "sourceType": "url",
+      "skillPath": "SKILL.md",
+      "computedHash": "1aaf6dc1b97d8a81e5b32452b2bf7bd146b3fe16f1287b281ed02ae37a6c063b"
+    },
+    "improve": {
+      "source": "shadcn/improve",
+      "sourceType": "github",
+      "skillPath": "skills/improve/SKILL.md",
+      "computedHash": "431adaf38132005b32cacb952313f18b4c03ee98ee4c5859bad323156a48bb02"
+    },
     "shadcn": {
       "source": "shadcn/ui",
       "sourceType": "github",

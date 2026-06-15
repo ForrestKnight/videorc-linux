@@ -36,6 +36,7 @@ use crate::protocol::{
     SceneConfigParams, SceneSourceKind, SourceSelection,
 };
 use crate::scene::scene_from_capture_config;
+use crate::screen_capture::{parse_screencapturekit_display_id, parse_screencapturekit_window_id};
 use crate::state::AppState;
 
 const WARM_SOURCE_START_TIMEOUT: Duration = Duration::from_secs(5);
@@ -187,13 +188,30 @@ pub fn preset_selection_blocker(params: &SceneConfigParams) -> Option<String> {
         LayoutPreset::ScreenOnly | LayoutPreset::ScreenCamera | LayoutPreset::SideBySide
     );
     let camera_selected = params.sources.camera_id.is_some();
-    let screen_selected = params.sources.screen_id.is_some() || params.sources.window_id.is_some();
+    let screen_selected = params.sources.test_pattern
+        || params
+            .sources
+            .screen_id
+            .as_deref()
+            .and_then(parse_screencapturekit_display_id)
+            .is_some()
+        || params
+            .sources
+            .window_id
+            .as_deref()
+            .and_then(parse_screencapturekit_window_id)
+            .is_some();
     if needs_camera && !camera_selected {
         return Some(format!(
             "Layout preset {preset:?} needs a camera, but no camera is selected. Pick a camera, then switch."
         ));
     }
     if needs_screen && !screen_selected {
+        if params.sources.screen_id.is_some() || params.sources.window_id.is_some() {
+            return Some(format!(
+                "Layout preset {preset:?} needs a native screen or window source, but the selected source cannot feed the native compositor. Pick a screen or window again, then switch."
+            ));
+        }
         return Some(format!(
             "Layout preset {preset:?} needs a screen or window, but none is selected. Pick one, then switch."
         ));
@@ -609,6 +627,16 @@ mod tests {
         assert_eq!(
             preset_selection_blocker(&config(LayoutPreset::SideBySide, true, true)),
             None
+        );
+        let mut test_pattern = config(LayoutPreset::ScreenOnly, false, false);
+        test_pattern.sources.test_pattern = true;
+        assert_eq!(preset_selection_blocker(&test_pattern), None);
+
+        let mut legacy_screen = config(LayoutPreset::SideBySide, true, false);
+        legacy_screen.sources.screen_id = Some("screen:avfoundation:7".to_string());
+        assert!(
+            preset_selection_blocker(&legacy_screen)
+                .is_some_and(|message| message.contains("native screen"))
         );
     }
 

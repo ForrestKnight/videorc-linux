@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import type { SourceSelection } from '../../../shared/backend'
+import type { Device, SourceSelection } from '../../../shared/backend'
 import type { CaptureConfig } from './capture'
 import {
   applyAudioSyncRecommendation,
@@ -9,6 +9,10 @@ import {
   defaultCaptureConfig,
   formatMeasuredAudioLag,
   legacyStreamKeyMigrationCandidates,
+  hasSelectedCameraSource,
+  hasSelectedScreenSource,
+  layoutPresetNeedsCamera,
+  layoutPresetNeedsScreen,
   normalizeAudioSettings,
   normalizeMicrophoneSyncOffsetMs,
   normalizeVideoSettings,
@@ -53,6 +57,33 @@ describe('reconcileSourceSelection', () => {
 
     expect(next).toEqual(remembered)
     expect(sourceSelectionChangeMessages(remembered, next)).toEqual([])
+  })
+
+  it('migrates remembered avfoundation screen sources to native screen sources', () => {
+    const remembered: SourceSelection = {
+      screenId: 'screen:avfoundation:7',
+      screenName: 'Capture screen 1'
+    }
+    const devices: Device[] = [
+      {
+        id: 'screen:screencapturekit:222',
+        name: 'Display 2',
+        kind: 'screen',
+        status: 'available'
+      },
+      {
+        id: 'screen:avfoundation:7',
+        name: 'Capture screen 1',
+        kind: 'screen',
+        status: 'available'
+      }
+    ]
+
+    const next = reconcileSourceSelection(remembered, devices)
+
+    expect(next.screenId).toBe('screen:screencapturekit:222')
+    expect(next.screenName).toBe('Display 2')
+    expect(next.windowId).toBeUndefined()
   })
 })
 
@@ -102,6 +133,35 @@ describe('smokePreviewCompositorCaptureConfig', () => {
         testPattern: true
       }
     })
+  })
+})
+
+describe('layout preset source requirements', () => {
+  it('matches the backend blockers for screen-backed presets', () => {
+    expect(layoutPresetNeedsScreen('screen-camera')).toBe(true)
+    expect(layoutPresetNeedsScreen('screen-only')).toBe(true)
+    expect(layoutPresetNeedsScreen('side-by-side')).toBe(true)
+    expect(layoutPresetNeedsScreen('camera-only')).toBe(false)
+  })
+
+  it('matches the backend blockers for camera-required presets', () => {
+    expect(layoutPresetNeedsCamera('camera-only')).toBe(true)
+    expect(layoutPresetNeedsCamera('side-by-side')).toBe(true)
+    expect(layoutPresetNeedsCamera('screen-camera')).toBe(false)
+    expect(layoutPresetNeedsCamera('screen-only')).toBe(false)
+  })
+
+  it('treats native screen, native window, and test pattern as screen-capable sources', () => {
+    expect(hasSelectedScreenSource({ screenId: 'screen:screencapturekit:1' })).toBe(true)
+    expect(hasSelectedScreenSource({ windowId: 'window:screencapturekit:1' })).toBe(true)
+    expect(hasSelectedScreenSource({ testPattern: true })).toBe(true)
+    expect(hasSelectedScreenSource({ screenId: 'screen:avfoundation:7' })).toBe(false)
+    expect(hasSelectedScreenSource({ cameraId: 'camera:1' })).toBe(false)
+  })
+
+  it('requires a concrete camera id for camera layouts', () => {
+    expect(hasSelectedCameraSource({ cameraId: 'camera:1' })).toBe(true)
+    expect(hasSelectedCameraSource({ screenId: 'screen:1' })).toBe(false)
   })
 })
 

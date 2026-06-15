@@ -55,10 +55,10 @@ describe('buildStartSessionParams', () => {
     })
   })
 
-  it('omits a null scene', () => {
+  it('omits the derived scene unless scene edit mode is active', () => {
     const params = buildStartSessionParams({
       captureConfig: captureConfig(),
-      scene: null,
+      scene,
       settings: {
         outputDirectory: '',
         ffmpegPath: ''
@@ -66,6 +66,20 @@ describe('buildStartSessionParams', () => {
     })
 
     expect(params.scene).toBeUndefined()
+  })
+
+  it('passes the edited scene while scene edit mode is active', () => {
+    const params = buildStartSessionParams({
+      captureConfig: captureConfig(),
+      scene,
+      sceneEditMode: true,
+      settings: {
+        outputDirectory: '',
+        ffmpegPath: ''
+      }
+    })
+
+    expect(params.scene).toBe(scene)
   })
 
   it('passes through streaming and output enablement from capture config', () => {

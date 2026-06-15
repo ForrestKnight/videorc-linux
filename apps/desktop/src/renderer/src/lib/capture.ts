@@ -39,6 +39,26 @@ export type LegacyStreamKeyMigrationCandidate = {
   streamKey: string
 }
 
+export function layoutPresetNeedsCamera(preset: LayoutPreset): boolean {
+  return preset === 'camera-only' || preset === 'side-by-side'
+}
+
+export function layoutPresetNeedsScreen(preset: LayoutPreset): boolean {
+  return preset === 'screen-camera' || preset === 'screen-only' || preset === 'side-by-side'
+}
+
+export function hasSelectedCameraSource(sources: SourceSelection): boolean {
+  return Boolean(sources.cameraId)
+}
+
+export function hasSelectedScreenSource(sources: SourceSelection): boolean {
+  return Boolean(
+    isNativeScreenSourceId(sources.screenId) ||
+    isNativeWindowSourceId(sources.windowId) ||
+    sources.testPattern
+  )
+}
+
 export type AudioSyncRecommendationReport = {
   pass?: boolean
   medianOffsetMs?: number | null
@@ -996,6 +1016,26 @@ function sourceIdentityFor(device: Device | undefined): { id?: string; name?: st
   return { id: device?.id, name: device?.name }
 }
 
+function isNativeScreenSourceId(sourceId: string | undefined): boolean {
+  return sourceId?.startsWith('screen:screencapturekit:') === true
+}
+
+function isNativeWindowSourceId(sourceId: string | undefined): boolean {
+  return sourceId?.startsWith('window:screencapturekit:') === true
+}
+
+function isNativeCaptureDevice(device: Device): boolean {
+  return (
+    (device.kind === 'screen' && isNativeScreenSourceId(device.id)) ||
+    (device.kind === 'window' && isNativeWindowSourceId(device.id))
+  )
+}
+
+function preferNativeCaptureDevices(devices: Device[]): Device[] {
+  const nativeDevices = devices.filter(isNativeCaptureDevice)
+  return nativeDevices.length > 0 ? nativeDevices : devices
+}
+
 export function reconcileSourceSelection(
   sources: SourceSelection,
   devices: Device[]
@@ -1013,6 +1053,7 @@ export function reconcileSourceSelection(
   const captureDevices = devices.filter(
     (device) => ['screen', 'window'].includes(device.kind) && device.status === 'available'
   )
+  const selectableCaptureDevices = preferNativeCaptureDevices(captureDevices)
   const cameras = devices.filter(
     (device) => device.kind === 'camera' && device.status === 'available'
   )
@@ -1021,10 +1062,16 @@ export function reconcileSourceSelection(
   )
 
   const selectedCapture = nextSources.windowId
-    ? (findRememberedSource(nextSources.windowId, nextSources.windowName, captureDevices) ??
-      captureDevices[0])
-    : (findRememberedSource(nextSources.screenId, nextSources.screenName, captureDevices) ??
-      captureDevices[0])
+    ? (findRememberedSource(
+        nextSources.windowId,
+        nextSources.windowName,
+        selectableCaptureDevices
+      ) ?? selectableCaptureDevices[0])
+    : (findRememberedSource(
+        nextSources.screenId,
+        nextSources.screenName,
+        selectableCaptureDevices
+      ) ?? selectableCaptureDevices[0])
   nextSources.screenId = selectedCapture?.kind === 'screen' ? selectedCapture.id : undefined
   nextSources.screenName = selectedCapture?.kind === 'screen' ? selectedCapture.name : undefined
   nextSources.windowId = selectedCapture?.kind === 'window' ? selectedCapture.id : undefined

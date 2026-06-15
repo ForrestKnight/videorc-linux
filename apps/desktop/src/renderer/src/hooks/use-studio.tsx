@@ -682,8 +682,8 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   }, [streamTargets])
 
   const sessionParams = useMemo<StartSessionParams>(
-    () => buildStartSessionParams({ captureConfig, scene, settings }),
-    [captureConfig, scene, settings]
+    () => buildStartSessionParams({ captureConfig, scene, sceneEditMode, settings }),
+    [captureConfig, scene, sceneEditMode, settings]
   )
 
   const reportError = useCallback((error: unknown) => {
@@ -2053,13 +2053,11 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
           cameraTransform: null
         }
       }))
-      if (sceneEditMode) {
-        void loadScene({
-          sources: captureConfig.sources,
-          layout,
-          video: captureConfig.video
-        }).catch(reportError)
-      }
+      void loadScene({
+        sources: captureConfig.sources,
+        layout,
+        video: captureConfig.video
+      }).catch(reportError)
     },
     [
       applyScene,
@@ -2070,7 +2068,6 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       layoutSwitchPending,
       loadScene,
       reportError,
-      sceneEditMode,
       wsStatus
     ]
   )

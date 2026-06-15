@@ -4,14 +4,15 @@ import type { CaptureConfig, SettingsState } from './capture'
 export function buildStartSessionParams(input: {
   captureConfig: CaptureConfig
   scene: Scene | null
+  sceneEditMode?: boolean
   settings: SettingsState
 }): StartSessionParams {
-  const { captureConfig, scene, settings } = input
+  const { captureConfig, scene, sceneEditMode = false, settings } = input
 
   return {
     sources: captureConfig.sources,
     layout: captureConfig.layout,
-    scene: scene ?? undefined,
+    scene: sceneEditMode ? (scene ?? undefined) : undefined,
     output: {
       recordEnabled: captureConfig.recordEnabled,
       streamEnabled: captureConfig.streamEnabled,
