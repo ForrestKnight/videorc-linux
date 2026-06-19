@@ -42,6 +42,7 @@ import {
   buildRuntimeInfo,
   permissionUrlForPane
 } from './runtime-info'
+import { PreviewSupervisorModel } from './preview-supervisor'
 import {
   DEFAULT_NATIVE_PREVIEW_MAX_HANDOFF_AGE_MS,
   compositorStatusMetalTargetHandoff,
@@ -76,6 +77,7 @@ import type {
   PreviewSurfaceSceneState,
   PreviewSurfaceSceneUpdateParams,
   PreviewSurfaceStatus,
+  PreviewSupervisorState,
   SceneSource,
   SceneTransform,
   StreamScreen,
@@ -436,7 +438,7 @@ let previewWindow: BrowserWindow | null = null
 let previewWindowLastFrame: Electron.Rectangle | null = null
 let previewWindowAlwaysOnTop = false
 let previewWindowClosing = false
-let previewWindowSurfaceGeneration = 0
+const previewSupervisor = new PreviewSupervisorModel()
 // The visible drag bar at the top of the preview window; the native video covers
 // the content BELOW it, and the aspect lock applies to that video region only.
 const PREVIEW_WINDOW_BAR_HEIGHT = 28
@@ -951,13 +953,12 @@ function previewWindowIsOpenForSurface(): boolean {
   return Boolean(previewWindow && !previewWindow.isDestroyed() && !previewWindowClosing)
 }
 
-function nextPreviewWindowSurfaceGeneration(): number {
-  previewWindowSurfaceGeneration += 1
-  return previewWindowSurfaceGeneration
+function previewWindowSurfaceGeneration(): number {
+  return previewSupervisor.snapshot().generation
 }
 
 function previewWindowSurfaceGenerationIsCurrent(generation: number): boolean {
-  return generation === previewWindowSurfaceGeneration
+  return generation === previewWindowSurfaceGeneration()
 }
 
 type PreviewWindowState = {
@@ -969,6 +970,7 @@ type PreviewWindowState = {
   // coordinates into AppKit's bottom-left-origin global space.
   screenHeight: number
   alwaysOnTop: boolean
+  supervisor: PreviewSupervisorState
 }
 
 function previewWindowState(): PreviewWindowState {
@@ -983,7 +985,8 @@ function previewWindowState(): PreviewWindowState {
     contentBounds,
     scaleFactor: contentBounds ? screen.getDisplayMatching(contentBounds).scaleFactor : 1,
     screenHeight: screen.getPrimaryDisplay().bounds.height,
-    alwaysOnTop: previewWindowAlwaysOnTop
+    alwaysOnTop: previewWindowAlwaysOnTop,
+    supervisor: previewSupervisor.snapshot()
   }
 }
 
@@ -1029,7 +1032,7 @@ function pushPreviewWindowPlacement(): void {
   if (!bounds) {
     return
   }
-  const generation = previewWindowSurfaceGeneration
+  const generation = previewWindowSurfaceGeneration()
   void runNativePreviewSurfaceMutation(() => {
     if (!previewWindowSurfaceGenerationIsCurrent(generation)) {
       return nativePreviewSurfaceStatus
@@ -1068,7 +1071,7 @@ async function reconcileNativePreviewSurfaceForPreviewWindow(
   if (!bounds) {
     return
   }
-  const generation = previewWindowSurfaceGeneration
+  const generation = previewWindowSurfaceGeneration()
   if (!options.force && !nativePreviewSurfaceNeedsPlacementReconcile()) {
     return
   }
@@ -1112,6 +1115,7 @@ const PREVIEW_WINDOW_HTML = `<!doctype html><html><head><meta charset="utf-8"><s
 async function openPreviewWindow(): Promise<PreviewWindowState> {
   const existingWindow = previewWindow
   if (previewWindowIsOpenForSurface() && existingWindow) {
+    previewSupervisor.setWindowVisible(true)
     if (existingWindow.isMinimized()) {
       existingWindow.restore()
     }
@@ -1122,6 +1126,7 @@ async function openPreviewWindow(): Promise<PreviewWindowState> {
     return previewWindowState()
   }
 
+  previewSupervisor.openWindow()
   const prefs = loadPreviewWindowPrefs()
   const rememberedFrame = previewWindowLastFrame ?? prefs.frame ?? null
   const frame = rememberedFrame ? clampFrameToWorkArea(rememberedFrame) : null
@@ -1148,7 +1153,7 @@ async function openPreviewWindow(): Promise<PreviewWindowState> {
   })
   previewWindowClosing = false
   previewWindow = window
-  nextPreviewWindowSurfaceGeneration()
+  previewSupervisor.windowOpened(window.isVisible() && !window.isMinimized())
   previewWindowAlwaysOnTop = prefs.alwaysOnTop === true
   if (previewWindowAlwaysOnTop) {
     window.setAlwaysOnTop(true, 'floating')
@@ -1169,6 +1174,7 @@ async function openPreviewWindow(): Promise<PreviewWindowState> {
   for (const event of ['move', 'resize', 'show', 'hide', 'minimize', 'restore', 'focus'] as const) {
     window.on(event as 'move', () => {
       if (previewWindow === window) {
+        previewSupervisor.setWindowVisible(window.isVisible() && !window.isMinimized())
         pushPreviewWindowPlacement()
         emitPreviewWindowState()
       }
@@ -1177,7 +1183,7 @@ async function openPreviewWindow(): Promise<PreviewWindowState> {
   window.on('close', () => {
     if (previewWindow === window) {
       if (!previewWindowClosing) {
-        nextPreviewWindowSurfaceGeneration()
+        previewSupervisor.closeWindow()
       }
       previewWindowClosing = true
       previewWindowLastFrame = window.getBounds()
@@ -1188,6 +1194,7 @@ async function openPreviewWindow(): Promise<PreviewWindowState> {
     if (previewWindow === window) {
       previewWindow = null
       previewWindowClosing = false
+      previewSupervisor.finishClose(previewWindowSurfaceGeneration())
       // Host teardown happens here, renderer-independent (the renderer's own
       // teardown adds the backend session destroy when its state event lands).
       void setNativePreviewSurfaceFramePollingSuppressed(true)
@@ -1210,7 +1217,7 @@ async function openPreviewWindow(): Promise<PreviewWindowState> {
 function closePreviewWindow(): PreviewWindowState {
   if (previewWindow && !previewWindow.isDestroyed()) {
     if (!previewWindowClosing) {
-      nextPreviewWindowSurfaceGeneration()
+      previewSupervisor.closeWindow()
     }
     previewWindowClosing = true
     previewWindow.close()
@@ -2031,7 +2038,7 @@ async function createNativePreviewSurfaceWindow(generation: number): Promise<voi
 
 async function createNativePreviewSurface(
   bounds: PreviewSurfaceBounds,
-  generation = previewWindowSurfaceGeneration
+  generation = previewWindowSurfaceGeneration()
 ): Promise<PreviewSurfaceStatus> {
   bounds = normalizePreviewSurfaceBounds(bounds)
   // The direct IPC path must not create a surface while the preview window is closed.
@@ -2050,6 +2057,7 @@ async function createNativePreviewSurface(
     throw new Error('Main window is not ready for native preview surface.')
   }
 
+  previewSupervisor.requestSurface()
   const placement = surfaceWindowPlacement(bounds)
   const rect = placement.rect
   if (!nativePreviewSurfaceWindow || nativePreviewSurfaceWindow.isDestroyed()) {
@@ -2104,12 +2112,16 @@ async function createNativePreviewSurface(
       ? 'Electron proof scene preview surface.'
       : 'Synthetic Electron proof preview surface.'
   }
+  previewSupervisor.surfaceFallback(
+    generation,
+    nativePreviewSurfaceStatus.message ?? 'Electron proof preview surface.'
+  )
   return nativePreviewSurfaceStatus
 }
 
 async function updateNativePreviewSurfaceBounds(
   bounds: PreviewSurfaceBounds,
-  generation = previewWindowSurfaceGeneration
+  generation = previewWindowSurfaceGeneration()
 ): Promise<PreviewSurfaceStatus> {
   bounds = normalizePreviewSurfaceBounds(bounds)
   if (!previewWindowSurfaceGenerationIsCurrent(generation)) {
@@ -2173,7 +2185,7 @@ async function showNativePreviewProofSurfaceIfVisible(): Promise<void> {
 
 async function applyNativePreviewHostCommands(
   commands: NativePreviewHostCommand[],
-  generation = previewWindowSurfaceGeneration
+  generation = previewWindowSurfaceGeneration()
 ): Promise<PreviewSurfaceStatus> {
   const nonDestroyCommands = commands.filter((command) => command.kind !== 'destroy')
   if (nonDestroyCommands.length > 0 && !previewWindowSurfaceGenerationIsCurrent(generation)) {
@@ -2236,7 +2248,7 @@ async function setNativePreviewSurfacesVisible(visible: boolean): Promise<void> 
   if (!bounds) {
     return
   }
-  const generation = previewWindowSurfaceGeneration
+  const generation = previewWindowSurfaceGeneration()
   try {
     await runNativePreviewSurfaceMutation(() =>
       applyNativePreviewHostCommands([{ kind: 'update-bounds', bounds }], generation)
@@ -2401,6 +2413,11 @@ async function presentNativePreviewSurfaceCompositor(
   )
   if (realSurfaceAttempt.kind === 'presented') {
     nativePreviewLastRealSurfaceFallbackLogKey = undefined
+    previewSupervisor.surfaceLive({
+      generation: previewWindowSurfaceGeneration(),
+      transport: realSurfaceAttempt.status.transport,
+      backing: realSurfaceAttempt.status.backing
+    })
     return realSurfaceAttempt.status
   }
   const fallbackLogKey = realSurfaceAttempt.logKey ?? realSurfaceAttempt.reason
@@ -2470,6 +2487,12 @@ async function presentNativePreviewSurfaceCompositor(
     updatedAt: new Date().toISOString(),
     message: proofSurfaceCompositorMessage(effectiveStatus, realSurfaceAttempt.reason)
   }
+  previewSupervisor.surfaceFallback(
+    previewWindowSurfaceGeneration(),
+    nativePreviewSurfaceStatus.message ??
+      realSurfaceAttempt.reason ??
+      'Electron proof preview surface.'
+  )
   return nativePreviewSurfaceStatus
 }
 
@@ -4893,11 +4916,11 @@ app.whenReady().then(async () => {
     saveNotesDocument(patch ?? {})
   )
   ipcMain.handle('preview-surface:create', (_event, bounds: PreviewSurfaceBounds) => {
-    const generation = previewWindowSurfaceGeneration
+    const generation = previewWindowSurfaceGeneration()
     return runNativePreviewSurfaceMutation(() => createNativePreviewSurface(bounds, generation))
   })
   ipcMain.handle('preview-surface:update-bounds', (_event, bounds: PreviewSurfaceBounds) => {
-    const generation = previewWindowSurfaceGeneration
+    const generation = previewWindowSurfaceGeneration()
     return runNativePreviewSurfaceMutation(() =>
       updateNativePreviewSurfaceBounds(bounds, generation)
     )
@@ -4905,7 +4928,7 @@ app.whenReady().then(async () => {
   ipcMain.handle(
     'preview-surface:apply-host-commands',
     (_event, commands: NativePreviewHostCommand[]) => {
-      const generation = previewWindowSurfaceGeneration
+      const generation = previewWindowSurfaceGeneration()
       return runNativePreviewSurfaceMutation(() =>
         applyNativePreviewHostCommands(commands, generation)
       )

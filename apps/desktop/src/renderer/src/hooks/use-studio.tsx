@@ -80,6 +80,7 @@ import type {
   PreviewSurfacePresentParams,
   PreviewSurfaceSceneUpdateParams,
   PreviewSurfaceStatus,
+  PreviewSupervisorState,
   PreviewWindowState,
   PreviewLiveStatus,
   PlatformAccount,
@@ -527,6 +528,19 @@ const idleNotesWindowState = (): NotesWindowState => ({
   protected: false,
   enabled: false,
   message: 'Notes window is disabled by VIDEORC_NOTES_WINDOW=0.'
+})
+
+const idlePreviewSupervisorState = (): PreviewSupervisorState => ({
+  lifecycleState: 'closed',
+  generation: 0,
+  windowOpen: false,
+  windowVisible: false,
+  surfaceRequested: false,
+  surfaceActive: false,
+  transport: 'none',
+  backing: 'none',
+  permissionStatus: 'ok',
+  updatedAt: new Date(0).toISOString()
 })
 
 function protectedOverlayWindowIdsFromNotesWindow(
@@ -2539,7 +2553,8 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     contentBounds: null,
     scaleFactor: 1,
     screenHeight: 0,
-    alwaysOnTop: false
+    alwaysOnTop: false,
+    supervisor: idlePreviewSupervisorState()
   })
   const previewWindowRef = useRef(previewWindow)
   previewWindowRef.current = previewWindow

@@ -19,6 +19,7 @@ mkdirSync(outputDirectory, { recursive: true })
 let launched
 let smoke
 let lastState = null
+let lastSupervisorGeneration = 0
 
 try {
   const exitCode = await main()
@@ -48,7 +49,8 @@ async function main() {
   })
   smoke = launched.connections['preview-motion-ready']
 
-  await ensureClosed('initial close')
+  const initialState = await ensureClosed('initial close')
+  lastSupervisorGeneration = supervisorGeneration(initialState)
 
   for (let cycle = 1; cycle <= cycles; cycle += 1) {
     await toggleOpen(`cycle ${cycle}: toggle open`)
@@ -71,10 +73,25 @@ async function main() {
 async function toggleOpen(label) {
   const toggled = await smokeCommand('preview-window-toggle')
   assertProbe(toggled.open === true, `${label}: command reports open`, toggled)
+  assertProbe(
+    toggled.supervisor?.windowOpen === true,
+    `${label}: supervisor reports window open`,
+    toggled
+  )
+  const generation = supervisorGeneration(toggled)
+  assertProbe(generation > lastSupervisorGeneration, `${label}: supervisor generation advanced`, {
+    previous: lastSupervisorGeneration,
+    current: generation,
+    state: toggled
+  })
+  lastSupervisorGeneration = generation
   const state = await waitForState(
     (candidate) =>
       candidate.open === true &&
       candidate.visible === true &&
+      candidate.supervisor?.windowOpen === true &&
+      candidate.supervisor?.lifecycleState !== 'closed' &&
+      candidate.supervisor?.lifecycleState !== 'closing' &&
       candidate.framePollingSuppressedFlag === false,
     8000
   )
@@ -84,17 +101,22 @@ async function toggleOpen(label) {
 async function toggleClosed(label) {
   const toggled = await smokeCommand('preview-window-toggle')
   assertProbe(toggled.open === false, `${label}: command reports closed`, toggled)
+  assertProbe(
+    supervisorGeneration(toggled) === lastSupervisorGeneration,
+    `${label}: supervisor generation is stable while closing`,
+    { expected: lastSupervisorGeneration, state: toggled }
+  )
   await waitUntilClosed(`${label}: preview fully closed`)
 }
 
 async function ensureClosed(label) {
   const state = await smokeCommand('preview-window-state')
+  lastSupervisorGeneration = supervisorGeneration(state)
   if (!state.open) {
-    await waitUntilClosed(label)
-    return
+    return waitUntilClosed(label)
   }
   await smokeCommand('preview-window-close')
-  await waitUntilClosed(label)
+  return waitUntilClosed(label)
 }
 
 async function waitUntilClosed(label) {
@@ -102,10 +124,20 @@ async function waitUntilClosed(label) {
     (candidate) =>
       candidate.open === false &&
       candidate.surface.exists === false &&
+      candidate.supervisor?.lifecycleState === 'closed' &&
+      candidate.supervisor?.windowOpen === false &&
+      candidate.supervisor?.surfaceRequested === false &&
+      candidate.supervisor?.surfaceActive === false &&
       candidate.framePollingSuppressedFlag === true,
     8000
   )
   assertProbe(state.ok, label, state.last)
+  assertProbe(
+    supervisorGeneration(state.last) === lastSupervisorGeneration,
+    `${label}: supervisor generation stayed on the closed lifecycle`,
+    { expected: lastSupervisorGeneration, state: state.last }
+  )
+  return state.last
 }
 
 async function waitForState(predicate, timeoutMsLocal) {
@@ -137,6 +169,12 @@ function assertProbe(condition, label, detail) {
   if (!condition) {
     throw new Error(`${label}: ${JSON.stringify(detail)}`)
   }
+}
+
+function supervisorGeneration(state) {
+  const generation = state?.supervisor?.generation
+  assertProbe(Number.isInteger(generation), 'preview state includes a supervisor generation', state)
+  return generation
 }
 
 function positiveInteger(raw, fallback) {

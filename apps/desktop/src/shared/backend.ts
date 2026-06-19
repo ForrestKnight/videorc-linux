@@ -1728,6 +1728,7 @@ export interface PreviewWindowState {
   scaleFactor: number
   screenHeight: number
   alwaysOnTop: boolean
+  supervisor: PreviewSupervisorState
 }
 
 export type PreviewLifecycleState =
