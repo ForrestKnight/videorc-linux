@@ -986,6 +986,7 @@ export interface CompositorStatus {
   height: number
   runId?: string
   sceneRevision?: number
+  frameSceneRevision?: number
   sceneId?: string
   sceneLayout?: LayoutSettings
   activeScreenId?: string

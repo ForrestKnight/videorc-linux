@@ -590,6 +590,7 @@ pub async fn start_synthetic_compositor(
         height: params.height.max(1),
         run_id: Some(run_id.clone()),
         scene_revision: previous_scene_status.0,
+        frame_scene_revision: None,
         scene_id: previous_scene_status.1,
         scene_layout: previous_scene_status.2,
         active_screen_id: previous_scene_status.3,
@@ -2616,6 +2617,11 @@ fn try_update_compositor_frame_progress(
     }
     compositor.status.state = CompositorState::Live;
     compositor.status.frames_rendered = frames_rendered;
+    compositor.status.frame_scene_revision = compositor
+        .latest_frame_evidence
+        .as_ref()
+        .filter(|evidence| evidence.sequence == frames_rendered)
+        .and_then(|evidence| evidence.scene_revision);
     compositor.status.frame_age_ms = Some(frame_age_ms);
     apply_compositor_status_metal_target_handoff(&mut compositor.status, metal_target_handoff);
     compositor.status.updated_at = Utc::now().to_rfc3339();
@@ -2636,6 +2642,11 @@ fn try_update_compositor_status(
     compositor.status.state = CompositorState::Live;
     compositor.status.render_fps = Some(metrics.render_fps);
     compositor.status.frames_rendered = metrics.frames_rendered;
+    compositor.status.frame_scene_revision = compositor
+        .latest_frame_evidence
+        .as_ref()
+        .filter(|evidence| evidence.sequence == metrics.frames_rendered)
+        .and_then(|evidence| evidence.scene_revision);
     compositor.status.repeated_frames = metrics.repeated_frames;
     compositor.status.dropped_frames = metrics.dropped_frames;
     compositor.status.frame_age_ms = Some(metrics.frame_age_ms);
@@ -3282,6 +3293,7 @@ fn stopped_status(message: Option<String>) -> CompositorStatus {
         height: 0,
         run_id: None,
         scene_revision: None,
+        frame_scene_revision: None,
         scene_id: None,
         scene_layout: None,
         active_screen_id: None,
@@ -4536,6 +4548,17 @@ mod tests {
             status.frame_age_ms = Some(9);
             status.frame_time_p95_ms = Some(12.5);
             compositor.status = status;
+            compositor.latest_frame_evidence = Some(CompositorFrameEvidence {
+                sequence: 42,
+                scene_revision: Some(12),
+                width: 640,
+                height: 360,
+                has_real_source: true,
+                camera_sequence: Some(1),
+                screen_sequence: None,
+                has_image_source: false,
+                published_at: Instant::now(),
+            });
             compositor.run_id = Some("run".to_string());
         }
 
@@ -4558,6 +4581,7 @@ mod tests {
         assert_eq!(status.render_fps, Some(58.0));
         assert_eq!(status.repeated_frames, 2);
         assert_eq!(status.dropped_frames, 1);
+        assert_eq!(status.frame_scene_revision, Some(12));
         assert_eq!(status.frame_age_ms, Some(4));
         assert_eq!(status.frame_time_p95_ms, Some(12.5));
         assert_eq!(status.metal_target_iosurface_id, Some(123));
@@ -5194,6 +5218,11 @@ mod tests {
         let state = test_state();
         let scene = crate::scene::default_scene();
         let layout = crate::protocol::default_layout_settings();
+        {
+            let mut compositor = state.compositor.lock().await;
+            compositor.status.frame_scene_revision = Some(9);
+            compositor.status.frames_rendered = 42;
+        }
         let status = update_compositor_scene(
             &state,
             CompositorSceneUpdateParams {
@@ -5206,6 +5235,7 @@ mod tests {
         .await;
 
         assert_eq!(status.scene_revision, Some(10));
+        assert_eq!(status.frame_scene_revision, Some(9));
         assert_eq!(status.scene_sources.len(), scene.sources.len());
 
         let stale = update_compositor_scene(
@@ -5220,6 +5250,7 @@ mod tests {
         .await;
 
         assert_eq!(stale.scene_revision, Some(10));
+        assert_eq!(stale.frame_scene_revision, Some(9));
         assert_eq!(stale.scene_sources.len(), scene.sources.len());
 
         let newest = update_compositor_scene(
@@ -5234,6 +5265,7 @@ mod tests {
         .await;
 
         assert_eq!(newest.scene_revision, Some(11));
+        assert_eq!(newest.frame_scene_revision, Some(9));
         assert_eq!(newest.scene_sources.len(), 1);
         assert_eq!(newest.scene_sources[0].id, "screen-image:new-screen");
         assert_eq!(

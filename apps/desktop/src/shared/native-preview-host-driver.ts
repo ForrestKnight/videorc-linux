@@ -47,6 +47,15 @@ export function compositorStatusMetalTargetHandoff(
       return null
     }
   }
+  const sceneRevision = finiteNonNegativeInteger(status.sceneRevision)
+  const frameSceneRevision = finiteNonNegativeInteger(status.frameSceneRevision)
+  if (
+    sceneRevision !== null &&
+    frameSceneRevision !== null &&
+    sceneRevision !== frameSceneRevision
+  ) {
+    return null
+  }
 
   const iosurfaceId = finitePositiveInteger(status.metalTargetIosurfaceId)
   const width = finitePositiveInteger(status.metalTargetWidth)
@@ -125,4 +134,8 @@ export function proofSurfaceCompositorMessage(
 
 function finitePositiveInteger(value: unknown): number | null {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : null
+}
+
+function finiteNonNegativeInteger(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null
 }

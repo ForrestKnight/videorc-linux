@@ -102,6 +102,28 @@ describe('native-preview-host-driver', () => {
     })
   })
 
+  it('rejects IOSurface handoffs rendered from an older scene revision', () => {
+    expect(
+      compositorStatusMetalTargetHandoff(
+        compositorStatus({ sceneRevision: 12, frameSceneRevision: 11 })
+      )
+    ).toBeNull()
+    expect(
+      compositorStatusMetalTargetHandoff(
+        compositorStatus({ sceneRevision: 12, frameSceneRevision: 12 })
+      )
+    ).toEqual({
+      iosurfaceId: 7001,
+      width: 1920,
+      height: 1080,
+      frameId: 42,
+      runId: 'preview-run-1'
+    })
+    expect(
+      compositorStatusMetalTargetHandoff(compositorStatus({ sceneRevision: 12 }))
+    ).not.toBeNull()
+  })
+
   it('keeps the fallback message honest when no real driver is installed', () => {
     const status = compositorStatus()
     const handoff = compositorStatusMetalTargetHandoff(status)

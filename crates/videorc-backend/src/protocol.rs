@@ -1610,6 +1610,11 @@ pub struct CompositorStatus {
     pub run_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scene_revision: Option<u64>,
+    /// Scene revision that produced the latest rendered compositor frame/Metal
+    /// handoff. This can lag behind `scene_revision` immediately after a live
+    /// scene metadata update, before the next compositor frame is published.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame_scene_revision: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scene_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

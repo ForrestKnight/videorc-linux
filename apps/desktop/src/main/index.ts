@@ -242,6 +242,10 @@ const NATIVE_PREVIEW_NATIVE_AUTHORITY_MS = 1500
 function nativeSurfaceOwnsPlacement(): boolean {
   return Date.now() - nativePreviewNativePresentConfirmedAtMs < NATIVE_PREVIEW_NATIVE_AUTHORITY_MS
 }
+
+function clearNativePreviewNativePlacementAuthority(): void {
+  nativePreviewNativePresentConfirmedAtMs = 0
+}
 let nativePreviewLastRealSurfaceFallbackLogKey: string | undefined
 let nativePreviewRealSurfaceInvalidActivationCount = 0
 let nativePreviewMainQueueWaitSamplesMs: number[] = []
@@ -1652,6 +1656,26 @@ async function updateNativePreviewSurfaceBounds(
   return nativePreviewSurfaceStatus
 }
 
+async function showNativePreviewProofSurfaceIfVisible(): Promise<void> {
+  clearNativePreviewNativePlacementAuthority()
+  if (
+    !previewWindowIsOpenForSurface() ||
+    !nativePreviewSurfaceWindow ||
+    nativePreviewSurfaceWindow.isDestroyed()
+  ) {
+    return
+  }
+  const bounds = nativePreviewSurfaceStatus.bounds
+  if (!bounds) {
+    return
+  }
+  const placement = surfaceWindowPlacement(bounds)
+  nativePreviewSurfaceWindow.setBounds(placement.rect)
+  if (placement.visible && !nativePreviewSurfaceWindow.isVisible()) {
+    nativePreviewSurfaceWindow.showInactive()
+  }
+}
+
 async function applyNativePreviewHostCommands(
   commands: NativePreviewHostCommand[]
 ): Promise<PreviewSurfaceStatus> {
@@ -1784,13 +1808,16 @@ async function updateNativePreviewSurfaceScene(
 ): Promise<PreviewSurfaceStatus> {
   await waitForNativePreviewSurfaceMutation()
   nativePreviewSurfaceScene = buildPreviewSurfaceScene(params)
-  if (nativePreviewSurfaceWindow && !nativePreviewSurfaceWindow.isDestroyed()) {
+  const surfaceWindow = nativePreviewSurfaceWindow
+  if (surfaceWindow && !surfaceWindow.isDestroyed()) {
     await waitForNativePreviewSurfaceScript()
     const sceneJson = jsonForInlineScript(nativePreviewSurfaceScene)
-    await nativePreviewSurfaceWindow.webContents.executeJavaScript(
-      `window.__videorcSetPreviewScene?.(${sceneJson})`,
-      true
-    )
+    if (nativePreviewSurfaceWindow === surfaceWindow && !surfaceWindow.isDestroyed()) {
+      await surfaceWindow.webContents.executeJavaScript(
+        `window.__videorcSetPreviewScene?.(${sceneJson})`,
+        true
+      )
+    }
   }
 
   const hasScreen = nativePreviewSurfaceScene.sources.some(
@@ -1871,18 +1898,27 @@ async function presentNativePreviewSurfaceCompositor(
     nativePreviewLastRealSurfaceFallbackLogKey = fallbackLogKey
     logBackend('warn', realSurfaceAttempt.reason)
   }
+  if (
+    effectiveStatus.suppressFramePolling !== true &&
+    (!nativeSurfaceOwnsPlacement() || compositorFrameSceneRevisionMismatch(effectiveStatus))
+  ) {
+    await showNativePreviewProofSurfaceIfVisible()
+  }
   let metrics: Record<string, unknown> | null = null
-  if (nativePreviewSurfaceWindow && !nativePreviewSurfaceWindow.isDestroyed()) {
+  const surfaceWindow = nativePreviewSurfaceWindow
+  if (surfaceWindow && !surfaceWindow.isDestroyed()) {
     await waitForNativePreviewSurfaceScript()
     const sceneScript = compositorScene
       ? `window.__videorcSetPreviewScene?.(${jsonForInlineScript(compositorScene)});`
       : ''
     const statusJson = jsonForInlineScript(effectiveStatus)
-    await nativePreviewSurfaceWindow.webContents.executeJavaScript(
-      `${sceneScript}window.__videorcSetCompositorStatus?.(${statusJson})`,
-      true
-    )
-    metrics = await readNativePreviewSurfaceMetricsAfterPaint()
+    if (nativePreviewSurfaceWindow === surfaceWindow && !surfaceWindow.isDestroyed()) {
+      await surfaceWindow.webContents.executeJavaScript(
+        `${sceneScript}window.__videorcSetCompositorStatus?.(${statusJson})`,
+        true
+      )
+      metrics = await readNativePreviewSurfaceMetricsAfterPaint()
+    }
   }
   const hasScreen = nativePreviewSurfaceScene?.sources.some(
     (source) => source.kind === 'screen' || source.kind === 'window'
@@ -1934,6 +1970,18 @@ type NativePreviewRealSurfacePresentAttempt =
   | { kind: 'presented'; status: PreviewSurfaceStatus }
   | { kind: 'skipped'; reason?: string; logKey?: string }
 
+function compositorFrameSceneRevisionMismatch(
+  status: PreviewSurfaceCompositorUpdateParams
+): boolean {
+  return (
+    typeof status.sceneRevision === 'number' &&
+    Number.isSafeInteger(status.sceneRevision) &&
+    typeof status.frameSceneRevision === 'number' &&
+    Number.isSafeInteger(status.frameSceneRevision) &&
+    status.sceneRevision !== status.frameSceneRevision
+  )
+}
+
 async function tryPresentNativePreviewRealSurfaceCompositor(
   status: PreviewSurfaceCompositorUpdateParams,
   mainTiming: { queueWaitMs?: number } = {}
@@ -1945,12 +1993,15 @@ async function tryPresentNativePreviewRealSurfaceCompositor(
     nativePreviewRealSurfaceInvalidActivationCount = 0
     const hasMetalTarget =
       typeof status.metalTargetIosurfaceId === 'number' && status.metalTargetIosurfaceId > 0
+    const sceneRevisionMismatch = compositorFrameSceneRevisionMismatch(status)
     return {
       kind: 'skipped',
-      reason: hasMetalTarget
-        ? `Native preview falling back to image polling: the compositor's Metal IOSurface target is older than the ${DEFAULT_NATIVE_PREVIEW_MAX_HANDOFF_AGE_MS}ms handoff budget (compose is too slow to stay live).`
-        : `Native preview falling back to image polling: the compositor status carries no Metal IOSurface target (metalTargetIosurfaceId=${status.metalTargetIosurfaceId ?? 'absent'}), so there is nothing to present natively for this scene.`,
-      logKey: `no-handoff:${hasMetalTarget ? 'stale' : 'absent'}`
+      reason: sceneRevisionMismatch
+        ? `Native preview falling back to image polling: the compositor Metal IOSurface was rendered from scene revision ${status.frameSceneRevision}, but the active scene is ${status.sceneRevision}.`
+        : hasMetalTarget
+          ? `Native preview falling back to image polling: the compositor's Metal IOSurface target is older than the ${DEFAULT_NATIVE_PREVIEW_MAX_HANDOFF_AGE_MS}ms handoff budget (compose is too slow to stay live).`
+          : `Native preview falling back to image polling: the compositor status carries no Metal IOSurface target (metalTargetIosurfaceId=${status.metalTargetIosurfaceId ?? 'absent'}), so there is nothing to present natively for this scene.`,
+      logKey: `no-handoff:${sceneRevisionMismatch ? 'scene-revision' : hasMetalTarget ? 'stale' : 'absent'}`
     }
   }
   if (nativePreviewSurfaceStatus.state !== 'live') {
@@ -3338,6 +3389,24 @@ async function runSmokePreviewMotionCommand(
     return nativePreviewSurfaceStatus
   }
 
+  if (command === 'preview-surface-scene-state') {
+    return {
+      sceneRevision: nativePreviewSurfaceScene?.revision ?? null,
+      layoutPreset: nativePreviewSurfaceScene?.layout.layoutPreset ?? null,
+      sourceIds: nativePreviewSurfaceScene?.sources.map((source) => source.id) ?? [],
+      visibleSourceIds:
+        nativePreviewSurfaceScene?.sources
+          .filter((source) => source.visible)
+          .map((source) => source.id) ?? [],
+      proofWindowVisible: Boolean(
+        nativePreviewSurfaceWindow &&
+        !nativePreviewSurfaceWindow.isDestroyed() &&
+        nativePreviewSurfaceWindow.isVisible()
+      ),
+      surfaceStatus: nativePreviewSurfaceStatus
+    }
+  }
+
   if (command === 'capture-page') {
     const image = await mainWindow.webContents.capturePage()
     const name = typeof params.name === 'string' ? params.name.replace(/[^a-z0-9-]/gi, '') : 'page'
@@ -3612,6 +3681,7 @@ function smokeCompositorStatusFromSceneParams(
     width: 1280,
     height: 720,
     sceneRevision: params.revision,
+    frameSceneRevision: params.revision,
     sceneId: params.scene?.id,
     sceneLayout: params.layout,
     activeScreenId: params.activeScreen?.id,
@@ -3722,6 +3792,39 @@ function smokeRendererScript(command: string, params: Record<string, unknown>): 
         const tabId = String(params.tab ?? 'studio');
         const waitSelector = typeof params.waitFor === 'string' ? params.waitFor : null;
         return openTab(tabId, waitSelector);
+      }
+
+      if (${JSON.stringify(command)} === 'select-layout-preset') {
+        const preset = String(params.preset ?? 'screen-only');
+        await openTab('layout', '[data-videorc-layout-preset]');
+        const deadline = Date.now() + 5000;
+        let button = null;
+        while (Date.now() < deadline) {
+          button = Array.from(document.querySelectorAll('[data-videorc-layout-preset]'))
+            .find((candidate) => candidate.getAttribute('data-videorc-layout-preset') === preset);
+          if (button) break;
+          await sleep(50);
+        }
+        if (!button) {
+          throw new Error('Could not find layout preset ' + preset);
+        }
+        if (button.disabled) {
+          throw new Error('Layout preset ' + preset + ' is disabled.');
+        }
+        button.click();
+        while (Date.now() < deadline) {
+          if (button.getAttribute('aria-pressed') === 'true') {
+            await sleep(Number(params.settleMs ?? 600));
+            return {
+              preset,
+              pressed: true,
+              disabled: Boolean(button.disabled),
+              label: button.textContent?.trim() ?? ''
+            };
+          }
+          await sleep(50);
+        }
+        throw new Error('Timed out waiting for layout preset ' + preset + ' to become active.');
       }
 
       if (${JSON.stringify(command)} === 'scroll-studio') {
