@@ -49,7 +49,7 @@ const COMPOSITOR_LIVE_SOURCE_CONTENDED_RECOVERY_MISSES: u32 = 1;
 const COMPOSITOR_MISSING_SOURCE_PLACEHOLDER_AFTER: Duration = Duration::from_secs(2);
 const MISSING_SOURCE_PLACEHOLDER_WIDTH: usize = 16;
 const MISSING_SOURCE_PLACEHOLDER_HEIGHT: usize = 9;
-const BACKGROUND_STAGE_MARGIN: f64 = 0.06;
+pub(crate) const BACKGROUND_STAGE_MARGIN: f64 = 0.10;
 
 pub type CompositorSlot = std::sync::Arc<tokio::sync::Mutex<CompositorRuntime>>;
 pub type CompositorFrameStore =
@@ -3473,6 +3473,13 @@ mod tests {
         bytes[y as usize * width as usize + x as usize]
     }
 
+    fn assert_close(actual: f64, expected: f64) {
+        assert!(
+            (actual - expected).abs() < 0.000_001,
+            "expected {actual} to be close to {expected}"
+        );
+    }
+
     #[test]
     fn evidence_fingerprint_matches_render_staleness_semantics() {
         let fresh = Instant::now();
@@ -5434,7 +5441,52 @@ mod tests {
         let (red_y, _, _) = rgb_to_yuv(255, 0, 0);
         let (blue_y, _, _) = rgb_to_yuv(0, 0, 255);
         assert_eq!(y_at(&bytes, 100, 0, 0), red_y);
+        assert_eq!(y_at(&bytes, 100, 9, 9), red_y);
+        assert_eq!(y_at(&bytes, 100, 10, 10), blue_y);
         assert_eq!(y_at(&bytes, 100, 50, 50), blue_y);
+        assert_eq!(y_at(&bytes, 100, 89, 89), blue_y);
+        assert_eq!(y_at(&bytes, 100, 90, 90), red_y);
+    }
+
+    #[test]
+    fn active_background_insets_scene_sources_to_eighty_percent_stage() {
+        let full_frame = scene_source_render_transform(
+            &SceneTransform {
+                x: 0.0,
+                y: 0.0,
+                width: 1.0,
+                height: 1.0,
+                crop_left: 0.0,
+                crop_top: 0.0,
+                crop_right: 0.0,
+                crop_bottom: 0.0,
+            },
+            true,
+        );
+
+        assert_close(full_frame.x, 0.10);
+        assert_close(full_frame.y, 0.10);
+        assert_close(full_frame.width, 0.80);
+        assert_close(full_frame.height, 0.80);
+
+        let camera = scene_source_render_transform(
+            &SceneTransform {
+                x: 0.75,
+                y: 0.70,
+                width: 0.20,
+                height: 0.20,
+                crop_left: 0.0,
+                crop_top: 0.0,
+                crop_right: 0.0,
+                crop_bottom: 0.0,
+            },
+            true,
+        );
+
+        assert_close(camera.x, 0.70);
+        assert_close(camera.y, 0.66);
+        assert_close(camera.width, 0.16);
+        assert_close(camera.height, 0.16);
     }
 
     #[test]

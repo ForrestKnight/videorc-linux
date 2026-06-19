@@ -391,6 +391,14 @@ describe('effective scene background and overrides', () => {
     })
   })
 
+  it('does not resolve a missing active slot into the scene background', () => {
+    let registry = importIntoSlot(createDefaultRegistry(), 'bg-02', importedAsset('a1', 'Sunset'))
+    registry = applySlot(registry, 'bg-02')
+    registry = markSlotStatus(registry, 'bg-02', 'missing-file')
+
+    expect(effectiveSceneBackground(registry)).toBeNull()
+  })
+
   it('layers scene overrides over asset defaults', () => {
     let registry = importIntoSlot(createDefaultRegistry(), 'bg-02', importedAsset('a1', 'Sunset'))
     registry = setAssetStyle(registry, 'a1', { blurPx: 4, scale: 150 })

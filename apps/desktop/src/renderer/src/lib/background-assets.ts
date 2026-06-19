@@ -601,6 +601,9 @@ export function effectiveSceneBackground(
     return null
   }
   const slot = registry.slots.find((entry) => entry.id === registry.activeSlotId)
+  if (!slot || slot.status !== 'ready') {
+    return null
+  }
   const asset = slot ? slotAsset(slot, registry) : null
   if (!asset || !asset.assetPath) {
     return null

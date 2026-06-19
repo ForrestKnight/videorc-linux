@@ -28,10 +28,10 @@ use crate::capture_input::{
     microphone_channels,
 };
 use crate::compositor::{
-    CompositorAuxiliaryOutput, CompositorStartParams, CompositorStartupBarrierParams,
-    CompositorStartupBarrierResult, CompositorStartupSourceRequirements, compositor_frame_store,
-    compositor_stream_frame_store, start_synthetic_compositor, update_compositor_scene,
-    wait_for_compositor_startup_frames,
+    BACKGROUND_STAGE_MARGIN, CompositorAuxiliaryOutput, CompositorStartParams,
+    CompositorStartupBarrierParams, CompositorStartupBarrierResult,
+    CompositorStartupSourceRequirements, compositor_frame_store, compositor_stream_frame_store,
+    start_synthetic_compositor, update_compositor_scene, wait_for_compositor_startup_frames,
 };
 use crate::devices::{
     find_avfoundation_camera_index, find_avfoundation_screen_index,
@@ -56,13 +56,14 @@ use crate::preview_camera::{
 };
 use crate::preview_screen::preview_screen_latest_frame_info;
 use crate::protocol::{
-    AudioSettings, AudioTrack, AudioTrackSource, CameraCorner, CameraFit, CameraShape, CameraSize,
-    CameraTransformMode, CompositorBackend, CompositorSceneUpdateParams, CompositorState,
-    EncodeBackend, EntitlementsSnapshot, FeatureId, HealthLevel, LayoutPreset, LayoutSettings,
-    PreviewCameraState, PreviewLiveParams, PreviewLiveSource, PreviewLiveState, PreviewLiveStatus,
-    PreviewScreenSourceKind, PreviewScreenState, PreviewSnapshot, PreviewSnapshotParams,
-    PreviewTransport, RecordingPipelineStage, RecordingState, RecordingStatus, RemuxSessionParams,
-    RtmpPreset, RtmpSettings, Scene, SceneConfigParams, SceneSourceKind, SideBySideCameraSide,
+    AudioSettings, AudioTrack, AudioTrackSource, BackgroundFit, CameraCorner, CameraFit,
+    CameraShape, CameraSize, CameraTransformMode, CompositorBackend, CompositorSceneUpdateParams,
+    CompositorState, EffectiveSceneBackground, EncodeBackend, EntitlementsSnapshot, FeatureId,
+    HealthLevel, LayoutPreset, LayoutSettings, PreviewCameraState, PreviewLiveParams,
+    PreviewLiveSource, PreviewLiveState, PreviewLiveStatus, PreviewScreenSourceKind,
+    PreviewScreenState, PreviewSnapshot, PreviewSnapshotParams, PreviewTransport,
+    RecordingPipelineStage, RecordingState, RecordingStatus, RemuxSessionParams, RtmpPreset,
+    RtmpSettings, Scene, SceneConfigParams, SceneSourceKind, SceneTransform, SideBySideCameraSide,
     SideBySideSplit, StartSessionParams, StreamHealth, VideoPreset, VideoSettings,
 };
 use crate::repair::{
@@ -4664,19 +4665,31 @@ fn scene_video_filter(
     let width = video.width.max(1);
     let height = video.height.max(1);
     let fps = video.fps.max(1);
-    let mut graph = vec![format!(
-        "color=c=black:s={width}x{height}:r={fps}[scene_canvas0]"
-    )];
+    let background = scene
+        .background
+        .as_ref()
+        .filter(|background| !background.managed_asset_path.trim().is_empty());
+    let mut graph = match background {
+        Some(background) => vec![
+            format!("color=c=black:s={width}x{height}:r={fps}[scene_canvas_base]"),
+            scene_background_canvas_filter(background, width, height, fps),
+        ],
+        None => vec![format!(
+            "color=c=black:s={width}x{height}:r={fps}[scene_canvas0]"
+        )],
+    };
     let mut canvas_label = "scene_canvas0".to_string();
     let mut layer_index = 0usize;
+    let background_active = background.is_some();
 
     for source in scene.sources.iter().filter(|source| source.visible) {
         let Some(input_index) = scene_source_input_index(&source.kind, capture, input_layout)
         else {
             continue;
         };
+        let transform = scene_source_render_transform(&source.transform, background_active);
         let Some((x, y, layer_width, layer_height)) =
-            scene_source_rect_pixels(&source.transform, width, height)
+            scene_source_rect_pixels(&transform, width, height)
         else {
             continue;
         };
@@ -4686,7 +4699,7 @@ fn scene_video_filter(
             input_index,
             &layer_label,
             &source.kind,
-            &source.transform,
+            &transform,
             layer_width,
             layer_height,
             params,
@@ -4705,6 +4718,60 @@ fn scene_video_filter(
         graph.push(format!("[{canvas_label}]fps={fps}[v]"));
     }
     graph.join(";")
+}
+
+fn scene_background_canvas_filter(
+    background: &EffectiveSceneBackground,
+    width: u32,
+    height: u32,
+    fps: u32,
+) -> String {
+    let path = escape_filter_path(&background.managed_asset_path);
+    let fit = scene_background_fit_filter(&background.fit, width, height);
+    format!(
+        "movie=filename='{path}',loop=loop=-1:size=1:start=0,setpts=N/{fps}/TB,{fit},format=rgba[scene_background];[scene_canvas_base][scene_background]overlay=x=0:y=0:shortest=0:repeatlast=1[scene_canvas0]"
+    )
+}
+
+fn scene_background_fit_filter(fit: &BackgroundFit, width: u32, height: u32) -> String {
+    match fit {
+        BackgroundFit::Fit => format!(
+            "scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2"
+        ),
+        BackgroundFit::Stretch => format!("scale={width}:{height}"),
+        BackgroundFit::Fill => format!(
+            "scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}"
+        ),
+    }
+}
+
+fn scene_source_render_transform(
+    transform: &SceneTransform,
+    background_active: bool,
+) -> SceneTransform {
+    if !background_active {
+        return transform.clone();
+    }
+    let stage_scale = 1.0 - (BACKGROUND_STAGE_MARGIN * 2.0);
+    SceneTransform {
+        x: BACKGROUND_STAGE_MARGIN + (transform.x * stage_scale),
+        y: BACKGROUND_STAGE_MARGIN + (transform.y * stage_scale),
+        width: transform.width * stage_scale,
+        height: transform.height * stage_scale,
+        crop_left: transform.crop_left,
+        crop_top: transform.crop_top,
+        crop_right: transform.crop_right,
+        crop_bottom: transform.crop_bottom,
+    }
+}
+
+fn escape_filter_path(path: &str) -> String {
+    path.replace('\\', "\\\\")
+        .replace('\'', "\\'")
+        .replace(':', "\\:")
+        .replace(',', "\\,")
+        .replace('[', "\\[")
+        .replace(']', "\\]")
 }
 
 fn scene_source_input_index(
@@ -7994,6 +8061,68 @@ mod tests {
         assert!(filter.contains("[0:v]setpts=PTS-STARTPTS"));
         assert!(!filter.contains("[1:v]setpts=PTS-STARTPTS"));
         assert!(filter.contains("[v]split=2[v_main][v_preview]"));
+    }
+
+    #[test]
+    fn scene_filter_with_background_insets_sources_to_eighty_percent_stage() {
+        let mut params = base_params(true, false);
+        params.output.video.width = 100;
+        params.output.video.height = 100;
+        let mut scene = scene_with_sources(vec![
+            scene_source(
+                "screen",
+                SceneSourceKind::Screen,
+                scene_transform(0.0, 0.0, 1.0, 1.0),
+                true,
+            ),
+            scene_source(
+                "camera",
+                SceneSourceKind::Camera,
+                scene_transform(0.75, 0.7, 0.2, 0.2),
+                true,
+            ),
+        ]);
+        scene.background = Some(EffectiveSceneBackground {
+            asset_id: "builtin-bg-01".to_string(),
+            managed_asset_path: "/Users/me/Application Support/Videorc/code-demo.webp".to_string(),
+            fit: BackgroundFit::Fill,
+            scale: 100.0,
+            offset_x: 0.0,
+            offset_y: 0.0,
+            blur_px: 0.0,
+            dim_percent: 0.0,
+            saturation_percent: 100.0,
+            vignette_percent: 0.0,
+        });
+        params.scene = Some(scene);
+
+        let filter = recording_video_filter(
+            &CaptureInputs {
+                video: VideoInput::MacScreen { index: 3 },
+                camera_index: Some(0),
+                microphone: None,
+            },
+            &InputLayout {
+                video_input_index: 0,
+                camera_input_index: Some(1),
+                screen_overlay_input_index: None,
+                audio_inputs: Vec::new(),
+            },
+            &params,
+            false,
+        );
+
+        assert!(
+            filter
+                .contains("movie=filename='/Users/me/Application Support/Videorc/code-demo.webp'")
+        );
+        assert!(filter.contains("scale=100:100:force_original_aspect_ratio=increase,crop=100:100"));
+        assert!(filter.contains("[0:v]setpts=PTS-STARTPTS"));
+        assert!(filter.contains("scale=80:80"));
+        assert!(filter.contains("overlay=x=10:y=10"));
+        assert!(filter.contains("[1:v]setpts=PTS-STARTPTS"));
+        assert!(filter.contains("scale=16:16"));
+        assert!(filter.contains("overlay=x=70:y=66"));
     }
 
     #[test]
