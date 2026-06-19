@@ -36,8 +36,7 @@ export function AppShell(): ReactElement {
     runtimeInfo,
     refreshBackend,
     previewWindow,
-    openPreviewWindow,
-    closePreviewWindow,
+    togglePreviewWindow,
     notesWindow,
     openNotesWindow,
     closeNotesWindow
@@ -84,11 +83,7 @@ export function AppShell(): ReactElement {
       }
       if (event.key.toLowerCase() === 'p' && (event.metaKey || event.ctrlKey)) {
         event.preventDefault()
-        if (previewWindow.open) {
-          void closePreviewWindow()
-        } else {
-          void openPreviewWindow()
-        }
+        void togglePreviewWindow()
       }
       if (
         runtimeInfo?.notesWindowEnabled &&
@@ -108,12 +103,10 @@ export function AppShell(): ReactElement {
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [
     closeNotesWindow,
-    closePreviewWindow,
     notesWindow.open,
     openNotesWindow,
-    openPreviewWindow,
-    previewWindow.open,
-    runtimeInfo?.notesWindowEnabled
+    runtimeInfo?.notesWindowEnabled,
+    togglePreviewWindow
   ])
 
   // ⌘1–⌘9 / ⌘, arrive from the main process (Chromium swallows ⌘+digit before
@@ -201,13 +194,7 @@ export function AppShell(): ReactElement {
               </KbdGroup>
             </Button>
             <FooterActionDivider />
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() =>
-                previewWindow.open ? void closePreviewWindow() : void openPreviewWindow()
-              }
-            >
+            <Button size="sm" variant="ghost" onClick={() => void togglePreviewWindow()}>
               {previewWindow.open ? 'Close Preview' : 'Open Preview'}
               <KbdGroup>
                 <Kbd>⌘</Kbd>

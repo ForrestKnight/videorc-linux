@@ -248,6 +248,7 @@ export type StudioContextValue = {
   previewWindow: PreviewWindowState
   openPreviewWindow: () => Promise<void>
   closePreviewWindow: () => Promise<void>
+  togglePreviewWindow: () => Promise<void>
   setPreviewWindowAlwaysOnTop: (alwaysOnTop: boolean) => Promise<void>
   notesWindow: NotesWindowState
   openNotesWindow: () => Promise<void>
@@ -2652,15 +2653,34 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   ])
 
   const openPreviewWindow = useCallback(async () => {
-    await window.videorc?.openPreviewWindow?.()
+    const next = await window.videorc?.openPreviewWindow?.()
+    if (next) {
+      setPreviewWindow(next)
+    }
   }, [])
 
   const closePreviewWindow = useCallback(async () => {
-    await window.videorc?.closePreviewWindow?.()
+    const next = await window.videorc?.closePreviewWindow?.()
+    if (next) {
+      setPreviewWindow(next)
+    }
+  }, [])
+
+  const togglePreviewWindow = useCallback(async () => {
+    const current = await window.videorc?.getPreviewWindowState?.()
+    const next = current?.open
+      ? await window.videorc?.closePreviewWindow?.()
+      : await window.videorc?.openPreviewWindow?.()
+    if (next) {
+      setPreviewWindow(next)
+    }
   }, [])
 
   const setPreviewWindowAlwaysOnTop = useCallback(async (alwaysOnTop: boolean) => {
-    await window.videorc?.setPreviewWindowAlwaysOnTop?.(alwaysOnTop)
+    const next = await window.videorc?.setPreviewWindowAlwaysOnTop?.(alwaysOnTop)
+    if (next) {
+      setPreviewWindow(next)
+    }
   }, [])
 
   // --- Detached Notes window ---------------------------------------------------
@@ -4305,6 +4325,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       previewWindow,
       openPreviewWindow,
       closePreviewWindow,
+      togglePreviewWindow,
       setPreviewWindowAlwaysOnTop,
       notesWindow,
       openNotesWindow,
@@ -4446,6 +4467,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       previewWindow,
       openPreviewWindow,
       closePreviewWindow,
+      togglePreviewWindow,
       setPreviewWindowAlwaysOnTop,
       notesWindow,
       openNotesWindow,
