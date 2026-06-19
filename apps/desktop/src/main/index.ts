@@ -114,7 +114,9 @@ const OAUTH_APP_PROTOCOL_REDIRECT_URI = 'videorc://oauth/callback'
 // kill switch only (VIDEORC_NATIVE_PREVIEW_SURFACE=0).
 const nativePreviewSurfaceProofEnabled = process.env.VIDEORC_NATIVE_PREVIEW_SURFACE !== '0'
 const nativePreviewFramePollingEnabled = process.env.VIDEORC_SMOKE_PREVIEW_MOTION !== '1'
-const notesWindowFeatureEnabled = process.env.VIDEORC_NOTES_WINDOW === '1'
+// Notes is on by default after the final-artifact invisibility smoke landed.
+// Keep a developer kill switch for emergency rollback.
+const notesWindowFeatureEnabled = process.env.VIDEORC_NOTES_WINDOW !== '0'
 const notesWindowSmokeMarkerEnabled =
   notesWindowFeatureEnabled &&
   process.env.VIDEORC_NOTES_SMOKE_MARKER === '1' &&
@@ -572,8 +574,6 @@ function restorePreviewWindowOnLaunch(): void {
 }
 
 // --- Detached Notes window ----------------------------------------------------
-// Notes starts behind an internal feature gate until the final artifact smoke
-// proves the protected window is absent from Videorc's own recordings.
 type NotesWindowPrefs = {
   frame?: Electron.Rectangle
   alwaysOnTop?: boolean
@@ -646,7 +646,7 @@ function notesWindowState(message?: string): NotesWindowState {
       message ??
       (notesWindowFeatureEnabled
         ? undefined
-        : 'Notes window is behind the VIDEORC_NOTES_WINDOW=1 internal feature gate.')
+        : 'Notes window is disabled by VIDEORC_NOTES_WINDOW=0.')
   }
 }
 

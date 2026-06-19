@@ -87,6 +87,33 @@ describe('runtime info helpers', () => {
     })
   })
 
+  it('enables Notes and recording overlay by default after the artifact gate', () => {
+    const info = buildRuntimeInfo({
+      execPath: '/Applications/Videorc.app/Contents/MacOS/Videorc',
+      env: {}
+    })
+
+    expect(info).toMatchObject({
+      notesWindowEnabled: true,
+      notesWindowRecordingOverlayAllowed: true
+    })
+  })
+
+  it('allows Notes and recording overlay to be disabled by env kill switches', () => {
+    const info = buildRuntimeInfo({
+      execPath: '/Applications/Videorc.app/Contents/MacOS/Videorc',
+      env: {
+        VIDEORC_NOTES_WINDOW: '0',
+        VIDEORC_NOTES_RECORDING_OVERLAY: '0'
+      }
+    })
+
+    expect(info).toMatchObject({
+      notesWindowEnabled: false,
+      notesWindowRecordingOverlayAllowed: false
+    })
+  })
+
   it('rejects permission shortcuts outside macOS', () => {
     expect(() => assertPermissionShortcutSupported('linux')).toThrow(
       'Permission shortcut is only available on macOS.'

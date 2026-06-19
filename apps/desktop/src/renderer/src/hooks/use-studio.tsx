@@ -525,7 +525,7 @@ const idleNotesWindowState = (): NotesWindowState => ({
   alwaysOnTop: true,
   protected: false,
   enabled: false,
-  message: 'Notes window is behind the VIDEORC_NOTES_WINDOW=1 internal feature gate.'
+  message: 'Notes window is disabled by VIDEORC_NOTES_WINDOW=0.'
 })
 
 function protectedOverlayWindowIdsFromNotesWindow(
@@ -2708,8 +2708,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     }
     void window.videorc?.closeNotesWindow?.().then(() => {
       toast.warning('Notes closed for this recording', {
-        description:
-          'Notes stay internal until the final recording artifact smoke proves they are invisible.'
+        description: 'Notes recording overlay is disabled by VIDEORC_NOTES_RECORDING_OVERLAY=0.'
       })
     })
   }, [notesWindow.open, recording.state, runtimeInfo?.notesWindowRecordingOverlayAllowed])

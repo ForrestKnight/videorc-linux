@@ -68,9 +68,9 @@ export function buildRuntimeInfo({
     capturePermissionTargetName: permissionTargetName(captureTargetPath, 'Videorc capture helper'),
     capturePermissionTargetPath: captureTargetPath,
     nativePreviewSurfaceProofEnabled: env.VIDEORC_NATIVE_PREVIEW_SURFACE !== '0',
-    notesWindowEnabled: env.VIDEORC_NOTES_WINDOW === '1',
+    notesWindowEnabled: env.VIDEORC_NOTES_WINDOW !== '0',
     notesWindowRecordingOverlayAllowed:
-      env.VIDEORC_NOTES_WINDOW === '1' && env.VIDEORC_NOTES_RECORDING_OVERLAY === '1',
+      env.VIDEORC_NOTES_WINDOW !== '0' && env.VIDEORC_NOTES_RECORDING_OVERLAY !== '0',
     previewSmokeMode: env.VIDEORC_SMOKE_PREVIEW_MOTION === '1',
     disableAutoPreview: env.VIDEORC_DISABLE_AUTO_PREVIEW === '1',
     nativePreviewSurfaceStageSuspended: env.VIDEORC_SMOKE_NATIVE_PREVIEW_SUSPENDED === '1'
