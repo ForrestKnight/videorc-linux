@@ -1730,6 +1730,41 @@ export interface PreviewWindowState {
   alwaysOnTop: boolean
 }
 
+export type PreviewLifecycleState =
+  | 'closed'
+  | 'opening-window'
+  | 'open-no-surface'
+  | 'starting-surface'
+  | 'surface-live'
+  | 'surface-fallback'
+  | 'permission-required'
+  | 'closing'
+  | 'failed'
+
+export type PreviewPermissionStatus =
+  | 'ok'
+  | 'screen-recording-required'
+  | 'camera-required'
+  | 'unknown'
+
+export type PreviewLifecycleTransport = PreviewTransport | 'none' | 'unknown'
+export type PreviewLifecycleBacking = PreviewSurfaceBacking | 'unknown'
+
+export interface PreviewSupervisorState {
+  lifecycleState: PreviewLifecycleState
+  generation: number
+  windowOpen: boolean
+  windowVisible: boolean
+  surfaceRequested: boolean
+  surfaceActive: boolean
+  transport: PreviewLifecycleTransport
+  backing: PreviewLifecycleBacking
+  permissionStatus: PreviewPermissionStatus
+  fallbackReason?: string
+  lastError?: string
+  updatedAt: string
+}
+
 export type NotesFontScale = 'sm' | 'md' | 'lg'
 
 export interface NotesWindowState {
