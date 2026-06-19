@@ -77,6 +77,7 @@ import type {
   PreviewSurfaceSceneState,
   PreviewSurfaceSceneUpdateParams,
   PreviewSurfaceStatus,
+  PreviewPermissionStatus,
   PreviewSupervisorState,
   SceneSource,
   SceneTransform,
@@ -1207,7 +1208,17 @@ async function openPreviewWindow(): Promise<PreviewWindowState> {
     }
   })
 
-  await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(PREVIEW_WINDOW_HTML)}`)
+  try {
+    await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(PREVIEW_WINDOW_HTML)}`)
+  } catch (error) {
+    if (previewWindow !== window || window.isDestroyed() || previewWindowClosing) {
+      return previewWindowState()
+    }
+    throw error
+  }
+  if (previewWindow !== window || window.isDestroyed() || previewWindowClosing) {
+    return previewWindowState()
+  }
   void setNativePreviewSurfaceFramePollingSuppressed(false)
   pushPreviewWindowPlacement()
   emitPreviewWindowState()
@@ -1222,6 +1233,20 @@ function closePreviewWindow(): PreviewWindowState {
     previewWindowClosing = true
     previewWindow.close()
   }
+  return previewWindowState()
+}
+
+function reportPreviewPermissionRequired(
+  permissionStatus: Exclude<PreviewPermissionStatus, 'ok'>,
+  message: string | undefined,
+  generation = previewWindowSurfaceGeneration()
+): PreviewWindowState {
+  previewSupervisor.permissionRequired({
+    generation,
+    permissionStatus,
+    message
+  })
+  emitPreviewWindowState()
   return previewWindowState()
 }
 
@@ -2983,6 +3008,16 @@ function previewSurfaceGenerationFromIpc(generation: unknown): number {
   return typeof generation === 'number' && Number.isSafeInteger(generation) && generation >= 0
     ? generation
     : previewWindowSurfaceGeneration()
+}
+
+function previewPermissionStatusFromIpc(
+  permissionStatus: unknown
+): Exclude<PreviewPermissionStatus, 'ok'> {
+  return permissionStatus === 'screen-recording-required' ||
+    permissionStatus === 'camera-required' ||
+    permissionStatus === 'unknown'
+    ? permissionStatus
+    : 'unknown'
 }
 
 function ensureNativePreviewRealSurfaceDriver(): NativePreviewRealSurfaceDriver | null {
@@ -4941,6 +4976,15 @@ app.whenReady().then(async () => {
   ipcMain.handle('preview-window:close', () => closePreviewWindow())
   ipcMain.handle('preview-window:toggle', () => togglePreviewWindow())
   ipcMain.handle('preview-window:get-state', () => previewWindowState())
+  ipcMain.handle(
+    'preview-window:permission-required',
+    (_event, permissionStatus: unknown, message: unknown, generation: unknown) =>
+      reportPreviewPermissionRequired(
+        previewPermissionStatusFromIpc(permissionStatus),
+        typeof message === 'string' ? message : undefined,
+        previewSurfaceGenerationFromIpc(generation)
+      )
+  )
   ipcMain.handle('preview-window:set-always-on-top', (_event, alwaysOnTop: boolean) =>
     setPreviewWindowAlwaysOnTop(Boolean(alwaysOnTop))
   )

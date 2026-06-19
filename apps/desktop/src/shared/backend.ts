@@ -1820,6 +1820,11 @@ export interface VideorcApi {
   closePreviewWindow: () => Promise<PreviewWindowState>
   togglePreviewWindow: () => Promise<PreviewWindowState>
   getPreviewWindowState: () => Promise<PreviewWindowState>
+  reportPreviewPermissionRequired: (
+    permissionStatus: Exclude<PreviewPermissionStatus, 'ok'>,
+    message?: string,
+    generation?: number
+  ) => Promise<PreviewWindowState>
   setPreviewWindowAlwaysOnTop: (alwaysOnTop: boolean) => Promise<PreviewWindowState>
   setPreviewWindowAspectRatio: (width: number, height: number) => Promise<PreviewWindowState>
   onPreviewWindowState: (callback: (state: PreviewWindowState) => void) => () => void

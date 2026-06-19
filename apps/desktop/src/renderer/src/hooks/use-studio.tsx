@@ -2265,6 +2265,16 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     nativePreviewCameraKeyRef.current =
       status.state === 'failed' || status.state === 'device-missing' ? null : key
     applyPreviewCameraStatus(status)
+    if (status.state === 'permission-needed') {
+      const permissionReport = window.videorc?.reportPreviewPermissionRequired?.(
+        'camera-required',
+        status.message,
+        previewWindowRef.current.supervisor.generation
+      )
+      void permissionReport?.catch((error: unknown) => {
+        console.error('Preview camera permission status report failed:', error)
+      })
+    }
     return status
   }, [
     applyPreviewCameraStatus,
@@ -2328,6 +2338,16 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     nativePreviewScreenKeyRef.current =
       status.state === 'failed' || status.state === 'source-missing' ? null : key
     applyPreviewScreenStatus(status)
+    if (status.state === 'permission-needed') {
+      const permissionReport = window.videorc?.reportPreviewPermissionRequired?.(
+        'screen-recording-required',
+        status.message,
+        previewWindowRef.current.supervisor.generation
+      )
+      void permissionReport?.catch((error: unknown) => {
+        console.error('Preview screen permission status report failed:', error)
+      })
+    }
     return status
   }, [
     applyPreviewScreenStatus,

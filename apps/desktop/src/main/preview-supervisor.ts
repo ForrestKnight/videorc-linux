@@ -143,7 +143,7 @@ export class PreviewSupervisorModel {
   }
 
   permissionRequired(event: PreviewPermissionEvent): PreviewSupervisorState {
-    if (!this.acceptsSurfaceEvent(event.generation)) {
+    if (!this.acceptsPreviewEvent(event.generation)) {
       return this.snapshot()
     }
 
@@ -206,6 +206,16 @@ export class PreviewSupervisorModel {
     return (
       generation === this.state.generation &&
       this.state.surfaceRequested &&
+      this.state.lifecycleState !== 'closing' &&
+      this.state.lifecycleState !== 'closed' &&
+      this.state.lifecycleState !== 'permission-required'
+    )
+  }
+
+  private acceptsPreviewEvent(generation: number): boolean {
+    return (
+      generation === this.state.generation &&
+      this.state.windowOpen &&
       this.state.lifecycleState !== 'closing' &&
       this.state.lifecycleState !== 'closed' &&
       this.state.lifecycleState !== 'permission-required'

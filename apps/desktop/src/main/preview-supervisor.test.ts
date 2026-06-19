@@ -158,6 +158,27 @@ describe('PreviewSupervisorModel', () => {
     expect(model.snapshot()).toEqual(permissionRequired)
   })
 
+  it('accepts permission-required while the preview window is open before surface start', () => {
+    const model = supervisor()
+    model.openWindow()
+    model.windowOpened()
+
+    const permissionRequired = model.permissionRequired({
+      generation: 1,
+      permissionStatus: 'screen-recording-required',
+      message: 'Screen Recording permission is required.'
+    })
+
+    expect(permissionRequired).toMatchObject({
+      lifecycleState: 'permission-required',
+      windowOpen: true,
+      surfaceRequested: false,
+      surfaceActive: false,
+      permissionStatus: 'screen-recording-required',
+      lastError: 'Screen Recording permission is required.'
+    })
+  })
+
   it('marks fallback as explicit instead of native-live', () => {
     const model = supervisor()
     model.openWindow()
