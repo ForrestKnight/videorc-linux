@@ -73,6 +73,7 @@ import type {
   LiveChatProviderState,
   LiveChatSnapshot,
   NativePreviewHostCommand,
+  NotesWindowState,
   PreviewCameraStatus,
   PreviewScreenStatus,
   PreviewSurfaceBounds,
@@ -248,6 +249,10 @@ export type StudioContextValue = {
   openPreviewWindow: () => Promise<void>
   closePreviewWindow: () => Promise<void>
   setPreviewWindowAlwaysOnTop: (alwaysOnTop: boolean) => Promise<void>
+  notesWindow: NotesWindowState
+  openNotesWindow: () => Promise<void>
+  closeNotesWindow: () => Promise<void>
+  setNotesWindowAlwaysOnTop: (alwaysOnTop: boolean) => Promise<void>
   scene: Scene | null
   sceneEditMode: boolean
   selectedSceneSourceId: string | null
@@ -511,6 +516,16 @@ const idlePreviewScreenStatus = (): PreviewScreenStatus => ({
   excludeCurrentProcessWindows: true,
   updatedAt: new Date().toISOString(),
   message: 'Native screen preview is not running.'
+})
+
+const idleNotesWindowState = (): NotesWindowState => ({
+  open: false,
+  visible: false,
+  bounds: null,
+  alwaysOnTop: true,
+  protected: false,
+  enabled: false,
+  message: 'Notes window is behind the VIDEORC_NOTES_WINDOW=1 internal feature gate.'
 })
 
 export function useStudio(): StudioContextValue {
@@ -2616,6 +2631,53 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     await window.videorc?.setPreviewWindowAlwaysOnTop?.(alwaysOnTop)
   }, [])
 
+  // --- Detached Notes window ---------------------------------------------------
+  // Internal only until the recording artifact smoke proves capture invisibility.
+  const [notesWindow, setNotesWindow] = useState<NotesWindowState>(idleNotesWindowState)
+
+  useEffect(() => {
+    let cancelled = false
+    const reconcile = async (): Promise<void> => {
+      const fresh = await window.videorc?.getNotesWindowState?.()
+      if (!fresh || cancelled) {
+        return
+      }
+      setNotesWindow((current) =>
+        JSON.stringify(current) === JSON.stringify(fresh) ? current : fresh
+      )
+    }
+    void reconcile()
+    const unsubscribe = window.videorc?.onNotesWindowState?.((state) => setNotesWindow(state))
+    return () => {
+      cancelled = true
+      unsubscribe?.()
+    }
+  }, [runtimeInfo?.notesWindowEnabled])
+
+  const openNotesWindow = useCallback(async () => {
+    await window.videorc?.openNotesWindow?.()
+  }, [])
+
+  const closeNotesWindow = useCallback(async () => {
+    await window.videorc?.closeNotesWindow?.()
+  }, [])
+
+  const setNotesWindowAlwaysOnTop = useCallback(async (alwaysOnTop: boolean) => {
+    await window.videorc?.setNotesWindowAlwaysOnTop?.(alwaysOnTop)
+  }, [])
+
+  useEffect(() => {
+    if (!notesWindow.open || !isActiveRecordingState(recording.state)) {
+      return
+    }
+    void window.videorc?.closeNotesWindow?.().then(() => {
+      toast.warning('Notes closed for this recording', {
+        description:
+          'Notes stay internal until the final recording artifact smoke proves they are invisible.'
+      })
+    })
+  }, [notesWindow.open, recording.state])
+
   // The preview window is locked to the OUTPUT aspect ratio — the user can never
   // squeeze or stretch what they will record/stream.
   useEffect(() => {
@@ -4185,6 +4247,10 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       openPreviewWindow,
       closePreviewWindow,
       setPreviewWindowAlwaysOnTop,
+      notesWindow,
+      openNotesWindow,
+      closeNotesWindow,
+      setNotesWindowAlwaysOnTop,
       scene,
       sceneEditMode,
       selectedSceneSourceId,
@@ -4322,6 +4388,10 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       openPreviewWindow,
       closePreviewWindow,
       setPreviewWindowAlwaysOnTop,
+      notesWindow,
+      openNotesWindow,
+      closeNotesWindow,
+      setNotesWindowAlwaysOnTop,
       scene,
       sceneEditMode,
       selectedSceneSourceId,

@@ -33,10 +33,14 @@ export function AppShell(): ReactElement {
     connection,
     wsStatus,
     recording,
+    runtimeInfo,
     refreshBackend,
     previewWindow,
     openPreviewWindow,
-    closePreviewWindow
+    closePreviewWindow,
+    notesWindow,
+    openNotesWindow,
+    closeNotesWindow
   } = useStudio()
   const [active, setActive] = useState<WorkspaceTab>('studio')
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
@@ -86,10 +90,31 @@ export function AppShell(): ReactElement {
           void openPreviewWindow()
         }
       }
+      if (
+        runtimeInfo?.notesWindowEnabled &&
+        event.key.toLowerCase() === 'n' &&
+        event.shiftKey &&
+        (event.metaKey || event.ctrlKey)
+      ) {
+        event.preventDefault()
+        if (notesWindow.open) {
+          void closeNotesWindow()
+        } else {
+          void openNotesWindow()
+        }
+      }
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [closePreviewWindow, openPreviewWindow, previewWindow.open])
+  }, [
+    closeNotesWindow,
+    closePreviewWindow,
+    notesWindow.open,
+    openNotesWindow,
+    openPreviewWindow,
+    previewWindow.open,
+    runtimeInfo?.notesWindowEnabled
+  ])
 
   // ⌘1–⌘9 / ⌘, arrive from the main process (Chromium swallows ⌘+digit before
   // the renderer keydown — see main's before-input-event handler). Map the raw
@@ -189,6 +214,25 @@ export function AppShell(): ReactElement {
                 <Kbd>P</Kbd>
               </KbdGroup>
             </Button>
+            {runtimeInfo?.notesWindowEnabled ? (
+              <>
+                <FooterActionDivider />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() =>
+                    notesWindow.open ? void closeNotesWindow() : void openNotesWindow()
+                  }
+                >
+                  {notesWindow.open ? 'Close Notes' : 'Open Notes'}
+                  <KbdGroup>
+                    <Kbd>⌘</Kbd>
+                    <Kbd>⇧</Kbd>
+                    <Kbd>N</Kbd>
+                  </KbdGroup>
+                </Button>
+              </>
+            ) : null}
           </FooterActionBar>
         </main>
 

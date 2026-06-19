@@ -1709,6 +1709,7 @@ export interface RuntimeInfo {
   capturePermissionTargetName: string
   capturePermissionTargetPath: string
   nativePreviewSurfaceProofEnabled: boolean
+  notesWindowEnabled?: boolean
   previewSmokeMode?: boolean
   disableAutoPreview?: boolean
   nativePreviewSurfaceStageSuspended?: boolean
@@ -1724,6 +1725,24 @@ export interface PreviewWindowState {
   scaleFactor: number
   screenHeight: number
   alwaysOnTop: boolean
+}
+
+export type NotesFontScale = 'sm' | 'md' | 'lg'
+
+export interface NotesWindowState {
+  open: boolean
+  visible: boolean
+  bounds: { x: number; y: number; width: number; height: number } | null
+  alwaysOnTop: boolean
+  protected: boolean
+  enabled: boolean
+  message?: string
+}
+
+export interface NotesDocument {
+  text: string
+  fontScale: NotesFontScale
+  updatedAt: string
 }
 
 // Blurred-wallpaper glass underlay: real window-backdrop blur is unavailable
@@ -1762,6 +1781,14 @@ export interface VideorcApi {
   setPreviewWindowAlwaysOnTop: (alwaysOnTop: boolean) => Promise<PreviewWindowState>
   setPreviewWindowAspectRatio: (width: number, height: number) => Promise<PreviewWindowState>
   onPreviewWindowState: (callback: (state: PreviewWindowState) => void) => () => void
+  openNotesWindow: () => Promise<NotesWindowState>
+  closeNotesWindow: () => Promise<NotesWindowState>
+  getNotesWindowState: () => Promise<NotesWindowState>
+  setNotesWindowAlwaysOnTop: (alwaysOnTop: boolean) => Promise<NotesWindowState>
+  getNotesDocument: () => Promise<NotesDocument>
+  saveNotesDocument: (patch: Partial<NotesDocument>) => Promise<NotesDocument>
+  onNotesWindowState: (callback: (state: NotesWindowState) => void) => () => void
+  onNotesDocument: (callback: (document: NotesDocument) => void) => () => void
   createNativePreviewSurface: (bounds: PreviewSurfaceBounds) => Promise<PreviewSurfaceStatus>
   updateNativePreviewSurfaceBounds: (bounds: PreviewSurfaceBounds) => Promise<PreviewSurfaceStatus>
   applyNativePreviewHostCommands: (

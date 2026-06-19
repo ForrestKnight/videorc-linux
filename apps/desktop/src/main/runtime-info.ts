@@ -18,6 +18,7 @@ export interface RuntimeInfoInput {
       | 'VIDEORC_SMOKE_PREVIEW_MOTION'
       | 'VIDEORC_DISABLE_AUTO_PREVIEW'
       | 'VIDEORC_SMOKE_NATIVE_PREVIEW_SUSPENDED'
+      | 'VIDEORC_NOTES_WINDOW'
     >
   >
 }
@@ -66,6 +67,7 @@ export function buildRuntimeInfo({
     capturePermissionTargetName: permissionTargetName(captureTargetPath, 'Videorc capture helper'),
     capturePermissionTargetPath: captureTargetPath,
     nativePreviewSurfaceProofEnabled: env.VIDEORC_NATIVE_PREVIEW_SURFACE !== '0',
+    notesWindowEnabled: env.VIDEORC_NOTES_WINDOW === '1',
     previewSmokeMode: env.VIDEORC_SMOKE_PREVIEW_MOTION === '1',
     disableAutoPreview: env.VIDEORC_DISABLE_AUTO_PREVIEW === '1',
     nativePreviewSurfaceStageSuspended: env.VIDEORC_SMOKE_NATIVE_PREVIEW_SUSPENDED === '1'

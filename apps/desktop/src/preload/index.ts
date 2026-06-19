@@ -4,6 +4,8 @@ import type {
   BackendConnection,
   BackendLogEvent,
   GlassWallpaperState,
+  NotesDocument,
+  NotesWindowState,
   PreviewWindowState,
   VideorcApi
 } from '../shared/backend'
@@ -38,6 +40,25 @@ const api: VideorcApi = {
       callback(state)
     ipcRenderer.on('preview-window:state', listener)
     return () => ipcRenderer.removeListener('preview-window:state', listener)
+  },
+  openNotesWindow: () => ipcRenderer.invoke('notes-window:open'),
+  closeNotesWindow: () => ipcRenderer.invoke('notes-window:close'),
+  getNotesWindowState: () => ipcRenderer.invoke('notes-window:get-state'),
+  setNotesWindowAlwaysOnTop: (alwaysOnTop) =>
+    ipcRenderer.invoke('notes-window:set-always-on-top', alwaysOnTop),
+  getNotesDocument: () => ipcRenderer.invoke('notes-window:get-document'),
+  saveNotesDocument: (patch) => ipcRenderer.invoke('notes-window:save-document', patch),
+  onNotesWindowState: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, state: NotesWindowState): void =>
+      callback(state)
+    ipcRenderer.on('notes-window:state', listener)
+    return () => ipcRenderer.removeListener('notes-window:state', listener)
+  },
+  onNotesDocument: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, document: NotesDocument): void =>
+      callback(document)
+    ipcRenderer.on('notes-window:document', listener)
+    return () => ipcRenderer.removeListener('notes-window:document', listener)
   },
   createNativePreviewSurface: (bounds) => ipcRenderer.invoke('preview-surface:create', bounds),
   updateNativePreviewSurfaceBounds: (bounds) =>

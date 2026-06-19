@@ -67,6 +67,9 @@ import type {
   CompositorStatus,
   LayoutSettings,
   NativePreviewHostCommand,
+  NotesDocument,
+  NotesFontScale,
+  NotesWindowState,
   PreviewSurfaceCompositorUpdateParams,
   PreviewSurfaceBounds,
   PreviewSurfaceSceneLayer,
@@ -82,6 +85,11 @@ import type {
 
 let mainWindow: BrowserWindow | null = null
 let nativePreviewSurfaceWindow: BrowserWindow | null = null
+let notesWindow: BrowserWindow | null = null
+let notesWindowLastFrame: Electron.Rectangle | null = null
+let notesWindowAlwaysOnTop = true
+let notesWindowClosing = false
+let notesWindowContentProtected = false
 let nativePreviewSurfaceStatus: PreviewSurfaceStatus = idleNativePreviewSurfaceStatus()
 let nativePreviewSurfaceCompositorUpdateInFlight: Promise<PreviewSurfaceStatus> | null = null
 let nativePreviewSurfaceCompositorRequestSerial = 0
@@ -106,6 +114,7 @@ const OAUTH_APP_PROTOCOL_REDIRECT_URI = 'videorc://oauth/callback'
 // kill switch only (VIDEORC_NATIVE_PREVIEW_SURFACE=0).
 const nativePreviewSurfaceProofEnabled = process.env.VIDEORC_NATIVE_PREVIEW_SURFACE !== '0'
 const nativePreviewFramePollingEnabled = process.env.VIDEORC_SMOKE_PREVIEW_MOTION !== '1'
+const notesWindowFeatureEnabled = process.env.VIDEORC_NOTES_WINDOW === '1'
 
 app.setName('Videorc')
 // Dark glass is the default theme; the renderer re-syncs this on toggle.
@@ -380,6 +389,9 @@ function createWindow(): void {
     if (previewWindow && !previewWindow.isDestroyed()) {
       previewWindow.close()
     }
+    if (notesWindow && !notesWindow.isDestroyed()) {
+      notesWindow.close()
+    }
     mainWindow = null
   })
 
@@ -405,6 +417,7 @@ function createWindow(): void {
 
   mainWindow.webContents.once('did-finish-load', () => {
     restorePreviewWindowOnLaunch()
+    restoreNotesWindowOnLaunch()
   })
 }
 
@@ -551,6 +564,342 @@ function restorePreviewWindowOnLaunch(): void {
   const prefs = loadPreviewWindowPrefs()
   if (prefs.open !== false) {
     void openPreviewWindow()
+  }
+}
+
+// --- Detached Notes window ----------------------------------------------------
+// Notes starts behind an internal feature gate until the final artifact smoke
+// proves the protected window is absent from Videorc's own recordings.
+type NotesWindowPrefs = {
+  frame?: Electron.Rectangle
+  alwaysOnTop?: boolean
+  open?: boolean
+  text?: string
+  fontScale?: NotesFontScale
+}
+
+function notesWindowPrefsPath(): string {
+  return join(app.getPath('userData'), 'notes-window.json')
+}
+
+function loadNotesWindowPrefs(): NotesWindowPrefs {
+  try {
+    return JSON.parse(readFileSync(notesWindowPrefsPath(), 'utf8')) as NotesWindowPrefs
+  } catch {
+    return {}
+  }
+}
+
+function saveNotesWindowPrefs(patch: NotesWindowPrefs): void {
+  if (!notesWindowFeatureEnabled || process.env.VIDEORC_SMOKE_OUTPUT_DIR) {
+    return
+  }
+  try {
+    writeFileSync(notesWindowPrefsPath(), JSON.stringify({ ...loadNotesWindowPrefs(), ...patch }))
+  } catch {
+    // Local notes are a convenience; a failed preference write must not break capture.
+  }
+}
+
+function defaultNotesDocument(prefs = loadNotesWindowPrefs()): NotesDocument {
+  return {
+    text: typeof prefs.text === 'string' ? prefs.text : '',
+    fontScale: isNotesFontScale(prefs.fontScale) ? prefs.fontScale : 'md',
+    updatedAt: new Date().toISOString()
+  }
+}
+
+function isNotesFontScale(value: unknown): value is NotesFontScale {
+  return value === 'sm' || value === 'md' || value === 'lg'
+}
+
+function notesWindowIsOpen(): boolean {
+  return Boolean(notesWindow && !notesWindow.isDestroyed() && !notesWindowClosing)
+}
+
+function notesWindowState(message?: string): NotesWindowState {
+  const window = notesWindow
+  const open = notesWindowIsOpen()
+  return {
+    open,
+    visible: open ? window!.isVisible() && !window!.isMinimized() : false,
+    bounds: open ? window!.getBounds() : null,
+    alwaysOnTop: notesWindowAlwaysOnTop,
+    protected: notesWindowContentProtected,
+    enabled: notesWindowFeatureEnabled,
+    message:
+      message ??
+      (notesWindowFeatureEnabled
+        ? undefined
+        : 'Notes window is behind the VIDEORC_NOTES_WINDOW=1 internal feature gate.')
+  }
+}
+
+function emitNotesWindowState(message?: string): void {
+  if (appIsQuitting) {
+    return
+  }
+  const state = notesWindowState(message)
+  for (const window of [mainWindow, notesWindow]) {
+    if (window && !window.webContents.isDestroyed()) {
+      try {
+        window.webContents.send('notes-window:state', state)
+      } catch (error) {
+        if (!appIsQuitting) {
+          console.warn('Notes window state emit failed:', error)
+        }
+      }
+    }
+  }
+}
+
+function emitNotesDocument(document: NotesDocument): void {
+  if (appIsQuitting) {
+    return
+  }
+  for (const window of [mainWindow, notesWindow]) {
+    if (window && !window.webContents.isDestroyed()) {
+      try {
+        window.webContents.send('notes-window:document', document)
+      } catch (error) {
+        if (!appIsQuitting) {
+          console.warn('Notes document emit failed:', error)
+        }
+      }
+    }
+  }
+}
+
+function saveNotesDocument(patch: Partial<NotesDocument>): NotesDocument {
+  const current = defaultNotesDocument()
+  const next: NotesDocument = {
+    text: typeof patch.text === 'string' ? patch.text : current.text,
+    fontScale: isNotesFontScale(patch.fontScale) ? patch.fontScale : current.fontScale,
+    updatedAt: new Date().toISOString()
+  }
+  saveNotesWindowPrefs({ text: next.text, fontScale: next.fontScale })
+  emitNotesDocument(next)
+  return next
+}
+
+function notesWindowHtml(document: NotesDocument): string {
+  const initialDocumentJson = jsonForInlineScript(document)
+  return `<!doctype html><html><head><meta charset="utf-8"><style>
+    html, body { margin: 0; height: 100%; background: #101012; color: #f4f4f5;
+      font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      overflow: hidden; user-select: none; -webkit-user-select: none; }
+    body { display: flex; flex-direction: column; }
+    .drag-bar { height: 34px; display: flex; align-items: center; gap: 10px;
+      padding: 0 12px 0 78px; box-sizing: border-box; background: #18181b;
+      border-bottom: 1px solid rgba(255,255,255,.08); -webkit-app-region: drag; }
+    .title { color: #a1a1aa; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+    .spacer { flex: 1; }
+    button { -webkit-app-region: no-drag; border: 1px solid rgba(255,255,255,.12);
+      border-radius: 6px; background: rgba(255,255,255,.06); color: #e4e4e7;
+      height: 22px; padding: 0 8px; font: inherit; font-size: 11px; cursor: default; }
+    button[aria-pressed="true"] { background: #f4f4f5; color: #18181b; border-color: #f4f4f5; }
+    textarea { flex: 1; resize: none; border: 0; outline: none; padding: 20px 22px;
+      box-sizing: border-box; background: #101012; color: #f4f4f5; caret-color: #f4f4f5;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.45; -webkit-app-region: no-drag; }
+    body[data-font-scale="sm"] textarea { font-size: 18px; }
+    body[data-font-scale="md"] textarea { font-size: 24px; }
+    body[data-font-scale="lg"] textarea { font-size: 32px; }
+    textarea::placeholder { color: #71717a; }
+    .footer { height: 28px; display: flex; align-items: center; gap: 12px; padding: 0 12px;
+      border-top: 1px solid rgba(255,255,255,.08); color: #71717a; font-size: 11px; }
+  </style></head><body>
+    <div class="drag-bar"><span class="title">Videorc Notes</span><span class="spacer"></span>
+      <button type="button" data-scale="sm">Sm</button>
+      <button type="button" data-scale="md">Md</button>
+      <button type="button" data-scale="lg">Lg</button>
+    </div>
+    <textarea spellcheck="false" placeholder="Notes for this recording..."></textarea>
+    <div class="footer"><span id="word-count">0 words</span><span id="save-state">Saved</span></div>
+    <script>
+      (() => {
+        const initialDocument = ${initialDocumentJson};
+        const textarea = document.querySelector('textarea');
+        const saveState = document.getElementById('save-state');
+        const wordCount = document.getElementById('word-count');
+        const buttons = Array.from(document.querySelectorAll('button[data-scale]'));
+        let fontScale = initialDocument.fontScale || 'md';
+        let saveTimer = null;
+
+        textarea.value = initialDocument.text || '';
+        document.body.dataset.fontScale = fontScale;
+
+        function words(text) {
+          const trimmed = text.trim();
+          return trimmed ? trimmed.split(/\\s+/).length : 0;
+        }
+
+        function render() {
+          wordCount.textContent = words(textarea.value) + ' words';
+          for (const button of buttons) {
+            button.setAttribute('aria-pressed', button.dataset.scale === fontScale ? 'true' : 'false');
+          }
+        }
+
+        function save() {
+          window.clearTimeout(saveTimer);
+          saveTimer = null;
+          saveState.textContent = 'Saving';
+          window.videorc?.saveNotesDocument?.({ text: textarea.value, fontScale })
+            .then(() => { saveState.textContent = 'Saved'; })
+            .catch(() => { saveState.textContent = 'Save failed'; });
+        }
+
+        function queueSave() {
+          saveState.textContent = 'Unsaved';
+          window.clearTimeout(saveTimer);
+          saveTimer = window.setTimeout(save, 120);
+        }
+
+        textarea.addEventListener('input', () => {
+          render();
+          queueSave();
+        });
+        textarea.addEventListener('blur', save);
+        textarea.addEventListener('keydown', (event) => {
+          if (event.key === 'Escape') textarea.blur();
+        });
+        for (const button of buttons) {
+          button.addEventListener('click', () => {
+            fontScale = button.dataset.scale || 'md';
+            document.body.dataset.fontScale = fontScale;
+            render();
+            queueSave();
+            textarea.focus();
+          });
+        }
+        window.addEventListener('beforeunload', save);
+        window.__videorcNotesSnapshot = () => ({ text: textarea.value, fontScale });
+        render();
+        textarea.focus();
+      })();
+    </script>
+  </body></html>`
+}
+
+async function openNotesWindow(): Promise<NotesWindowState> {
+  if (!notesWindowFeatureEnabled) {
+    return notesWindowState()
+  }
+  const existingWindow = notesWindow
+  if (notesWindowIsOpen() && existingWindow) {
+    if (existingWindow.isMinimized()) {
+      existingWindow.restore()
+    }
+    existingWindow.show()
+    existingWindow.focus()
+    emitNotesWindowState()
+    return notesWindowState()
+  }
+
+  const prefs = loadNotesWindowPrefs()
+  const rememberedFrame = notesWindowLastFrame ?? prefs.frame ?? null
+  const frame = rememberedFrame ? clampFrameToWorkArea(rememberedFrame) : null
+  const window = new BrowserWindow({
+    width: frame?.width ?? 640,
+    height: frame?.height ?? 420,
+    ...(frame ? { x: frame.x, y: frame.y } : {}),
+    minWidth: 360,
+    minHeight: 240,
+    title: 'Videorc Notes',
+    ...(isMac ? { titleBarStyle: 'hiddenInset' as const } : {}),
+    backgroundColor: '#101012',
+    show: false,
+    ...appWindowIconOptions(),
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false
+    }
+  })
+  notesWindowClosing = false
+  notesWindow = window
+  notesWindowAlwaysOnTop = prefs.alwaysOnTop ?? true
+  notesWindowContentProtected = false
+  try {
+    window.setContentProtection(true)
+    notesWindowContentProtected = true
+  } catch (error) {
+    console.warn('Notes window content protection could not be enabled:', error)
+  }
+  if (notesWindowAlwaysOnTop) {
+    window.setAlwaysOnTop(true, 'floating')
+  }
+  saveNotesWindowPrefs({ open: true, alwaysOnTop: notesWindowAlwaysOnTop })
+
+  for (const event of ['move', 'resize', 'show', 'hide', 'minimize', 'restore', 'focus'] as const) {
+    window.on(event as 'move', () => {
+      if (notesWindow === window) {
+        emitNotesWindowState()
+      }
+    })
+  }
+  window.on('close', () => {
+    if (notesWindow === window) {
+      notesWindowClosing = true
+      notesWindowLastFrame = window.getBounds()
+      saveNotesWindowPrefs({ frame: notesWindowLastFrame, open: false })
+      void window.webContents
+        .executeJavaScript('window.__videorcNotesSnapshot?.() ?? null', true)
+        .then((snapshot: Partial<NotesDocument> | null) => {
+          if (snapshot) {
+            saveNotesDocument(snapshot)
+          }
+        })
+        .catch(() => {})
+    }
+  })
+  window.on('closed', () => {
+    if (notesWindow === window) {
+      notesWindow = null
+      notesWindowClosing = false
+      notesWindowContentProtected = false
+      emitNotesWindowState()
+    }
+  })
+
+  await window.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(notesWindowHtml(defaultNotesDocument(prefs)))}`
+  )
+  window.show()
+  window.focus()
+  emitNotesWindowState()
+  emitNotesDocument(defaultNotesDocument())
+  return notesWindowState()
+}
+
+function closeNotesWindow(message?: string): NotesWindowState {
+  if (notesWindow && !notesWindow.isDestroyed()) {
+    notesWindowClosing = true
+    notesWindow.close()
+  }
+  return notesWindowState(message)
+}
+
+function setNotesWindowAlwaysOnTop(alwaysOnTop: boolean): NotesWindowState {
+  notesWindowAlwaysOnTop = alwaysOnTop
+  if (notesWindow && !notesWindow.isDestroyed()) {
+    notesWindow.setAlwaysOnTop(alwaysOnTop, 'floating')
+  }
+  saveNotesWindowPrefs({ alwaysOnTop })
+  emitNotesWindowState()
+  return notesWindowState()
+}
+
+function restoreNotesWindowOnLaunch(): void {
+  if (!notesWindowFeatureEnabled || !previewWindowAutoRestoreEnabled) {
+    return
+  }
+  const prefs = loadNotesWindowPrefs()
+  if (prefs.open === true) {
+    void openNotesWindow()
   }
 }
 
@@ -3470,6 +3819,25 @@ async function runSmokePreviewMotionCommand(
     }
   }
 
+  if (command === 'notes-window-open') {
+    return openNotesWindow()
+  }
+
+  if (command === 'notes-window-close') {
+    return closeNotesWindow()
+  }
+
+  if (command === 'notes-window-state') {
+    return notesWindowState()
+  }
+
+  if (command === 'notes-window-save-document') {
+    return saveNotesDocument({
+      text: typeof params.text === 'string' ? params.text : undefined,
+      fontScale: isNotesFontScale(params.fontScale) ? params.fontScale : undefined
+    })
+  }
+
   if (command === 'native-preview-surface-status') {
     return nativePreviewSurfaceStatus
   }
@@ -4358,6 +4726,16 @@ app.whenReady().then(async () => {
     }
     return previewWindowState()
   })
+  ipcMain.handle('notes-window:open', () => openNotesWindow())
+  ipcMain.handle('notes-window:close', () => closeNotesWindow())
+  ipcMain.handle('notes-window:get-state', () => notesWindowState())
+  ipcMain.handle('notes-window:set-always-on-top', (_event, alwaysOnTop: boolean) =>
+    setNotesWindowAlwaysOnTop(Boolean(alwaysOnTop))
+  )
+  ipcMain.handle('notes-window:get-document', () => defaultNotesDocument())
+  ipcMain.handle('notes-window:save-document', (_event, patch: Partial<NotesDocument>) =>
+    saveNotesDocument(patch ?? {})
+  )
   ipcMain.handle('preview-surface:create', (_event, bounds: PreviewSurfaceBounds) =>
     runNativePreviewSurfaceMutation(() => createNativePreviewSurface(bounds))
   )
