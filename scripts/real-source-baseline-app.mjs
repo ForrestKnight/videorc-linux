@@ -16,7 +16,7 @@
 // Microphone permissions granted to the dev app. This records your screen for the
 // configured duration — run it intentionally.
 //
-//   node scripts/real-source-baseline-app.mjs [--gate|--screen-recording-gate]
+//   node scripts/real-source-baseline-app.mjs [--gate|--screen-recording-gate|--notes-overlay-gate]
 //
 // Env:
 //   VIDEORC_BASELINE_RECORDING_MS   recording length (default 60000)
@@ -43,10 +43,11 @@ import { dirname, join, resolve } from 'node:path'
 import { launchDevApp, stopProcess } from './lib/app-launcher.mjs'
 import { launchAvSyncStimulus, stopAvSyncStimulus } from './lib/av-sync-stimulus.mjs'
 import { resolveFinalRecordingPath } from './lib/final-recording-path.mjs'
-import { launchScreenMotionStimulus, stopScreenMotionStimulus } from './lib/screen-motion-stimulus.mjs'
+import { launchScreenMotionStimulus, screenMotionStimulusOptionsForSource, stopScreenMotionStimulus } from './lib/screen-motion-stimulus.mjs'
 import { connectBackend, request } from './smoke-recording-session.mjs'
 import { analyzeRecording, writeReports } from './lib/recording-analyzer.mjs'
 import { analyzeStartupResolution, writeStartupReports } from './lib/startup-resolution-analyzer.mjs'
+import { analyzeNotesOverlayArtifact, appendNotesOverlayFailures, formatNotesOverlayArtifactSummary } from './lib/notes-overlay-artifact-gate.mjs'
 import { DEFAULT_ACCEPTANCE_GATES, evaluateAcceptance } from './lib/acceptance-gate.mjs'
 import { classifyMediaQualityMode } from './lib/media-quality-mode.mjs'
 import { classifyObsParityEvidence } from './lib/obs-parity-evidence.mjs'
@@ -88,6 +89,11 @@ const config = {
   noPreviewSurface: process.env.VIDEORC_BASELINE_NO_PREVIEW_SURFACE === '1',
   screenMotionStimulus: process.env.VIDEORC_BASELINE_SCREEN_MOTION_STIMULUS === '1',
   avSyncStimulus: process.env.VIDEORC_BASELINE_AV_SYNC_STIMULUS === '1',
+  notesOverlay: process.env.VIDEORC_BASELINE_NOTES_OVERLAY === '1',
+  notesOverlayText:
+    process.env.VIDEORC_BASELINE_NOTES_TEXT ??
+    'VIDEORC NOTES LEAK MARKER\nRED OVERLAY SHOULD NOT RECORD',
+  notesOverlayMaxMarkerPixelRatio: Number(process.env.VIDEORC_BASELINE_NOTES_MAX_MARKER_RATIO ?? 0.002),
   microphoneSyncOffsetMs: Number(process.env.VIDEORC_BASELINE_MIC_SYNC_OFFSET_MS ?? 0),
   requireMotion:
     process.env.VIDEORC_BASELINE_REQUIRE_MOTION === '1' ||
@@ -97,6 +103,7 @@ const config = {
   ),
   gate: process.argv.includes('--gate'),
   screenRecordingGate: process.argv.includes('--screen-recording-gate'),
+  notesOverlayGate: process.argv.includes('--notes-overlay-gate'),
 }
 
 const NATIVE_PREFIX = {
@@ -108,13 +115,15 @@ const NATIVE_PREFIX = {
 let launched
 let motionStimulus
 let avSyncStimulus
+let notesOverlayState
+let notesOverlayBounds
 const previewSurfaceOutputGuard = createPreviewSurfaceOutputGuard()
 mkdirSync(config.outputDirectory, { recursive: true })
 
 let exitCode = 0
 try {
   const verdict = await main()
-  exitCode = (config.gate || config.screenRecordingGate) && verdict && !verdict.pass ? 1 : 0
+  exitCode = (config.gate || config.screenRecordingGate || config.notesOverlayGate) && verdict && !verdict.pass ? 1 : 0
 } catch (error) {
   console.error(`real-source baseline failed: ${error?.message ?? error}`)
   exitCode = 2
@@ -128,9 +137,10 @@ process.exit(exitCode)
 async function main() {
   console.log('Launching dev app for real-source baseline (no preview-motion synthetic mode)…')
   const requiresPreviewHostCommandServer = !config.noPreviewSurface && !config.fallbackLivePreview
+  const needsSmokeCommandServer = requiresPreviewHostCommandServer || config.notesOverlay
   launched = await launchDevApp({
     timeoutMs: config.timeoutMs,
-    requiredMarkers: requiresPreviewHostCommandServer
+    requiredMarkers: needsSmokeCommandServer
       ? ['backend-ready', 'preview-motion-ready']
       : ['backend-ready'],
     // Real sources must flow: do NOT set VIDEORC_SMOKE_PREVIEW_MOTION (that forces
@@ -140,8 +150,15 @@ async function main() {
       VIDEORC_SMOKE_OUTPUT_DIR: config.outputDirectory,
       VIDEORC_NATIVE_PREVIEW_SURFACE: config.noPreviewSurface ? '0' : '1',
       VIDEORC_DISABLE_AUTO_PREVIEW: '1',
-      VIDEORC_SMOKE_COMMAND_SERVER: requiresPreviewHostCommandServer ? '1' : '0',
+      VIDEORC_SMOKE_COMMAND_SERVER: needsSmokeCommandServer ? '1' : '0',
       VIDEORC_SMOKE_NATIVE_PREVIEW_SUSPENDED: requiresPreviewHostCommandServer ? '1' : '0',
+      ...(config.notesOverlay
+        ? {
+            VIDEORC_NOTES_WINDOW: '1',
+            VIDEORC_NOTES_RECORDING_OVERLAY: '1',
+            VIDEORC_NOTES_SMOKE_MARKER: '1',
+          }
+        : {}),
       ...(config.streamEnabled ? { VIDEORC_PREMIUM_FEATURES: '1' } : {}),
       // null means "let the backend's default selector decide" (the honest product
       // path for stream sessions); the app-launcher merges over process.env, so the
@@ -193,6 +210,14 @@ async function main() {
     if (config.avSyncStimulus && !sources.screen) {
       throw new Error('A/V sync stimulus requires a selected real screen source.')
     }
+    if (config.notesOverlay && !sources.screen) {
+      throw new Error('Notes overlay artifact smoke requires a selected real screen source.')
+    }
+    if (config.notesOverlay && !config.screenMotionStimulus) {
+      throw new Error(
+        'Notes overlay artifact smoke requires VIDEORC_BASELINE_SCREEN_MOTION_STIMULUS=1 for controlled background colors.'
+      )
+    }
     if (!sources.screen && !sources.camera) {
       throw new Error('No real screen or camera available/selected — cannot run a real-source baseline.')
     }
@@ -220,6 +245,26 @@ async function main() {
       })
     }
 
+    if (config.screenMotionStimulus) {
+      console.log('Launching visible screen motion stimulus for hard motion gates.')
+      motionStimulus = await launchScreenMotionStimulus({ screenSource: sources.screen })
+      console.log(
+        `Screen motion stimulus window ${motionStimulus.width}x${motionStimulus.height} @ ${motionStimulus.x},${motionStimulus.y}.`
+      )
+    }
+    if (config.avSyncStimulus) {
+      console.log('Launching visible flash+click A/V sync stimulus.')
+      avSyncStimulus = await launchAvSyncStimulus({ screenSource: sources.screen })
+      console.log(`A/V sync stimulus window ${avSyncStimulus.width}x${avSyncStimulus.height} @ ${avSyncStimulus.x},${avSyncStimulus.y}.`)
+    }
+    if (config.notesOverlay) {
+      notesOverlayState = await setupNotesOverlay(sources.screen)
+      console.log(
+        `Notes overlay window ${notesOverlayBounds?.width ?? 'n/a'}x${notesOverlayBounds?.height ?? 'n/a'} @ ${notesOverlayBounds?.x ?? 'n/a'},${notesOverlayBounds?.y ?? 'n/a'} protected=${notesOverlayState.protected} windowId=${notesOverlayState.windowId ?? 'n/a'}.`
+      )
+    }
+    const protectedOverlayWindowIds = protectedOverlayWindowIdsFromNotesOverlay()
+
     // Mirror the UI: warm the real capturers, then use the compositor preview surface
     // when native preview mode is enabled. The legacy live preview launches a second
     // FFmpeg AVFoundation graph, so keep it opt-in for fallback transport tests only.
@@ -228,7 +273,14 @@ async function main() {
       if (sources.camera) await request(ws, config.timeoutMs, 'preview.camera.start', previewSourceParams(sourceSelection))
     })
     await tryStep('preview.screen.start', async () => {
-      if (sources.screen) await request(ws, config.timeoutMs, 'preview.screen.start', previewSourceParams(sourceSelection))
+      if (sources.screen) {
+        await request(
+          ws,
+          config.timeoutMs,
+          'preview.screen.start',
+          previewSourceParams(sourceSelection, { protectedOverlayWindowIds })
+        )
+      }
     })
     if (config.fallbackLivePreview) {
       await tryStep('preview.live.start', async () => {
@@ -261,19 +313,6 @@ async function main() {
         const hostStatus = await applyPendingNativePreviewHostCommands(ws)
         previewTransport = hostStatus?.transport ?? status?.transport ?? previewTransport
       })
-    }
-
-    if (config.screenMotionStimulus) {
-      console.log('Launching visible screen motion stimulus for hard motion gates.')
-      motionStimulus = await launchScreenMotionStimulus({ screenSource: sources.screen })
-      console.log(
-        `Screen motion stimulus window ${motionStimulus.width}x${motionStimulus.height} @ ${motionStimulus.x},${motionStimulus.y}.`
-      )
-    }
-    if (config.avSyncStimulus) {
-      console.log('Launching visible flash+click A/V sync stimulus.')
-      avSyncStimulus = await launchAvSyncStimulus({ screenSource: sources.screen })
-      console.log(`A/V sync stimulus window ${avSyncStimulus.width}x${avSyncStimulus.height} @ ${avSyncStimulus.x},${avSyncStimulus.y}.`)
     }
 
     try {
@@ -362,28 +401,37 @@ async function main() {
     const startupPaths = await writeStartupReports(startupReport, {
       ffmpegPath: config.ffmpegPath,
     })
+    const notesOverlay = config.notesOverlay
+      ? await analyzeNotesOverlayArtifact(outputPath, {
+          ffmpegPath: config.ffmpegPath,
+          maxMarkerPixelRatio: config.notesOverlayMaxMarkerPixelRatio,
+        })
+      : null
     const claimsNative = claimsNativePreview({ previewTransport, diagnostics })
     const previewSurfaceOutputFailures = previewSurfaceOutputGuard.failures()
     // Full real-source acceptance gate: final-file verdict + recording repeats +
     // encoder speed + mic drops/coverage + transport honesty, all enforced together.
     // The Electron proof surface reports metrics, but only native-surface plus a real
     // CAMetalLayer backing is an OBS-native claim.
-    const acceptance = appendPreviewSurfaceOutputFailures(
-      evaluateAcceptance(
-        {
-          analyzerVerdict: report.verdict,
-          startupVerdict: startupReport.verdict,
-          diagnostics,
-          claimsNative,
-          requireObsNativePreview: !config.noPreviewSurface,
-          requireGpuCompositor: true,
-          requestedOutput: requestedOutputSettings(),
-          require4kMediaEvidence: requires4kMediaEvidence(),
-          expectAudio: Boolean(sources.microphone),
-        },
-        acceptanceGates()
+    const acceptance = appendNotesOverlayFailures(
+      appendPreviewSurfaceOutputFailures(
+        evaluateAcceptance(
+          {
+            analyzerVerdict: report.verdict,
+            startupVerdict: startupReport.verdict,
+            diagnostics,
+            claimsNative,
+            requireObsNativePreview: !config.noPreviewSurface,
+            requireGpuCompositor: true,
+            requestedOutput: requestedOutputSettings(),
+            require4kMediaEvidence: requires4kMediaEvidence(),
+            expectAudio: Boolean(sources.microphone),
+          },
+          acceptanceGates()
+        ),
+        previewSurfaceOutputFailures
       ),
-      previewSurfaceOutputFailures
+      notesOverlay
     )
     const qualityMode = classifyMediaQualityMode({
       diagnostics,
@@ -414,6 +462,7 @@ async function main() {
       ownership,
       qualityMode,
       previewSurfaceOutputFailures,
+      notesOverlay,
     })
     const evidenceManifestPath = writeEvidenceManifest(outputPath, {
       sources,
@@ -427,12 +476,16 @@ async function main() {
       acceptance,
       qualityMode,
       previewSurfaceOutputFailures,
+      notesOverlay,
     })
     const screenRecording = config.screenRecordingGate
-      ? evaluateScreenRecordingEvidence(JSON.parse(readFileSync(evidenceManifestPath, 'utf8')), {
-          checkFiles: true,
-          requireMotion: config.requireMotion,
-        })
+      ? appendNotesOverlayFailures(
+          evaluateScreenRecordingEvidence(JSON.parse(readFileSync(evidenceManifestPath, 'utf8')), {
+            checkFiles: true,
+            requireMotion: config.requireMotion,
+          }),
+          notesOverlay
+        )
       : null
 
     printSummary(
@@ -445,9 +498,15 @@ async function main() {
       acceptance,
       ownership,
       qualityMode,
-      screenRecording
+      screenRecording,
+      notesOverlay
     )
-    return screenRecording ?? acceptance
+    const notesOverlayVerdict = notesOverlay ?? {
+      pass: false,
+      failures: ['notes-window: notes overlay gate was requested but no overlay evidence was produced'],
+      warnings: [],
+    }
+    return config.notesOverlayGate ? notesOverlayVerdict : (screenRecording ?? acceptance)
   } finally {
     ws.close()
   }
@@ -532,6 +591,68 @@ function formatDeviceDimensions(device) {
   return typeof device?.width === 'number' && typeof device?.height === 'number'
     ? ` ${device.width}x${device.height}`
     : ''
+}
+
+function formatBounds(bounds) {
+  return bounds
+    ? `${bounds.width ?? 'n/a'}x${bounds.height ?? 'n/a'} @ ${bounds.x ?? 'n/a'},${bounds.y ?? 'n/a'}`
+    : 'n/a'
+}
+
+function formatPercent(value) {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? `${(value * 100).toFixed(3)}%`
+    : 'n/a'
+}
+
+async function setupNotesOverlay(screenSource) {
+  const smoke = launched?.connections?.['preview-motion-ready']
+  if (!smoke) {
+    throw new Error('Notes overlay smoke requires the main-process command server.')
+  }
+  await smokeCommand(smoke, 'notes-window-open')
+  await smokeCommand(smoke, 'notes-window-save-document', {
+    text: config.notesOverlayText,
+    fontScale: 'lg',
+  })
+  notesOverlayBounds = notesOverlayBoundsForSource(screenSource)
+  const state = await smokeCommand(smoke, 'notes-window-set-bounds', notesOverlayBounds)
+  notesOverlayBounds = state.bounds ?? notesOverlayBounds
+  if (!state.enabled) {
+    throw new Error('Notes overlay smoke could not enable the Notes window feature.')
+  }
+  if (!state.protected) {
+    throw new Error('Notes overlay smoke requires BrowserWindow content protection.')
+  }
+  if (typeof state.windowId !== 'number') {
+    throw new Error('Notes overlay smoke could not resolve a ScreenCaptureKit window ID.')
+  }
+  return state
+}
+
+function notesOverlayBoundsForSource(screenSource) {
+  const area =
+    screenMotionStimulusOptionsForSource(screenSource) ??
+    (motionStimulus
+      ? {
+          x: motionStimulus.x,
+          y: motionStimulus.y,
+          width: motionStimulus.width,
+          height: motionStimulus.height,
+        }
+      : previewSurfaceBounds())
+  const width = Math.min(640, Math.max(360, Math.round((area.width ?? 1280) * 0.44)))
+  const height = Math.min(420, Math.max(240, Math.round((area.height ?? 720) * 0.44)))
+  return {
+    x: Math.round((area.x ?? area.screenX ?? 0) + ((area.width ?? 1280) - width) / 2),
+    y: Math.round((area.y ?? area.screenY ?? 0) + ((area.height ?? 720) - height) / 2),
+    width,
+    height,
+  }
+}
+
+function protectedOverlayWindowIdsFromNotesOverlay() {
+  return typeof notesOverlayState?.windowId === 'number' ? [notesOverlayState.windowId] : []
 }
 
 async function waitForPreviewSourceReadiness(ws, sources) {
@@ -1215,6 +1336,7 @@ function writeBaselineReport(
     ownership,
     qualityMode,
     previewSurfaceOutputFailures = [],
+    notesOverlay = null,
   }
 ) {
   const base = outputPath.split('/').pop().replace(/\.[^.]+$/, '')
@@ -1259,6 +1381,11 @@ function writeBaselineReport(
       : 'window unavailable'
     lines.push(`- avSyncStimulus: true (${avSyncStimulus?.browserPath ?? 'browser'}; ${stimulusWindow})`)
   }
+  if (config.notesOverlay) {
+    lines.push(
+      `- notesOverlay: true (windowId ${notesOverlayState?.windowId ?? 'n/a'}; bounds ${formatBounds(notesOverlayBounds)})`
+    )
+  }
   lines.push('')
   lines.push('## Final-file verdict (honest analyzer)')
   lines.push('')
@@ -1282,6 +1409,18 @@ function writeBaselineReport(
   lines.push(`- Audio gaps: max ${fmt(m.maxAudioGapMs)}ms / ${m.audioGapCount ?? 0} | silence longest ${fmt(m.longestSilenceMs)}ms`)
   lines.push(`- A/V skew: ${m.avSkewMs == null ? 'n/a' : `${fmt(m.avSkewMs)}ms`}`)
   lines.push('')
+  if (notesOverlay) {
+    lines.push('## Notes window artifact gate')
+    lines.push('')
+    lines.push(`**${notesOverlay.pass ? 'PASS' : 'FAIL'}**`)
+    lines.push(`- ${formatNotesOverlayArtifactSummary(notesOverlay)}`)
+    lines.push(
+      `- Smoke marker max ratio: ${formatPercent(notesOverlay.metrics?.maxMarkerPixelRatio)} (threshold ${formatPercent(notesOverlay.thresholds?.maxMarkerPixelRatio)})`
+    )
+    lines.push(`- Sampled frames: ${notesOverlay.metrics?.sampledFrames ?? 0}`)
+    for (const failure of notesOverlay.failures ?? []) lines.push(`- FAIL: ${failure}`)
+    lines.push('')
+  }
   if (startupReport) {
     const s = startupReport.metrics
     lines.push('## Startup-resolution verdict (first 2 seconds)')
@@ -1498,6 +1637,7 @@ function writeEvidenceManifest(
     acceptance,
     qualityMode,
     previewSurfaceOutputFailures = [],
+    notesOverlay = null,
   }
 ) {
   const manifestPath = evidenceManifestPathForOutput(outputPath)
@@ -1507,6 +1647,8 @@ function writeEvidenceManifest(
     command: {
       argv: process.argv.slice(2),
       gate: config.gate,
+      screenRecordingGate: config.screenRecordingGate,
+      notesOverlayGate: config.notesOverlayGate,
     },
     request: realSourceGateRequest(),
     result: {
@@ -1515,6 +1657,8 @@ function writeEvidenceManifest(
       acceptanceFailures: acceptance?.failures ?? [],
       finalFilePass: report?.verdict?.pass === true,
       startupPass: startupReport?.verdict?.pass === true,
+      notesOverlayPass: notesOverlay?.pass ?? null,
+      notesOverlayFailures: notesOverlay?.failures ?? [],
       mediaQualityMode: qualityMode?.mode ?? 'unknown',
       mediaQualityLabel: qualityMode?.label ?? 'unknown',
       mediaQualityReasons: qualityMode?.reasons ?? [],
@@ -1536,6 +1680,7 @@ function writeEvidenceManifest(
       startupMetrics: startupReport?.metrics,
       previewTransport,
       previewSurfaceOutputFailures,
+      notesOverlay,
     }),
   }
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
@@ -1559,6 +1704,8 @@ function writeBlockedEvidenceManifest({
     command: {
       argv: process.argv.slice(2),
       gate: config.gate,
+      screenRecordingGate: config.screenRecordingGate,
+      notesOverlayGate: config.notesOverlayGate,
     },
     request: realSourceGateRequest(),
     result: {
@@ -1641,6 +1788,8 @@ function realSourceGateRequest() {
     requireMotion: config.requireMotion,
     screenMotionStimulus: config.screenMotionStimulus,
     avSyncStimulus: config.avSyncStimulus,
+    notesOverlay: config.notesOverlay,
+    notesOverlayMaxMarkerPixelRatio: config.notesOverlayMaxMarkerPixelRatio,
     microphoneSyncOffsetMs: config.microphoneSyncOffsetMs,
     noPreviewSurface: config.noPreviewSurface,
     fallbackLivePreview: config.fallbackLivePreview,
@@ -1669,7 +1818,7 @@ function sourceManifest(source) {
 
 function gateDiagnosticsManifest(
   diagnostics,
-  { finalMetrics, finalFilePath = null, startupMetrics, previewTransport, previewSurfaceOutputFailures = [] }
+  { finalMetrics, finalFilePath = null, startupMetrics, previewTransport, previewSurfaceOutputFailures = [], notesOverlay = null }
 ) {
   return {
     previewTransportRequested: previewTransport,
@@ -1743,6 +1892,16 @@ function gateDiagnosticsManifest(
         }
       : null,
     previewSurfaceOutputFailures,
+    notesOverlayArtifact: notesOverlay
+      ? {
+          pass: notesOverlay.pass,
+          failures: notesOverlay.failures,
+          thresholds: notesOverlay.thresholds,
+          metrics: notesOverlay.metrics,
+          bounds: notesOverlayBounds,
+          windowId: notesOverlayState?.windowId ?? null,
+        }
+      : null,
   }
 }
 
@@ -2105,7 +2264,8 @@ function printSummary(
   acceptance,
   ownership,
   qualityMode,
-  screenRecording
+  screenRecording,
+  notesOverlay
 ) {
   const fmtMs = (value) => typeof value === 'number' && Number.isFinite(value) ? `${value}ms` : 'n/a'
   console.log('')
@@ -2117,6 +2277,10 @@ function printSummary(
   if (screenRecording) {
     console.log(`Screen recording gate: ${screenRecording.pass ? 'PASS' : 'FAIL'}`)
     for (const f of screenRecording.failures) console.log(`  ✗ ${f}`)
+  }
+  if (notesOverlay) {
+    console.log(formatNotesOverlayArtifactSummary(notesOverlay))
+    for (const f of notesOverlay.failures) console.log(`  ✗ ${f}`)
   }
   console.log(`Media quality mode: ${qualityMode.mode} (${qualityMode.label})`)
   if (qualityMode.reasons.length) console.log(`Quality evidence: ${qualityMode.reasons.join('; ')}`)
@@ -2268,8 +2432,13 @@ function requires4kMediaEvidence() {
   return config.width >= 3840 && config.height >= 2160 && config.fps >= 30
 }
 
-function previewSourceParams(sources) {
-  return { sources, layout: layoutSettings(sources), video: videoSettings() }
+function previewSourceParams(sources, { protectedOverlayWindowIds = [] } = {}) {
+  return {
+    sources,
+    layout: layoutSettings(sources),
+    video: videoSettings(),
+    ...(protectedOverlayWindowIds.length > 0 ? { protectedOverlayWindowIds } : {}),
+  }
 }
 
 function previewSurfaceSource(sources) {

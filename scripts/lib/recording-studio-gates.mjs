@@ -69,6 +69,11 @@ export function buildRecordingStudioGateSteps({
         label: 'real ScreenCaptureKit screen recording smoke',
         command: 'pnpm',
         args: ['smoke:screen-recording-real']
+      },
+      {
+        label: 'Notes window recording invisibility smoke',
+        command: 'pnpm',
+        args: ['smoke:notes-window-invisible']
       }
     )
   }

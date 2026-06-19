@@ -115,6 +115,10 @@ const OAUTH_APP_PROTOCOL_REDIRECT_URI = 'videorc://oauth/callback'
 const nativePreviewSurfaceProofEnabled = process.env.VIDEORC_NATIVE_PREVIEW_SURFACE !== '0'
 const nativePreviewFramePollingEnabled = process.env.VIDEORC_SMOKE_PREVIEW_MOTION !== '1'
 const notesWindowFeatureEnabled = process.env.VIDEORC_NOTES_WINDOW === '1'
+const notesWindowSmokeMarkerEnabled =
+  notesWindowFeatureEnabled &&
+  process.env.VIDEORC_NOTES_SMOKE_MARKER === '1' &&
+  Boolean(process.env.VIDEORC_SMOKE_OUTPUT_DIR)
 
 app.setName('Videorc')
 // Dark glass is the default theme; the renderer re-syncs this on toggle.
@@ -695,6 +699,24 @@ function saveNotesDocument(patch: Partial<NotesDocument>): NotesDocument {
 
 function notesWindowHtml(document: NotesDocument): string {
   const initialDocumentJson = jsonForInlineScript(document)
+  const smokeMarkerCss = notesWindowSmokeMarkerEnabled
+    ? `
+    body[data-smoke-marker="true"], body[data-smoke-marker="true"] textarea {
+      background: #ff0000; color: #ffffff;
+    }
+    body[data-smoke-marker="true"] .drag-bar,
+    body[data-smoke-marker="true"] .footer {
+      background: #ff0000; color: #ffffff; border-color: #ff0000;
+    }
+    body[data-smoke-marker="true"] .title,
+    body[data-smoke-marker="true"] .footer {
+      color: #ffffff;
+    }
+    body[data-smoke-marker="true"] textarea {
+      font-size: 64px !important; line-height: 1.05; font-weight: 900;
+      letter-spacing: 0; text-transform: uppercase;
+    }`
+    : ''
   return `<!doctype html><html><head><meta charset="utf-8"><style>
     html, body { margin: 0; height: 100%; background: #101012; color: #f4f4f5;
       font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -719,7 +741,8 @@ function notesWindowHtml(document: NotesDocument): string {
     textarea::placeholder { color: #71717a; }
     .footer { height: 28px; display: flex; align-items: center; gap: 12px; padding: 0 12px;
       border-top: 1px solid rgba(255,255,255,.08); color: #71717a; font-size: 11px; }
-  </style></head><body>
+    ${smokeMarkerCss}
+  </style></head><body data-smoke-marker="${notesWindowSmokeMarkerEnabled ? 'true' : 'false'}">
     <div class="drag-bar"><span class="title">Videorc Notes</span><span class="spacer"></span>
       <button type="button" data-scale="sm">Sm</button>
       <button type="button" data-scale="md">Md</button>
@@ -3836,6 +3859,23 @@ async function runSmokePreviewMotionCommand(
 
   if (command === 'notes-window-close') {
     return closeNotesWindow()
+  }
+
+  if (command === 'notes-window-set-bounds') {
+    const window = notesWindow
+    if (!notesWindowIsOpen() || !window) {
+      return notesWindowState('Notes window is not open.')
+    }
+    const current = window.getBounds()
+    window.setBounds({
+      x: typeof params.x === 'number' ? params.x : current.x,
+      y: typeof params.y === 'number' ? params.y : current.y,
+      width: typeof params.width === 'number' ? params.width : current.width,
+      height: typeof params.height === 'number' ? params.height : current.height
+    })
+    window.show()
+    emitNotesWindowState()
+    return notesWindowState()
   }
 
   if (command === 'notes-window-state') {

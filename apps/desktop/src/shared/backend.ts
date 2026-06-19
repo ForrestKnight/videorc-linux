@@ -1712,6 +1712,7 @@ export interface RuntimeInfo {
   capturePermissionTargetPath: string
   nativePreviewSurfaceProofEnabled: boolean
   notesWindowEnabled?: boolean
+  notesWindowRecordingOverlayAllowed?: boolean
   previewSmokeMode?: boolean
   disableAutoPreview?: boolean
   nativePreviewSurfaceStageSuspended?: boolean

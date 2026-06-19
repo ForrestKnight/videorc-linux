@@ -69,7 +69,8 @@ describe('runtime info helpers', () => {
         VIDEORC_SMOKE_PREVIEW_MOTION: '1',
         VIDEORC_DISABLE_AUTO_PREVIEW: '1',
         VIDEORC_SMOKE_NATIVE_PREVIEW_SUSPENDED: '1',
-        VIDEORC_NOTES_WINDOW: '1'
+        VIDEORC_NOTES_WINDOW: '1',
+        VIDEORC_NOTES_RECORDING_OVERLAY: '1'
       }
     })
 
@@ -79,6 +80,7 @@ describe('runtime info helpers', () => {
       capturePermissionTargetName: 'Videorc',
       nativePreviewSurfaceProofEnabled: false,
       notesWindowEnabled: true,
+      notesWindowRecordingOverlayAllowed: true,
       previewSmokeMode: true,
       disableAutoPreview: true,
       nativePreviewSurfaceStageSuspended: true

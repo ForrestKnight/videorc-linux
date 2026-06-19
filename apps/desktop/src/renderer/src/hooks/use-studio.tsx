@@ -2699,7 +2699,11 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   }, [])
 
   useEffect(() => {
-    if (!notesWindow.open || !isActiveRecordingState(recording.state)) {
+    if (
+      !notesWindow.open ||
+      !isActiveRecordingState(recording.state) ||
+      runtimeInfo?.notesWindowRecordingOverlayAllowed
+    ) {
       return
     }
     void window.videorc?.closeNotesWindow?.().then(() => {
@@ -2708,7 +2712,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
           'Notes stay internal until the final recording artifact smoke proves they are invisible.'
       })
     })
-  }, [notesWindow.open, recording.state])
+  }, [notesWindow.open, recording.state, runtimeInfo?.notesWindowRecordingOverlayAllowed])
 
   useEffect(() => {
     if (!notesWindow.enabled) {
