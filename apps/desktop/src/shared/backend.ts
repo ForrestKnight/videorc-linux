@@ -4,6 +4,8 @@ export interface BackendConnection {
   host: string
   port: number
   token: string
+  pid?: number
+  parentPid?: number
 }
 
 export interface BackendHealth {

@@ -110,6 +110,21 @@ mod macos {
 
     #[derive(Debug, Serialize)]
     #[serde(rename_all = "camelCase")]
+    struct HelperEvent<T: Serialize> {
+        event: &'static str,
+        payload: T,
+    }
+
+    #[derive(Debug, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct HelperReadyPayload {
+        pid: u32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        parent_pid: Option<u32>,
+    }
+
+    #[derive(Debug, Serialize)]
+    #[serde(rename_all = "camelCase")]
     struct HostCommandPayload {
         has_overlay: bool,
     }
@@ -175,6 +190,16 @@ mod macos {
         let request_rx = spawn_stdin_reader();
 
         let mut stdout = io::stdout();
+        write_event(
+            &mut stdout,
+            &HelperEvent {
+                event: "helper.ready",
+                payload: HelperReadyPayload {
+                    pid: std::process::id(),
+                    parent_pid: current_parent_pid(),
+                },
+            },
+        )?;
         loop {
             let line = match request_rx.recv_timeout(Duration::from_millis(1)) {
                 Ok(Ok(line)) => line,
@@ -604,6 +629,23 @@ mod macos {
         stdout.write_all(b"\n")?;
         stdout.flush()?;
         Ok(())
+    }
+
+    fn write_event<T: Serialize>(stdout: &mut impl Write, event: &HelperEvent<T>) -> Result<()> {
+        serde_json::to_writer(&mut *stdout, event)?;
+        stdout.write_all(b"\n")?;
+        stdout.flush()?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn current_parent_pid() -> Option<u32> {
+        Some(std::os::unix::process::parent_id())
+    }
+
+    #[cfg(not(unix))]
+    fn current_parent_pid() -> Option<u32> {
+        None
     }
 }
 

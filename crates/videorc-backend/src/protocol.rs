@@ -46,6 +46,9 @@ pub struct BackendConnection {
     pub host: String,
     pub port: u16,
     pub token: String,
+    pub pid: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_pid: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]

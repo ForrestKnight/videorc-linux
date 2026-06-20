@@ -50,6 +50,16 @@ interface HelperResponse {
   error?: string
 }
 
+interface HelperEvent {
+  event?: string
+  payload?: unknown
+}
+
+interface HelperReadyPayload {
+  pid?: unknown
+  parentPid?: unknown
+}
+
 interface HelperPresentPayload {
   hasOverlay: boolean
   presentFailureReason?: string | null
@@ -103,6 +113,7 @@ class NativePreviewHelperProcessDriver implements NativePreviewRealSurfaceDriver
   private readonly iosurfaceImportFailureWarnThreshold: number
   private consecutiveIosurfaceImportFailures = 0
   private lastPresentFailureKey: string | null = null
+  private readonly ownedProcessPids = new Set<number>()
   private suppressedPresentFailureCount = 0
   private presentTimestampsMs: number[] = []
   private presentIntervalsMs: number[] = []
@@ -384,9 +395,7 @@ class NativePreviewHelperProcessDriver implements NativePreviewRealSurfaceDriver
     })
     const pid = child.pid
     this.child = child
-    if (typeof pid === 'number') {
-      this.options.onProcessStarted?.(pid, 'native-preview-helper')
-    }
+    this.recordProcess(pid, this.wrapperProcessLabel())
     child.stdout.on('data', (chunk: Buffer | string) => this.handleStdout(String(chunk)))
     child.stderr.on('data', (chunk: Buffer | string) => this.handleStderr(String(chunk)))
     // A killed helper's pipes error asynchronously; without listeners a single
@@ -404,9 +413,10 @@ class NativePreviewHelperProcessDriver implements NativePreviewRealSurfaceDriver
       this.rejectAll(`Native preview host helper error: ${error.message}`)
     )
     child.on('close', (code: number | null, signal: string | null) => {
-      if (typeof pid === 'number') {
-        this.options.onProcessExited?.(pid)
+      for (const ownedPid of this.ownedProcessPids) {
+        this.options.onProcessExited?.(ownedPid)
       }
+      this.ownedProcessPids.clear()
       this.child = null
       this.rejectAll(
         `Native preview host helper exited with code ${code ?? 'null'} and signal ${signal ?? 'null'}`
@@ -436,8 +446,42 @@ class NativePreviewHelperProcessDriver implements NativePreviewRealSurfaceDriver
         )
         continue
       }
+      if (this.handleEvent(response as HelperEvent)) {
+        continue
+      }
       this.handleResponse(response)
     }
+  }
+
+  private wrapperProcessLabel(): string {
+    return this.options.command.endsWith('cargo') ||
+      this.options.args?.some((arg) => arg === 'native_preview_host_helper')
+      ? 'cargo-run-native-preview-helper'
+      : 'native-preview-helper'
+  }
+
+  private recordProcess(pid: unknown, label: string): void {
+    if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 1) {
+      return
+    }
+    this.ownedProcessPids.add(pid)
+    this.options.onProcessStarted?.(pid, label)
+  }
+
+  private handleEvent(message: HelperEvent): boolean {
+    if (message.event !== 'helper.ready') {
+      return false
+    }
+    const payload = (message.payload ?? {}) as HelperReadyPayload
+    this.recordProcess(payload.pid, 'native-preview-helper')
+    const parent =
+      typeof payload.parentPid === 'number' && Number.isInteger(payload.parentPid)
+        ? ` parentPid=${payload.parentPid}`
+        : ''
+    if (typeof payload.pid === 'number' && Number.isInteger(payload.pid)) {
+      this.options.onLog?.('info', `Native preview host helper ready pid=${payload.pid}${parent}`)
+    }
+    return true
   }
 
   private handleResponse(response: HelperResponse): void {

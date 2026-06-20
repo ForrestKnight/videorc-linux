@@ -167,11 +167,7 @@ async fn main() -> Result<()> {
         .route("/ws", get(ws_handler))
         .with_state(state.clone());
 
-    let ready = BackendConnection {
-        host: "127.0.0.1".to_string(),
-        port,
-        token,
-    };
+    let ready = backend_connection(port, token);
     println!("READY {}", serde_json::to_string(&ready)?);
     std::io::stdout().flush()?;
 
@@ -303,6 +299,26 @@ fn spawn_orphan_watchdog_thread() {
             }
         });
     }
+}
+
+fn backend_connection(port: u16, token: String) -> BackendConnection {
+    BackendConnection {
+        host: "127.0.0.1".to_string(),
+        port,
+        token,
+        pid: std::process::id(),
+        parent_pid: current_parent_pid(),
+    }
+}
+
+#[cfg(unix)]
+fn current_parent_pid() -> Option<u32> {
+    Some(std::os::unix::process::parent_id())
+}
+
+#[cfg(not(unix))]
+fn current_parent_pid() -> Option<u32> {
+    None
 }
 
 /// Resolves when this process is orphaned (its parent died and launchd adopted it).
@@ -1359,11 +1375,7 @@ async fn websocket_session(socket: WebSocket, state: AppState) {
 
     let ready_event = ServerEvent::new(
         "backend.ready",
-        BackendConnection {
-            host: "127.0.0.1".to_string(),
-            port: state.port,
-            token: state.token.clone(),
-        },
+        backend_connection(state.port, state.token.clone()),
     );
     if let Ok(text) = serde_json::to_string(&ready_event) {
         let _ = sender.send(Message::Text(text.into())).await;

@@ -124,6 +124,40 @@ describe('native-preview-helper-process-driver', () => {
     expect(exited).toEqual([7654])
   })
 
+  it('records cargo wrapper and real helper pids separately when helper.ready arrives', async () => {
+    const child = new FakeChild()
+    const started: Array<{ pid: number; label: string }> = []
+    const exited: number[] = []
+    const logs: string[] = []
+    const driver = createNativePreviewHelperProcessDriver({
+      command: 'cargo',
+      args: ['run', '--quiet', '-p', 'videorc-backend', '--bin', 'native_preview_host_helper'],
+      spawnProcess: () => child as never,
+      onProcessStarted: (pid, label) => started.push({ pid, label }),
+      onProcessExited: (pid) => exited.push(pid),
+      onLog: (_level, message) => logs.push(message)
+    })
+
+    const promise = driver.applyHostCommands([{ kind: 'create', bounds: surfaceBounds() }])
+    child.stdout.emit(
+      'data',
+      `${JSON.stringify({
+        event: 'helper.ready',
+        payload: { pid: 8765, parentPid: 7654 }
+      })}\n`
+    )
+    child.respond({ hasOverlay: true })
+    await expect(promise).resolves.toBeNull()
+    child.emit('close', 0, null)
+
+    expect(started).toEqual([
+      { pid: 7654, label: 'cargo-run-native-preview-helper' },
+      { pid: 8765, label: 'native-preview-helper' }
+    ])
+    expect(exited).toEqual([7654, 8765])
+    expect(logs).toContain('Native preview host helper ready pid=8765 parentPid=7654')
+  })
+
   it('normalizes host command bounds before sending them to the helper process', async () => {
     const child = new FakeChild()
     const driver = createNativePreviewHelperProcessDriver({

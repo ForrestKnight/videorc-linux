@@ -99,6 +99,7 @@ let nativePreviewSurfaceCompositorRequestSerial = 0
 let nativePreviewSurfaceMutationInFlight: Promise<PreviewSurfaceStatus> | null = null
 let nativePreviewSurfaceFramePollingSuppressed = false
 let backendProcess: ChildProcessWithoutNullStreams | null = null
+let backendOwnedProcessPids = new Set<number>()
 let backendPermissionTargetPath: string | null = null
 let ownedProcessRegistry: OwnedProcessRegistry | null = null
 let ownedProcessRegistryLockDepth = 0
@@ -3351,6 +3352,38 @@ function removeOwnedProcess(pid: number): void {
   }
 }
 
+function validOwnedProcessPid(pid: unknown): pid is number {
+  return typeof pid === 'number' && Number.isInteger(pid) && pid > 1 && pid !== process.pid
+}
+
+function validProcessPid(pid: unknown): pid is number {
+  return typeof pid === 'number' && Number.isInteger(pid) && pid > 1
+}
+
+function recordBackendOwnedProcess(pid: unknown, label: string): void {
+  if (!validOwnedProcessPid(pid)) {
+    return
+  }
+  backendOwnedProcessPids.add(pid)
+  recordOwnedProcess(pid, label)
+}
+
+function removeBackendOwnedProcesses(): void {
+  for (const pid of backendOwnedProcessPids) {
+    removeOwnedProcess(pid)
+  }
+  backendOwnedProcessPids.clear()
+}
+
+function recordBackendRuntimeProcess(connection: BackendConnection): void {
+  if (!validOwnedProcessPid(connection.pid)) {
+    return
+  }
+  recordBackendOwnedProcess(connection.pid, 'videorc-backend')
+  const parent = validProcessPid(connection.parentPid) ? ` parentPid=${connection.parentPid}` : ''
+  logBackend('info', `Backend runtime pid=${connection.pid}${parent}`)
+}
+
 function resolveCargoBinary(): string {
   const rustupCargo = join(homedir(), '.cargo', 'bin', 'cargo')
   return existsSync(rustupCargo) ? rustupCargo : 'cargo'
@@ -3441,6 +3474,7 @@ function startBackendWithRegistryLock(): void {
   if (backendProcess) {
     return
   }
+  backendOwnedProcessPids = new Set()
 
   reapStaleBackendProcesses()
 
@@ -3473,9 +3507,10 @@ function startBackendWithRegistryLock(): void {
     }
   })
   const backendPid = backendProcess.pid
-  if (typeof backendPid === 'number') {
-    recordOwnedProcess(backendPid, app.isPackaged ? 'videorc-backend' : 'cargo-run-videorc-backend')
-  }
+  recordBackendOwnedProcess(
+    backendPid,
+    app.isPackaged ? 'videorc-backend' : 'cargo-run-videorc-backend'
+  )
 
   backendProcess.stdout.on('data', (chunk: Buffer) => handleBackendStdout(chunk.toString()))
   backendProcess.stderr.on('data', (chunk: Buffer) => {
@@ -3489,9 +3524,7 @@ function startBackendWithRegistryLock(): void {
     logBackend('error', `Backend process error: ${error.message}`)
   })
   backendProcess.on('close', (code, signal) => {
-    if (typeof backendPid === 'number') {
-      removeOwnedProcess(backendPid)
-    }
+    removeBackendOwnedProcesses()
     logBackend('warn', `Backend exited with code ${code ?? 'null'} and signal ${signal ?? 'null'}`)
     backendProcess = null
     backendConnection = null
@@ -3683,6 +3716,7 @@ function handleBackendStdout(text: string): void {
       try {
         backendConnection = JSON.parse(trimmed.slice('READY '.length)) as BackendConnection
         logBackend('info', `Backend ready on ${backendConnection.host}:${backendConnection.port}`)
+        recordBackendRuntimeProcess(backendConnection)
         if (process.env.VIDEORC_SMOKE_PRINT_BACKEND_READY === '1') {
           console.log(`[smoke] backend-ready ${JSON.stringify(backendConnection)}`)
         }
