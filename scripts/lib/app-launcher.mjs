@@ -5,8 +5,8 @@
 // of the per-smoke launch boilerplate so the real-source baseline harness (and future
 // honest-gate harnesses) reuse one battle-tested launch/teardown path.
 //
-// Harnesses default to not reaping globally-recorded owner backends. Product
-// launches and lifecycle smokes can pass VIDEORC_DISABLE_BACKEND_REAP=0.
+// Harnesses default to isolated app/user data and ledger reaping. Product launches
+// still use the normal app data path unless a smoke explicitly opts into this helper.
 
 import { spawn } from 'node:child_process'
 import { mkdtempSync } from 'node:fs'
@@ -16,6 +16,43 @@ import { join, resolve } from 'node:path'
 export const repoRoot = resolve(import.meta.dirname, '..', '..')
 
 const MARKER_PREFIX = '[smoke] '
+
+export function resolveSmokeAppDirs({ env = {}, statePrefix = 'videorc-smoke' } = {}) {
+  const stateDir =
+    smokeEnvValue(env, 'VIDEORC_SMOKE_STATE_DIR') ?? smokeEnvValue(env, 'VIDEORC_SMOKE_OUTPUT_DIR')
+  const appDataDir =
+    smokeEnvValue(env, 'VIDEORC_APP_DATA_DIR') ??
+    (stateDir
+      ? join(resolve(stateDir), 'app-data')
+      : mkdtempSync(join(tmpdir(), `${statePrefix}-app-data-`)))
+  const userDataDir =
+    smokeEnvValue(env, 'VIDEORC_USER_DATA_DIR') ??
+    (stateDir
+      ? join(resolve(stateDir), 'user-data')
+      : mkdtempSync(join(tmpdir(), `${statePrefix}-user-data-`)))
+  return { appDataDir, userDataDir }
+}
+
+export function smokeAppEnv(env = {}, options = {}) {
+  const { appDataDir, userDataDir } = resolveSmokeAppDirs({
+    env,
+    statePrefix: options.statePrefix
+  })
+  return {
+    ...process.env,
+    ...env,
+    VIDEORC_SMOKE_PRINT_BACKEND_READY:
+      smokeEnvValue(env, 'VIDEORC_SMOKE_PRINT_BACKEND_READY') ?? '1',
+    VIDEORC_DISABLE_BACKEND_REAP: smokeEnvValue(env, 'VIDEORC_DISABLE_BACKEND_REAP') ?? '0',
+    VIDEORC_APP_DATA_DIR: appDataDir,
+    VIDEORC_USER_DATA_DIR: userDataDir
+  }
+}
+
+function smokeEnvValue(env, name) {
+  const value = env[name] ?? process.env[name]
+  return typeof value === 'string' && value.trim() ? value : undefined
+}
 
 /**
  * Launch the dev app and resolve with the parsed handshake connections.
@@ -38,21 +75,12 @@ export function launchDevApp({
     const connections = {}
     let settled = false
     let stopping = false
-    const userDataDir =
-      env.VIDEORC_USER_DATA_DIR ??
-      process.env.VIDEORC_USER_DATA_DIR ??
-      mkdtempSync(join(tmpdir(), 'videorc-smoke-user-data-'))
+    const childEnv = smokeAppEnv(env)
 
     const child = spawn('pnpm', ['dev'], {
       cwd: repoRoot,
       detached: true,
-      env: {
-        ...process.env,
-        VIDEORC_SMOKE_PRINT_BACKEND_READY: '1',
-        VIDEORC_DISABLE_BACKEND_REAP: process.env.VIDEORC_DISABLE_BACKEND_REAP ?? '1',
-        VIDEORC_USER_DATA_DIR: userDataDir,
-        ...env
-      },
+      env: childEnv,
       stdio: ['ignore', 'pipe', 'pipe']
     })
 

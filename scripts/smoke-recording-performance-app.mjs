@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
+import { smokeAppEnv, stopProcess } from './lib/app-launcher.mjs'
 import { connectBackend, request } from './smoke-recording-session.mjs'
 
 const repoRoot = resolve(import.meta.dirname, '..')
@@ -354,11 +355,9 @@ function launchAndReadConnection() {
     appProcess = spawn('pnpm', ['dev'], {
       cwd: repoRoot,
       detached: true,
-      env: {
-        ...process.env,
-        VIDEORC_DISABLE_BACKEND_REAP: process.env.VIDEORC_DISABLE_BACKEND_REAP ?? '1',
+      env: smokeAppEnv({
         VIDEORC_SMOKE_PRINT_BACKEND_READY: '1'
-      },
+      }),
       stdio: ['ignore', 'pipe', 'pipe']
     })
 
@@ -396,37 +395,12 @@ function handleAppOutput(text, resolveConnection, timer) {
   }
 }
 
-function stopApp() {
-  return new Promise((resolveStop) => {
-    if (!appProcess?.pid || appProcess.killed) {
-      resolveStop()
-      return
-    }
-
-    const timer = setTimeout(() => {
-      killApp('SIGKILL')
-      resolveStop()
-    }, 5000)
-
-    stopping = true
-    appProcess.once('exit', () => {
-      clearTimeout(timer)
-      resolveStop()
-    })
-    killApp('SIGTERM')
-  })
-}
-
-function killApp(signal) {
-  if (!appProcess?.pid) {
+async function stopApp() {
+  if (!appProcess?.pid || appProcess.killed) {
     return
   }
-
-  try {
-    process.kill(-appProcess.pid, signal)
-  } catch {
-    appProcess.kill(signal)
-  }
+  stopping = true
+  await stopProcess(appProcess)
 }
 
 function resolveSiblingFfprobe(path) {

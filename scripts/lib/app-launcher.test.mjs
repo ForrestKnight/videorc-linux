@@ -1,0 +1,79 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+import { resolve } from 'node:path'
+
+import { resolveSmokeAppDirs, smokeAppEnv } from './app-launcher.mjs'
+
+const SMOKE_ENV_KEYS = [
+  'VIDEORC_APP_DATA_DIR',
+  'VIDEORC_USER_DATA_DIR',
+  'VIDEORC_SMOKE_STATE_DIR',
+  'VIDEORC_SMOKE_OUTPUT_DIR',
+  'VIDEORC_DISABLE_BACKEND_REAP',
+  'VIDEORC_SMOKE_PRINT_BACKEND_READY'
+]
+
+test('resolveSmokeAppDirs derives isolated dirs from an explicit smoke state dir', () => {
+  withCleanSmokeEnv(() => {
+    const stateDir = '/tmp/videorc-smoke-state'
+    assert.deepEqual(resolveSmokeAppDirs({ env: { VIDEORC_SMOKE_STATE_DIR: stateDir } }), {
+      appDataDir: resolve(stateDir, 'app-data'),
+      userDataDir: resolve(stateDir, 'user-data')
+    })
+  })
+})
+
+test('smokeAppEnv enables ledger reaping by default for isolated smoke launches', () => {
+  withCleanSmokeEnv(() => {
+    const env = smokeAppEnv({ VIDEORC_SMOKE_STATE_DIR: '/tmp/videorc-smoke-state' })
+
+    assert.equal(env.VIDEORC_DISABLE_BACKEND_REAP, '0')
+    assert.equal(env.VIDEORC_SMOKE_PRINT_BACKEND_READY, '1')
+    assert.equal(env.VIDEORC_APP_DATA_DIR, '/tmp/videorc-smoke-state/app-data')
+    assert.equal(env.VIDEORC_USER_DATA_DIR, '/tmp/videorc-smoke-state/user-data')
+  })
+})
+
+test('smokeAppEnv reuses the smoke output dir as the default isolated state dir', () => {
+  withCleanSmokeEnv(() => {
+    const env = smokeAppEnv({ VIDEORC_SMOKE_OUTPUT_DIR: '/tmp/videorc-smoke-output' })
+
+    assert.equal(env.VIDEORC_APP_DATA_DIR, '/tmp/videorc-smoke-output/app-data')
+    assert.equal(env.VIDEORC_USER_DATA_DIR, '/tmp/videorc-smoke-output/user-data')
+  })
+})
+
+test('smokeAppEnv preserves explicit app dirs and reaper policy', () => {
+  withCleanSmokeEnv(() => {
+    process.env.VIDEORC_DISABLE_BACKEND_REAP = '1'
+    const env = smokeAppEnv({
+      VIDEORC_APP_DATA_DIR: '/custom/app-data',
+      VIDEORC_USER_DATA_DIR: '/custom/user-data',
+      VIDEORC_DISABLE_BACKEND_REAP: '0',
+      VIDEORC_SMOKE_PRINT_BACKEND_READY: '0'
+    })
+
+    assert.equal(env.VIDEORC_APP_DATA_DIR, '/custom/app-data')
+    assert.equal(env.VIDEORC_USER_DATA_DIR, '/custom/user-data')
+    assert.equal(env.VIDEORC_DISABLE_BACKEND_REAP, '0')
+    assert.equal(env.VIDEORC_SMOKE_PRINT_BACKEND_READY, '0')
+  })
+})
+
+function withCleanSmokeEnv(callback) {
+  const previous = new Map(SMOKE_ENV_KEYS.map((key) => [key, process.env[key]]))
+  try {
+    for (const key of SMOKE_ENV_KEYS) {
+      delete process.env[key]
+    }
+    callback()
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) {
+        delete process.env[key]
+      } else {
+        process.env[key] = value
+      }
+    }
+  }
+}

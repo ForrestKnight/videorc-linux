@@ -3360,6 +3360,22 @@ function validProcessPid(pid: unknown): pid is number {
   return typeof pid === 'number' && Number.isInteger(pid) && pid > 1
 }
 
+function shouldDisableBackendReap(): boolean {
+  if (process.env.VIDEORC_DISABLE_BACKEND_REAP === '1') {
+    return true
+  }
+  if (process.env.VIDEORC_DISABLE_BACKEND_REAP === '0') {
+    return false
+  }
+  if (process.env.VIDEORC_APP_DATA_DIR?.trim()) {
+    return false
+  }
+  return (
+    Boolean(process.env.VIDEORC_SMOKE_OUTPUT_DIR) ||
+    process.env.VIDEORC_SMOKE_COMMAND_SERVER === '1'
+  )
+}
+
 function recordBackendOwnedProcess(pid: unknown, label: string): void {
   if (!validOwnedProcessPid(pid)) {
     return
@@ -3440,10 +3456,7 @@ function reapStaleBackendProcesses(): void {
   try {
     stale = withProcessRegistryLock(() =>
       processRegistry().reapStale({
-        disabled:
-          Boolean(process.env.VIDEORC_SMOKE_OUTPUT_DIR) ||
-          process.env.VIDEORC_SMOKE_COMMAND_SERVER === '1' ||
-          process.env.VIDEORC_DISABLE_BACKEND_REAP === '1'
+        disabled: shouldDisableBackendReap()
       })
     )
   } catch (error) {

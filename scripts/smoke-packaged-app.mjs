@@ -8,6 +8,7 @@ import {
   bundledFfmpegPathForPackagedApp,
   defaultPackagedAppExecutable
 } from './lib/packaged-smoke-paths.mjs'
+import { smokeAppEnv, stopProcess } from './lib/app-launcher.mjs'
 import { runBackendRecordingSmoke } from './smoke-recording-session.mjs'
 
 const repoRoot = resolve(import.meta.dirname, '..')
@@ -85,10 +86,9 @@ function launchAndReadConnection() {
     }, timeoutMs)
 
     appProcess = spawn(appExecutable, [], {
-      env: {
-        ...process.env,
+      env: smokeAppEnv({
         VIDEORC_SMOKE_PRINT_BACKEND_READY: '1'
-      },
+      }),
       stdio: ['ignore', 'pipe', 'pipe']
     })
 
@@ -126,27 +126,13 @@ function handleAppOutput(text, resolveConnection, timer) {
   }
 }
 
-function stopApp() {
-  return new Promise((resolveStop) => {
-    if (!appProcess || appProcess.killed) {
-      appProcess = null
-      resolveStop()
-      return
-    }
-
-    const timer = setTimeout(() => {
-      appProcess.kill('SIGKILL')
-      appProcess = null
-      resolveStop()
-    }, 3000)
-
-    appProcess.once('exit', () => {
-      clearTimeout(timer)
-      appProcess = null
-      resolveStop()
-    })
-    appProcess.kill('SIGTERM')
-  })
+async function stopApp() {
+  if (!appProcess || appProcess.killed) {
+    appProcess = null
+    return
+  }
+  await stopProcess(appProcess)
+  appProcess = null
 }
 
 function sleep(ms) {

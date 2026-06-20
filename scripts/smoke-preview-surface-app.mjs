@@ -4,6 +4,7 @@ import { request as httpRequest } from 'node:http'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
+import { smokeAppEnv, stopProcess } from './lib/app-launcher.mjs'
 import { connectBackend, request } from './smoke-recording-session.mjs'
 import { createPreviewSurfaceOutputGuard } from './lib/smoke-output-guards.mjs'
 
@@ -610,15 +611,13 @@ function launchAndReadConnections() {
     appProcess = spawn(command, args, {
       cwd: usePackagedApp ? dirname(packagedAppExecutable) : repoRoot,
       detached: true,
-      env: {
-        ...process.env,
-        VIDEORC_DISABLE_BACKEND_REAP: process.env.VIDEORC_DISABLE_BACKEND_REAP ?? '1',
+      env: smokeAppEnv({
         VIDEORC_SMOKE_OUTPUT_DIR: outputDirectory,
         VIDEORC_USER_DATA_DIR: join(outputDirectory, 'user-data'),
         VIDEORC_NATIVE_PREVIEW_SURFACE: '1',
         VIDEORC_SMOKE_PREVIEW_MOTION: '1',
         VIDEORC_SMOKE_PRINT_BACKEND_READY: '1'
-      },
+      }),
       stdio: ['ignore', 'pipe', 'pipe']
     })
 
@@ -695,43 +694,16 @@ function handleAppOutput(text, connections, maybeResolve) {
   }
 }
 
-function stopApp() {
-  return new Promise((resolveStop) => {
-    if (!appProcess?.pid || appProcess.killed) {
-      appProcess = null
-      stopping = false
-      resolveStop()
-      return
-    }
-
-    const timer = setTimeout(() => {
-      killApp('SIGKILL')
-      appProcess = null
-      stopping = false
-      resolveStop()
-    }, 5000)
-
-    stopping = true
-    appProcess.once('exit', () => {
-      clearTimeout(timer)
-      appProcess = null
-      stopping = false
-      resolveStop()
-    })
-    killApp('SIGTERM')
-  })
-}
-
-function killApp(signal) {
-  if (!appProcess?.pid) {
+async function stopApp() {
+  if (!appProcess?.pid || appProcess.killed) {
+    appProcess = null
+    stopping = false
     return
   }
-
-  try {
-    process.kill(-appProcess.pid, signal)
-  } catch {
-    appProcess.kill(signal)
-  }
+  stopping = true
+  await stopProcess(appProcess)
+  appProcess = null
+  stopping = false
 }
 
 function sleep(ms) {
