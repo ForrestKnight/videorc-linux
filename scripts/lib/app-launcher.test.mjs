@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { resolve } from 'node:path'
 
-import { resolveSmokeAppDirs, smokeAppEnv } from './app-launcher.mjs'
+import { resolveSmokeAppDirs, smokeAppEnv, stopProcess } from './app-launcher.mjs'
 
 const SMOKE_ENV_KEYS = [
   'VIDEORC_APP_DATA_DIR',
@@ -59,6 +59,90 @@ test('smokeAppEnv preserves explicit app dirs and reaper policy', () => {
     assert.equal(env.VIDEORC_SMOKE_PRINT_BACKEND_READY, '0')
   })
 })
+
+test('stopProcess reports a graceful process-group stop', async () => {
+  const child = fakeChild(123)
+  const signals = []
+
+  const result = await stopProcess(child, {
+    signalProcessGroup: (_pid, _child, signal) => signals.push(signal),
+    waitForChildExit: async () => {
+      child.exitCode = 0
+    },
+    waitForProcessGroupExit: async () => {
+      throw new Error('group wait should not be needed')
+    },
+    processGroupExists: () => false
+  })
+
+  assert.equal(result.state, 'terminated')
+  assert.equal(result.childExited, true)
+  assert.equal(result.processGroupExited, true)
+  assert.equal(result.escalated, false)
+  assert.deepEqual(signals, ['SIGTERM'])
+})
+
+test('stopProcess escalates to SIGKILL when the process group survives SIGTERM', async () => {
+  const child = fakeChild(456)
+  const signals = []
+  let groupAlive = true
+  let killSent = false
+
+  const result = await stopProcess(child, {
+    signalProcessGroup: (_pid, _child, signal) => {
+      signals.push(signal)
+      killSent = killSent || signal === 'SIGKILL'
+    },
+    waitForChildExit: async () => {
+      if (killSent) {
+        child.signalCode = 'SIGKILL'
+      }
+    },
+    waitForProcessGroupExit: async () => {
+      if (killSent) {
+        groupAlive = false
+      }
+    },
+    processGroupExists: () => groupAlive
+  })
+
+  assert.equal(result.state, 'killed')
+  assert.equal(result.childExited, true)
+  assert.equal(result.processGroupExited, true)
+  assert.equal(result.escalated, true)
+  assert.deepEqual(signals, ['SIGTERM', 'SIGTERM', 'SIGKILL'])
+})
+
+test('stopProcess reports leaked children when SIGKILL cannot finish teardown', async () => {
+  const child = fakeChild(789)
+
+  const result = await stopProcess(child, {
+    throwOnLeak: false,
+    signalProcessGroup: () => {},
+    waitForChildExit: async () => {},
+    waitForProcessGroupExit: async () => {},
+    processGroupExists: () => true
+  })
+
+  assert.equal(result.state, 'leaked')
+  assert.equal(result.childExited, false)
+  assert.equal(result.processGroupExited, false)
+  assert.equal(result.escalated, true)
+
+  await assert.rejects(
+    stopProcess(fakeChild(790), {
+      signalProcessGroup: () => {},
+      waitForChildExit: async () => {},
+      waitForProcessGroupExit: async () => {},
+      processGroupExists: () => true
+    }),
+    /did not exit after SIGTERM -> SIGTERM -> SIGKILL/
+  )
+})
+
+function fakeChild(pid) {
+  return { pid, exitCode: null, signalCode: null }
+}
 
 function withCleanSmokeEnv(callback) {
   const previous = new Map(SMOKE_ENV_KEYS.map((key) => [key, process.env[key]]))

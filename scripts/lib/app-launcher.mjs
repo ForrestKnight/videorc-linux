@@ -145,23 +145,127 @@ export function launchDevApp({
   })
 }
 
-/** SIGTERM the process group, escalating to SIGKILL after a grace period. */
-export async function stopProcess(child, beforeStop) {
-  if (!child?.pid) return
-
-  const pid = child.pid
-  beforeStop?.()
-  signalProcessGroup(pid, child, 'SIGTERM')
-  await waitForChildExit(child, 5000)
-
-  if (processGroupExists(pid)) {
-    signalProcessGroup(pid, child, 'SIGTERM')
-    await waitForProcessGroupExit(pid, 500)
+/** SIGTERM the process tree, escalating to SIGKILL after bounded grace periods. */
+export async function stopProcess(child, beforeStopOrOptions, maybeOptions) {
+  const options = normalizeStopProcessOptions(beforeStopOrOptions, maybeOptions)
+  const pid = child?.pid
+  if (!pid) {
+    return {
+      pid: null,
+      state: 'skipped',
+      childExited: true,
+      processGroupExited: true,
+      escalated: false,
+      signals: []
+    }
   }
-  if (processGroupExists(pid)) {
-    signalProcessGroup(pid, child, 'SIGKILL')
-    await waitForProcessGroupExit(pid, 1000)
+
+  const result = {
+    pid,
+    state: 'stopping',
+    childExited: isChildExited(child),
+    processGroupExited: !options.processGroupExists(pid),
+    escalated: false,
+    signals: []
   }
+
+  options.beforeStop?.()
+  sendStopSignal({
+    child,
+    pid,
+    signal: 'SIGTERM',
+    result,
+    signalProcessGroup: options.signalProcessGroup
+  })
+  await options.waitForChildExit(child, options.childExitTimeoutMs)
+
+  await finishGracefulStop({ child, pid, result, options })
+  await finishForcedStop({ child, pid, result, options })
+
+  result.childExited = isChildExited(child)
+  result.processGroupExited = !options.processGroupExists(pid)
+  result.state =
+    result.childExited && result.processGroupExited
+      ? result.escalated
+        ? 'killed'
+        : 'terminated'
+      : 'leaked'
+
+  if (result.state === 'leaked' && options.throwOnLeak) {
+    throw new Error(
+      `Process ${pid} did not exit after ${result.signals.join(' -> ')}; childExited=${result.childExited} processGroupExited=${result.processGroupExited}`
+    )
+  }
+
+  return result
+}
+
+function normalizeStopProcessOptions(beforeStopOrOptions, maybeOptions) {
+  const options =
+    typeof beforeStopOrOptions === 'function'
+      ? { ...maybeOptions, beforeStop: beforeStopOrOptions }
+      : { ...(beforeStopOrOptions ?? {}) }
+  return {
+    beforeStop: options.beforeStop,
+    childExitTimeoutMs: options.childExitTimeoutMs ?? 5000,
+    terminateGraceMs: options.terminateGraceMs ?? 500,
+    killGraceMs: options.killGraceMs ?? 1000,
+    throwOnLeak: options.throwOnLeak ?? true,
+    signalProcessGroup: options.signalProcessGroup ?? signalProcessGroup,
+    waitForChildExit: options.waitForChildExit ?? waitForChildExit,
+    waitForProcessGroupExit: options.waitForProcessGroupExit ?? waitForProcessGroupExit,
+    processGroupExists: options.processGroupExists ?? processGroupExists
+  }
+}
+
+async function finishGracefulStop({ child, pid, result, options }) {
+  result.childExited = isChildExited(child)
+  result.processGroupExited = !options.processGroupExists(pid)
+  if (result.childExited && result.processGroupExited) {
+    return
+  }
+
+  sendStopSignal({
+    child,
+    pid,
+    signal: 'SIGTERM',
+    result,
+    signalProcessGroup: options.signalProcessGroup
+  })
+  await options.waitForChildExit(child, options.terminateGraceMs)
+  if (options.processGroupExists(pid)) {
+    await options.waitForProcessGroupExit(pid, options.terminateGraceMs, options.processGroupExists)
+  }
+}
+
+async function finishForcedStop({ child, pid, result, options }) {
+  result.childExited = isChildExited(child)
+  result.processGroupExited = !options.processGroupExists(pid)
+  if (result.childExited && result.processGroupExited) {
+    return
+  }
+
+  result.escalated = true
+  sendStopSignal({
+    child,
+    pid,
+    signal: 'SIGKILL',
+    result,
+    signalProcessGroup: options.signalProcessGroup
+  })
+  await options.waitForChildExit(child, options.killGraceMs)
+  if (options.processGroupExists(pid)) {
+    await options.waitForProcessGroupExit(pid, options.killGraceMs, options.processGroupExists)
+  }
+}
+
+function sendStopSignal({ child, pid, signal, result, signalProcessGroup }) {
+  result.signals.push(signal)
+  signalProcessGroup(pid, child, signal)
+}
+
+function isChildExited(child) {
+  return child.exitCode != null || child.signalCode != null
 }
 
 function signalProcessGroup(pid, child, sig) {
@@ -177,7 +281,7 @@ function signalProcessGroup(pid, child, sig) {
 }
 
 function waitForChildExit(child, timeoutMs) {
-  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve()
+  if (isChildExited(child)) return Promise.resolve()
   return new Promise((resolveWait) => {
     const timer = setTimeout(resolveWait, timeoutMs)
     child.once('exit', () => {
@@ -187,11 +291,11 @@ function waitForChildExit(child, timeoutMs) {
   })
 }
 
-function waitForProcessGroupExit(pid, timeoutMs) {
+function waitForProcessGroupExit(pid, timeoutMs, processGroupExistsFn = processGroupExists) {
   const startedAt = Date.now()
   return new Promise((resolveWait) => {
     const poll = () => {
-      if (!processGroupExists(pid) || Date.now() - startedAt >= timeoutMs) {
+      if (!processGroupExistsFn(pid) || Date.now() - startedAt >= timeoutMs) {
         resolveWait()
         return
       }
