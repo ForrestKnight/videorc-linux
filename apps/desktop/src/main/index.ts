@@ -37,6 +37,7 @@ import {
 } from './backend-owned-processes'
 import { createNativePreviewHelperProcessDriver } from './native-preview-helper-process-driver'
 import { loadNativePreviewRealSurfaceDriver } from './native-preview-real-surface-loader'
+import { safeConsole } from './safe-console'
 import {
   assertPermissionShortcutSupported,
   buildRuntimeInfo,
@@ -671,7 +672,7 @@ function emitNotesWindowState(message?: string): void {
         window.webContents.send('notes-window:state', state)
       } catch (error) {
         if (!appIsQuitting) {
-          console.warn('Notes window state emit failed:', error)
+          safeConsole.warn('Notes window state emit failed:', error)
         }
       }
     }
@@ -688,7 +689,7 @@ function emitNotesDocument(document: NotesDocument): void {
         window.webContents.send('notes-window:document', document)
       } catch (error) {
         if (!appIsQuitting) {
-          console.warn('Notes document emit failed:', error)
+          safeConsole.warn('Notes document emit failed:', error)
         }
       }
     }
@@ -871,7 +872,7 @@ async function openNotesWindow(): Promise<NotesWindowState> {
     window.setContentProtection(true)
     notesWindowContentProtected = true
   } catch (error) {
-    console.warn('Notes window content protection could not be enabled:', error)
+    safeConsole.warn('Notes window content protection could not be enabled:', error)
   }
   if (notesWindowAlwaysOnTop) {
     window.setAlwaysOnTop(true, 'floating')
@@ -1031,7 +1032,7 @@ function emitPreviewWindowState(): void {
       mainWindow.webContents.send('preview-window:state', previewWindowState())
     } catch (error) {
       if (!appIsQuitting) {
-        console.warn('Preview window state emit failed:', error)
+        safeConsole.warn('Preview window state emit failed:', error)
       }
     }
   }
@@ -1059,7 +1060,7 @@ function pushPreviewWindowPlacement(): void {
       generation
     )
   }).catch((error) => {
-    console.error('Preview window placement push failed:', error)
+    safeConsole.error('Preview window placement push failed:', error)
   })
 }
 
@@ -1215,7 +1216,7 @@ async function openPreviewWindow(): Promise<PreviewWindowState> {
       void runNativePreviewSurfaceMutation(() =>
         applyNativePreviewHostCommands([{ kind: 'destroy' }])
       ).catch((error) => {
-        console.error('Preview window close teardown failed:', error)
+        safeConsole.error('Preview window close teardown failed:', error)
       })
       emitPreviewWindowState()
     }
@@ -3731,7 +3732,7 @@ function handleBackendStdout(text: string): void {
         logBackend('info', `Backend ready on ${backendConnection.host}:${backendConnection.port}`)
         recordBackendRuntimeProcess(backendConnection)
         if (process.env.VIDEORC_SMOKE_PRINT_BACKEND_READY === '1') {
-          console.log(`[smoke] backend-ready ${JSON.stringify(backendConnection)}`)
+          safeConsole.log(`[smoke] backend-ready ${JSON.stringify(backendConnection)}`)
         }
         sendToWindows('backend:connection', backendConnection)
         connectBackendEventSocket(backendConnection)
@@ -3759,7 +3760,8 @@ function logBackend(level: BackendLogEvent['level'], message: string): void {
 
   sendToWindows('backend:log', log)
 
-  const logger = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log
+  const logger =
+    level === 'error' ? safeConsole.error : level === 'warn' ? safeConsole.warn : safeConsole.log
   logger(`[backend:${level}] ${message}`)
 }
 
@@ -3832,7 +3834,7 @@ function startSmokePreviewMotionServer(): void {
   smokePreviewMotionServer.listen(0, '127.0.0.1', () => {
     const address = smokePreviewMotionServer?.address()
     if (address && typeof address !== 'string') {
-      console.log(
+      safeConsole.log(
         `[smoke] preview-motion-ready ${JSON.stringify({ host: address.address, port: address.port })}`
       )
     }
