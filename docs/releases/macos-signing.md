@@ -37,6 +37,70 @@ The local keychain identity currently expected for beta signing is:
 Developer ID Application: Uros Miric (C2PA37RB58)
 ```
 
+## Create `CSC_LINK` From The Local Keychain
+
+First confirm the identity and team id without printing any secret material:
+
+```sh
+security find-identity -v -p codesigning
+security find-certificate -c "Developer ID Application: Uros Miric" -p \
+  | openssl x509 -noout -subject -issuer -serial -dates
+```
+
+The expected team id is `C2PA37RB58`.
+
+Recommended exact export path:
+
+1. Open **Keychain Access**.
+2. Find `Developer ID Application: Uros Miric (C2PA37RB58)`.
+3. Export it as `DeveloperIDApplication.p12`.
+4. Use a new random archive password. This value becomes `CSC_KEY_PASSWORD`.
+5. Base64 encode the archive for Electron Builder:
+
+   ```sh
+   base64 -i DeveloperIDApplication.p12 -o DeveloperIDApplication.p12.base64
+   ```
+
+If the signing keychain only contains the intended Developer ID identity, a CLI
+export can be used instead. This may prompt for keychain access:
+
+```sh
+tmp_dir="$(mktemp -d)"
+CSC_KEY_PASSWORD="$(openssl rand -base64 32)"
+
+security export \
+  -k "$HOME/Library/Keychains/login.keychain-db" \
+  -t identities \
+  -f pkcs12 \
+  -P "$CSC_KEY_PASSWORD" \
+  -o "$tmp_dir/DeveloperIDApplication.p12"
+
+base64 -i "$tmp_dir/DeveloperIDApplication.p12" \
+  -o "$tmp_dir/DeveloperIDApplication.p12.base64"
+```
+
+Install the generated values:
+
+```sh
+gh secret set CSC_LINK --repo TheOrcDev/videogre --body-file "$tmp_dir/DeveloperIDApplication.p12.base64"
+printf '%s' "$CSC_KEY_PASSWORD" | gh secret set CSC_KEY_PASSWORD --repo TheOrcDev/videogre --body-file -
+```
+
+Then set the notarization credentials:
+
+```sh
+gh secret set APPLE_ID --repo TheOrcDev/videogre
+gh secret set APPLE_APP_SPECIFIC_PASSWORD --repo TheOrcDev/videogre
+printf '%s' 'C2PA37RB58' | gh secret set APPLE_TEAM_ID --repo TheOrcDev/videogre --body-file -
+```
+
+Clean up local certificate artifacts immediately after the secrets are installed:
+
+```sh
+rm -rf "$tmp_dir"
+unset CSC_KEY_PASSWORD
+```
+
 Run the preflight before cutting a beta:
 
 ```sh
