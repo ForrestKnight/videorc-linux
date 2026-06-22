@@ -49,7 +49,8 @@ mac:
   icon: build-resources/icon.icns
   entitlements: build-resources/entitlements.mac.plist
   entitlementsInherit: build-resources/entitlements.mac.plist
-  notarize: true
+  notarize:
+    teamId: ${env.APPLE_TEAM_ID}
   extendInfo:
     NSCameraUsageDescription: Videorc uses the camera for creator overlays when you select a camera source.
     NSMicrophoneUsageDescription: Videorc uses the microphone when you select a microphone for recording or streaming.

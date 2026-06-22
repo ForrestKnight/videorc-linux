@@ -2,9 +2,29 @@ name: Release macOS
 
 on:
   workflow_dispatch:
+    inputs:
+      release_id:
+        description: 'Beta release id written to release.json, for example 0.9.0-beta.1'
+        required: false
+        default: '0.9.0-beta.1'
+      display_version:
+        description: 'Human-readable beta version written to release.json'
+        required: false
+        default: '0.9.0 beta 1'
+      release_notes_url:
+        description: 'Public release notes URL written to release.json'
+        required: false
+        default: 'https://videorc.com/releases/0.9.0-beta.1'
   push:
     tags:
       - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-macos-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -40,6 +60,15 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Check signing and notarization prerequisites
+        run: pnpm release:preflight:macos
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
       - name: Ensure smoke-test FFmpeg
         run: |
           if ! command -v ffmpeg >/dev/null 2>&1; then
@@ -60,6 +89,10 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'true'
+          VIDEORC_RELEASE_ID: ${{ github.event_name == 'workflow_dispatch' && inputs.release_id || '' }}
+          VIDEORC_RELEASE_DISPLAY_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.display_version || '' }}
+          VIDEORC_RELEASE_NOTES_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.release_notes_url || '' }}
 
       - name: Validate signed macOS artifact
         run: pnpm release:validate:macos
@@ -70,5 +103,7 @@ jobs:
           name: videorc-macos
           path: |
             apps/desktop/release/*.dmg
-            apps/desktop/release/*.zip
+            apps/desktop/release/*.dmg.blockmap
+            apps/desktop/release/*.sha256
+            apps/desktop/release/release.json
           if-no-files-found: error
