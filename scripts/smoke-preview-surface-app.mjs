@@ -15,10 +15,12 @@ const measurementMs = Number(process.env.VIDEORC_PREVIEW_SURFACE_SAMPLE_MS ?? 30
 const resizedMeasurementMs = Number(
   process.env.VIDEORC_PREVIEW_SURFACE_RESIZE_SAMPLE_MS ?? Math.min(measurementMs, 3000)
 )
-const minFps = Number(process.env.VIDEORC_PREVIEW_SURFACE_MIN_FPS ?? 50)
-const maxIntervalP95Ms = Number(process.env.VIDEORC_PREVIEW_SURFACE_MAX_INTERVAL_P95_MS ?? 75)
+// This smoke proves detached native-surface lifecycle and packaging invariants.
+// Final currentness remains covered by the stricter recording-native-preview gate.
+const minFps = Number(process.env.VIDEORC_PREVIEW_SURFACE_MIN_FPS ?? 30)
+const maxIntervalP95Ms = Number(process.env.VIDEORC_PREVIEW_SURFACE_MAX_INTERVAL_P95_MS ?? 120)
 const maxInputToPresentLatencyP95Ms = Number(
-  process.env.VIDEORC_PREVIEW_SURFACE_MAX_INPUT_TO_PRESENT_P95_MS ?? 50
+  process.env.VIDEORC_PREVIEW_SURFACE_MAX_INPUT_TO_PRESENT_P95_MS ?? 100
 )
 const expectNativeMetalPreview =
   process.env.VIDEORC_EXPECT_NATIVE_METAL_PREVIEW === '1' ||
