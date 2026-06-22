@@ -28,6 +28,7 @@ import {
   patchPreparedStreamTarget,
   patchStreamTargetForEdit,
   persistableCaptureConfig,
+  previewDeviceRefreshSignature,
   preparedYouTubeActivationTargets,
   preparedYouTubeCompletionTargets,
   reconcileSourceSelection,
@@ -707,6 +708,10 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   const [health, setHealth] = useState<BackendHealth | null>(null)
   const [entitlements, setEntitlements] = useState<EntitlementsSnapshot | null>(null)
   const [deviceList, setDeviceList] = useState<DeviceList>({ devices: [], warnings: [] })
+  const previewDevicesSignature = useMemo(
+    () => previewDeviceRefreshSignature(deviceList.devices),
+    [deviceList.devices]
+  )
   const deviceListRef = useRef(deviceList)
   useEffect(() => {
     deviceListRef.current = deviceList
@@ -3523,7 +3528,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       wsStatus !== 'connected' ||
       isSessionActive ||
       !health?.ffmpeg.available ||
-      !deviceList.devices.length
+      !previewDevicesSignature
     ) {
       return
     }
@@ -3535,9 +3540,9 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     return () => window.clearTimeout(timer)
   }, [
     client,
-    deviceList.devices.length,
     health?.ffmpeg.available,
     isSessionActive,
+    previewDevicesSignature,
     previewRefreshNonce,
     refreshPreview,
     runtimeInfo?.disableAutoPreview,

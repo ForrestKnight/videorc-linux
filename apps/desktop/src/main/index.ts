@@ -35,6 +35,7 @@ import {
   ownedProcessLedgerPath,
   ownedProcessStartupLockPath
 } from './backend-owned-processes'
+import { stopBackendProcess } from './backend-process-shutdown'
 import { createNativePreviewHelperProcessDriver } from './native-preview-helper-process-driver'
 import { loadNativePreviewRealSurfaceDriver } from './native-preview-real-surface-loader'
 import { safeConsole } from './safe-console'
@@ -43,6 +44,7 @@ import {
   buildRuntimeInfo,
   permissionUrlForPane
 } from './runtime-info'
+import { createMediaPermissionGrantWatcher } from './system-permission-watch'
 import { PreviewSupervisorModel } from './preview-supervisor'
 import {
   DEFAULT_NATIVE_PREVIEW_MAX_HANDOFF_AGE_MS,
@@ -100,6 +102,9 @@ let nativePreviewSurfaceCompositorRequestSerial = 0
 let nativePreviewSurfaceMutationInFlight: Promise<PreviewSurfaceStatus> | null = null
 let nativePreviewSurfaceFramePollingSuppressed = false
 let backendProcess: ChildProcessWithoutNullStreams | null = null
+let backendQuitComplete = false
+let backendQuitInProgress = false
+let backendRestartInProgress: Promise<void> | null = null
 let backendOwnedProcessPids = new Set<number>()
 let backendPermissionTargetPath: string | null = null
 let ownedProcessRegistry: OwnedProcessRegistry | null = null
@@ -4895,23 +4900,86 @@ function inferBackendLogLevel(line: string): BackendLogEvent['level'] {
   return 'info'
 }
 
-function stopBackend(): void {
+async function stopBackend(): Promise<void> {
   destroyNativePreviewSurface()
   smokePreviewMotionServer?.close()
   smokePreviewMotionServer = null
-  if (!backendProcess) {
+  const child = backendProcess
+  if (!child) {
     return
   }
 
-  backendProcess.kill('SIGTERM')
-  backendProcess = null
+  const result = await stopBackendProcess(child)
+  if (result === 'timed-out') {
+    logBackend('warn', 'Backend shutdown timed out; continuing app quit after SIGKILL.')
+  }
+  if (backendProcess === child) {
+    removeBackendOwnedProcesses()
+    backendProcess = null
+    backendConnection = null
+    disconnectBackendEventSocket()
+  }
 }
 
 async function openSystemPermissions(pane: SystemPermissionPane = 'privacy'): Promise<void> {
   assertPermissionShortcutSupported(process.platform)
 
+  const mediaAccessGranted = await requestMediaAccessIfNeeded(pane)
   await shell.openExternal(permissionUrlForPane(pane))
+  if (mediaAccessGranted) {
+    mediaPermissionGrantWatcher.stop()
+    await restartBackend(`Restarting capture backend after ${pane} permission became available.`)
+  } else {
+    mediaPermissionGrantWatcher.watch(
+      pane,
+      `Restarting capture backend after ${pane} permission became available.`
+    )
+  }
 }
+
+async function requestMediaAccessIfNeeded(pane: SystemPermissionPane): Promise<boolean> {
+  if (pane !== 'camera' && pane !== 'microphone') {
+    return false
+  }
+
+  try {
+    const status = systemPreferences.getMediaAccessStatus(pane)
+    if (status === 'granted') {
+      return true
+    }
+    if (status !== 'not-determined') {
+      return false
+    }
+    return systemPreferences.askForMediaAccess(pane)
+  } catch (error) {
+    logBackend('warn', `Could not request ${pane} permission: ${errorMessage(error)}`)
+    return false
+  }
+}
+
+async function restartBackend(reason: string): Promise<void> {
+  if (backendRestartInProgress) {
+    return backendRestartInProgress
+  }
+
+  backendRestartInProgress = (async () => {
+    logBackend('info', reason)
+    await stopBackend()
+    if (!appIsQuitting) {
+      startBackend()
+    }
+  })().finally(() => {
+    backendRestartInProgress = null
+  })
+
+  return backendRestartInProgress
+}
+
+const mediaPermissionGrantWatcher = createMediaPermissionGrantWatcher({
+  getStatus: (permission) => systemPreferences.getMediaAccessStatus(permission),
+  log: (level, message) => logBackend(level, message),
+  restartBackend
+})
 
 function runtimeInfo(): RuntimeInfo {
   return buildRuntimeInfo({
@@ -5193,7 +5261,17 @@ app.on('window-all-closed', () => {
   }
 })
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
   appIsQuitting = true
-  stopBackend()
+  if (backendQuitComplete || backendQuitInProgress) {
+    return
+  }
+
+  event.preventDefault()
+  backendQuitInProgress = true
+  void stopBackend().finally(() => {
+    backendQuitComplete = true
+    backendQuitInProgress = false
+    app.quit()
+  })
 })

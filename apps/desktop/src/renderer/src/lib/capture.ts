@@ -40,7 +40,7 @@ export type LegacyStreamKeyMigrationCandidate = {
 }
 
 export function layoutPresetNeedsCamera(preset: LayoutPreset): boolean {
-  return preset === 'camera-only' || preset === 'side-by-side'
+  return preset === 'screen-camera' || preset === 'camera-only' || preset === 'side-by-side'
 }
 
 export function layoutPresetNeedsScreen(preset: LayoutPreset): boolean {
@@ -615,9 +615,7 @@ export function loadCaptureConfig(): CaptureConfig {
 export function smokePreviewCompositorCaptureConfig(
   config: Pick<CaptureConfig, 'sources' | 'layout' | 'video'>
 ): Pick<CaptureConfig, 'sources' | 'layout' | 'video'> {
-  const includeCamera =
-    layoutPresetNeedsCamera(config.layout.layoutPreset) ||
-    (config.layout.layoutPreset === 'screen-camera' && Boolean(config.sources.cameraId))
+  const includeCamera = layoutPresetNeedsCamera(config.layout.layoutPreset)
   return {
     ...config,
     sources: {
@@ -628,6 +626,15 @@ export function smokePreviewCompositorCaptureConfig(
       testPattern: true
     }
   }
+}
+
+export function previewDeviceRefreshSignature(devices: Device[]): string {
+  return devices
+    .map((device) =>
+      [device.kind, device.id, device.name, device.status, device.detail ?? ''].join(':')
+    )
+    .sort()
+    .join('|')
 }
 
 export function normalizeAudioSettings(audio: unknown): AudioSettings {

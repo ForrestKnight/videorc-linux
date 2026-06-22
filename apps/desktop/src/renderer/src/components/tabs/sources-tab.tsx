@@ -7,6 +7,7 @@ import {
   SpeakerHigh,
   SpeakerSlash,
   UploadSimple,
+  VideoCamera,
   Warning,
   Waveform
 } from '@phosphor-icons/react'
@@ -120,6 +121,7 @@ export function SourcesTab(): ReactElement {
     switchSourceDeviceLive,
     previewCameraStatus,
     previewScreenStatus,
+    openSystemPermission,
     openPreviewPermissions,
     revealPermissionTarget,
     runtimeInfo
@@ -134,6 +136,11 @@ export function SourcesTab(): ReactElement {
   const hasCapturePermissionRequired = captureDevices.some(
     (device) => device.status === 'permission-required'
   )
+  const selectedCamera = cameras.find((device) => device.id === captureConfig.sources.cameraId)
+  const hasCameraPermissionRequired =
+    previewCameraStatus?.state === 'permission-needed' ||
+    selectedCamera?.status === 'permission-required' ||
+    cameras.some((device) => device.status === 'permission-required')
   const capturePermissionTargetName =
     runtimeInfo?.capturePermissionTargetName ?? runtimeInfo?.permissionTargetName ?? 'Videorc'
   const [syncRecommendation, setSyncRecommendation] =
@@ -260,6 +267,28 @@ export function SourcesTab(): ReactElement {
               <Button size="sm" variant="outline" onClick={() => void openPreviewPermissions()}>
                 <Monitor data-icon="inline-start" />
                 Open Screen Recording
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => void revealPermissionTarget()}>
+                <UploadSimple data-icon="inline-start" />
+                Show Capture Helper
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : null}
+        {hasCameraPermissionRequired ? (
+          <Alert variant="warning">
+            <Warning weight="fill" />
+            <AlertTitle>
+              Camera permission is required for {capturePermissionTargetName}.
+            </AlertTitle>
+            <AlertDescription className="flex flex-wrap gap-2 pt-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void openSystemPermission('camera')}
+              >
+                <VideoCamera data-icon="inline-start" />
+                Open Camera
               </Button>
               <Button size="sm" variant="ghost" onClick={() => void revealPermissionTarget()}>
                 <UploadSimple data-icon="inline-start" />

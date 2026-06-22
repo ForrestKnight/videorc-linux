@@ -24,6 +24,7 @@ import {
   normalizeVideoSettings,
   parseAudioSyncRecommendationJson,
   parseMicrophoneSyncOffsetInput,
+  previewDeviceRefreshSignature,
   persistableCaptureConfig,
   reconcileSourceSelection,
   resetAudioSyncCalibration,
@@ -417,7 +418,7 @@ describe('smokePreviewCompositorCaptureConfig', () => {
     ).toBe('camera:synthetic-preview-smoke')
   })
 
-  it('allows screen-camera smoke layouts to omit the camera when none is selected', () => {
+  it('adds a synthetic camera to screen-camera smoke layouts', () => {
     const config: Pick<CaptureConfig, 'sources' | 'layout' | 'video'> = {
       sources: {
         screenId: 'screen:1',
@@ -455,8 +456,8 @@ describe('smokePreviewCompositorCaptureConfig', () => {
     expect(smokePreviewCompositorCaptureConfig(config)).toEqual({
       ...config,
       sources: {
-        cameraId: undefined,
-        cameraName: undefined,
+        cameraId: 'camera:synthetic-preview-smoke',
+        cameraName: 'Synthetic preview camera',
         microphoneId: 'microphone:1',
         microphoneName: 'Microphone',
         testPattern: true
@@ -476,7 +477,7 @@ describe('layout preset source requirements', () => {
   it('matches the backend blockers for camera-required presets', () => {
     expect(layoutPresetNeedsCamera('camera-only')).toBe(true)
     expect(layoutPresetNeedsCamera('side-by-side')).toBe(true)
-    expect(layoutPresetNeedsCamera('screen-camera')).toBe(false)
+    expect(layoutPresetNeedsCamera('screen-camera')).toBe(true)
     expect(layoutPresetNeedsCamera('screen-only')).toBe(false)
   })
 
@@ -491,6 +492,28 @@ describe('layout preset source requirements', () => {
   it('requires a concrete camera id for camera layouts', () => {
     expect(hasSelectedCameraSource({ cameraId: 'camera:1' })).toBe(true)
     expect(hasSelectedCameraSource({ screenId: 'screen:1' })).toBe(false)
+  })
+})
+
+describe('previewDeviceRefreshSignature', () => {
+  it('changes when a selected device permission state changes without changing list length', () => {
+    const camera: Device = {
+      id: 'camera:avfoundation-native:abc',
+      name: 'MacBook Pro Camera',
+      kind: 'camera',
+      status: 'permission-required'
+    }
+    const blocked: Device[] = [camera]
+    const available: Device[] = [
+      {
+        ...camera,
+        status: 'available'
+      }
+    ]
+
+    expect(previewDeviceRefreshSignature(blocked)).not.toBe(
+      previewDeviceRefreshSignature(available)
+    )
   })
 })
 
