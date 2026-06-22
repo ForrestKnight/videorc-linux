@@ -82,15 +82,14 @@ export function buildMacosBetaReleaseManifest({
     displayVersion,
     bundleVersion: packageVersion,
     platform: 'macos',
-    architecture:
-      nonEmpty(env.VIDEORC_RELEASE_ARCHITECTURE) ?? inferMacosArchitecture(filename),
+    architecture: nonEmpty(env.VIDEORC_RELEASE_ARCHITECTURE) ?? inferMacosArchitecture(filename),
     filename,
     sha256,
     sizeBytes,
     minimumMacOS: nonEmpty(env.VIDEORC_RELEASE_MINIMUM_MACOS) ?? DEFAULT_MINIMUM_MACOS,
     releasedAt,
     releaseNotesUrl:
-      nonEmpty(env.VIDEORC_RELEASE_NOTES_URL) ?? `https://videorc.com/releases/${releaseId}`
+      nonEmpty(env.VIDEORC_RELEASE_NOTES_URL) ?? `https://videorc.app/releases/${releaseId}`
   }
 }
 

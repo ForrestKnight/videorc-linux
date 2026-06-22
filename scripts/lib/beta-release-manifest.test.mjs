@@ -32,7 +32,7 @@ describe('macOS beta release manifest', () => {
       sizeBytes: 42,
       minimumMacOS: 'macOS 13 Ventura or later',
       releasedAt: '2026-06-22T00:00:00.000Z',
-      releaseNotesUrl: 'https://videorc.com/releases/0.9.0-beta.1'
+      releaseNotesUrl: 'https://videorc.app/releases/0.9.0-beta.1'
     })
   })
 
@@ -46,7 +46,7 @@ describe('macOS beta release manifest', () => {
       env: {
         VIDEORC_RELEASE_ID: '0.9.0-beta.2',
         VIDEORC_RELEASE_DISPLAY_VERSION: '0.9.0 beta 2',
-        VIDEORC_RELEASE_NOTES_URL: 'https://videorc.com/releases/beta-2'
+        VIDEORC_RELEASE_NOTES_URL: 'https://videorc.app/releases/beta-2'
       }
     })
 
@@ -54,7 +54,7 @@ describe('macOS beta release manifest', () => {
     assert.equal(manifest.displayVersion, '0.9.0 beta 2')
     assert.equal(manifest.bundleVersion, '0.9.0')
     assert.equal(manifest.architecture, 'universal')
-    assert.equal(manifest.releaseNotesUrl, 'https://videorc.com/releases/beta-2')
+    assert.equal(manifest.releaseNotesUrl, 'https://videorc.app/releases/beta-2')
   })
 
   it('rejects stale artifacts with the old product name', () => {

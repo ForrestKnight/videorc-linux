@@ -14,7 +14,7 @@ on:
       release_notes_url:
         description: 'Public release notes URL written to release.json'
         required: false
-        default: 'https://videorc.com/releases/0.9.0-beta.1'
+        default: 'https://videorc.app/releases/0.9.0-beta.1'
   push:
     tags:
       - 'v*'
