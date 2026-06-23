@@ -352,7 +352,7 @@ export function SourcesTab(): ReactElement {
         ) : null}
 
         {import.meta.env.DEV ? (
-          <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed bg-muted/20 px-3 py-2">
+          <div className="flex items-center justify-between gap-3 rounded-row border border-dashed bg-muted/20 px-3 py-2">
             <div className="flex min-w-0 flex-col">
               <span className="text-sm font-medium">Synthetic diagnostic source</span>
               <span className="text-xs text-muted-foreground">
@@ -436,7 +436,7 @@ export function SourcesTab(): ReactElement {
           </span>
           <span className="font-semibold tabular-nums">{formatDb(audioMeter?.peakDb)}</span>
         </div>
-        <div className="grid gap-2 rounded-lg border bg-muted/30 px-3 py-2">
+        <div className="grid gap-2 rounded-row border bg-muted/30 px-3 py-2">
           <div className="flex items-center justify-between gap-3">
             <span className="text-xs font-medium text-muted-foreground">Mute</span>
             <Switch
@@ -486,7 +486,7 @@ export function SourcesTab(): ReactElement {
                 }))
               }
             />
-            <div className="grid gap-2 rounded-md border border-border/70 bg-muted/20 p-2.5">
+            <div className="grid gap-2 rounded-row border border-border/70 bg-muted/20 p-2.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <Badge
                   variant={
@@ -548,7 +548,7 @@ export function SourcesTab(): ReactElement {
                 {syncCalibrationMessage ?? syncCalibration.detail}
               </p>
               {showSyncStimulusInstructions ? (
-                <div className="grid gap-1 rounded border border-border/70 bg-background p-2 font-mono text-[11px] leading-5 text-muted-foreground">
+                <div className="grid gap-1 rounded-chip border border-border/70 bg-background p-2 font-mono text-[11px] leading-5 text-muted-foreground">
                   <span>
                     pnpm measure:av-sync --make-fixture /tmp/videorc-sync.mp4 --seconds 120
                   </span>
@@ -558,7 +558,14 @@ export function SourcesTab(): ReactElement {
             </div>
           </div>
         </div>
-        <div className="h-2.5 w-full overflow-hidden rounded-full bg-muted">
+        <div
+          aria-label="Microphone input level"
+          aria-valuemax={100}
+          aria-valuemin={0}
+          aria-valuenow={Math.round(Math.min(100, Math.max(0, meterLevel)))}
+          className="h-2.5 w-full overflow-hidden rounded-full bg-muted"
+          role="meter"
+        >
           <div
             className={cn('h-full rounded-full transition-all', meterTone)}
             style={{ width: `${Math.min(100, Math.max(0, meterLevel))}%` }}
@@ -593,7 +600,7 @@ export function SourcesTab(): ReactElement {
           // problems already surface in the warnings alert above. The ScrollArea
           // cap keeps an expanded list from growing the page (ux-ia plan).
           <Collapsible>
-            <CollapsibleTrigger className="group flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
+            <CollapsibleTrigger className="group flex w-full items-center gap-2 rounded-row px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
               <CaretDown className="size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-180" />
               <span>Device diagnostics · {deviceList.devices.length}</span>
               {problemDeviceCount > 0 ? (
@@ -620,7 +627,7 @@ export function SourcesTab(): ReactElement {
 
 function DiagnosticRow({ device }: { device: Device }): ReactElement {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/30 px-3 py-2">
+    <div className="flex items-center justify-between gap-3 rounded-row border bg-muted/30 px-3 py-2">
       <div className="flex min-w-0 flex-col">
         <span className="truncate text-sm font-medium">{device.name}</span>
         <span className="text-xs text-muted-foreground capitalize">
