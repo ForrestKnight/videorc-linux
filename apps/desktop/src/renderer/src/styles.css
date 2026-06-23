@@ -16,6 +16,24 @@
  * Colour carries meaning only: live (red), success, warning, info, and the
  * vivid source icons. There is no coloured action accent; primary actions are
  * monochrome text + key chips.
+ *
+ * Token contract — reach for these utilities, not raw values, so every screen
+ * stays consistent:
+ *   Surfaces   bg-background (the ONE translucent coat) · bg-card / bg-popover
+ *              (opaque-92% float for nested popovers/menus). Never stack coats.
+ *   Text tiers text-foreground (primary: titles/labels, weight 500) ·
+ *              text-muted-foreground (secondary: inline context, metadata,
+ *              placeholders) · text-subtle (tertiary: section headers, hints,
+ *              disabled). Three tiers, nothing else.
+ *   Radius     rounded-panel (18px: glass panels, dialogs, palette) ·
+ *              rounded-row (10px: rows, cards) · rounded-chip (6px: key chips,
+ *              small controls). Tiers only — no ad-hoc rounded-xl per screen.
+ *   Hairlines  border (8%: dark white, light black). Never >1px, never solid grey.
+ *   Selection  bg-accent (hover/selected block: white/8% dark · black/6% light,
+ *              no outline) · bg-accent-pressed (white/12% · black/10%).
+ *   Focus      :focus-visible ring is wired in @layer base below.
+ *   Motion     100–150ms ease-out; reduced-motion collapse wired below.
+ *   Colour     only via text/bg live·success·warning·info + vivid source icons.
  */
 :root {
   --radius: 0.625rem;
@@ -40,6 +58,8 @@
   /* Hover/selection block: black-6%. */
   --accent: oklch(0 0 0 / 6%);
   --accent-foreground: oklch(0.24 0.004 286);
+  /* Pressed block: black-10%. */
+  --accent-pressed: oklch(0 0 0 / 10%);
   /* Tertiary text tier (section headers, footer hints, disabled). */
   --subtle: oklch(0.68 0.004 286);
 
@@ -97,6 +117,8 @@
   /* Hover/selection block: white-8%. */
   --accent: oklch(1 0 0 / 8%);
   --accent-foreground: oklch(0.97 0.001 286);
+  /* Pressed block: white-12%. */
+  --accent-pressed: oklch(1 0 0 / 12%);
   --subtle: oklch(0.55 0.008 286);
 
   --destructive: oklch(0.704 0.191 22.216);
@@ -137,6 +159,12 @@
   --radius-3xl: calc(var(--radius) + 14px);
   --radius-4xl: calc(var(--radius) + 20px);
 
+  /* Semantic radius tiers — the design language's panel/row/chip vocabulary.
+     Use rounded-panel / rounded-row / rounded-chip at call sites. */
+  --radius-panel: calc(var(--radius) + 8px); /* 18px */
+  --radius-row: var(--radius); /* 10px */
+  --radius-chip: calc(var(--radius) - 4px); /* 6px */
+
   /* The reference font: the platform system stack (SF Pro / SF Mono on macOS). */
   --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
   --font-heading:
@@ -171,6 +199,7 @@
   --color-warning-foreground: var(--warning-foreground);
   --color-warning: var(--warning);
   --color-accent-foreground: var(--accent-foreground);
+  --color-accent-pressed: var(--accent-pressed);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
   --color-muted: var(--muted);
