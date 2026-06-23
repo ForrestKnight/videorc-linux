@@ -121,6 +121,7 @@ import type {
   TwitchCategory,
   VideoPreset,
   VideoSettings,
+  VideorcAccountSnapshot,
   XNativeLiveCapability,
   YouTubeBroadcastTransitionResult,
   YouTubeChannel,
@@ -279,6 +280,7 @@ export type StudioContextValue = {
   wsStatus: WsStatus
   health: BackendHealth | null
   entitlements: EntitlementsSnapshot | null
+  account: VideorcAccountSnapshot | null
   deviceList: DeviceList
   recording: RecordingStatus
   logs: BackendLogEvent[]
@@ -737,6 +739,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   wsStatusRef.current = wsStatus
   const [health, setHealth] = useState<BackendHealth | null>(null)
   const [entitlements, setEntitlements] = useState<EntitlementsSnapshot | null>(null)
+  const [account, setAccount] = useState<VideorcAccountSnapshot | null>(null)
   const [deviceList, setDeviceList] = useState<DeviceList>({ devices: [], warnings: [] })
   const previewDevicesSignature = useMemo(
     () => previewDeviceRefreshSignature(deviceList.devices),
@@ -1908,6 +1911,8 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
         setHealth(nextHealth)
         const nextEntitlements = await nextClient.request<EntitlementsSnapshot>('entitlements.get')
         setEntitlements(nextEntitlements)
+        const nextAccount = await nextClient.request<VideorcAccountSnapshot>('account.get')
+        setAccount(nextAccount)
         const nextDevices = await nextClient.request<DeviceList>('devices.list', {
           ffmpegPath: settings.ffmpegPath.trim() || undefined
         })
@@ -1972,6 +1977,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       nextClient.close()
       setClient(null)
       setEntitlements(null)
+      setAccount(null)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -4622,6 +4628,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       wsStatus,
       health,
       entitlements,
+      account,
       deviceList: visibleDeviceList,
       recording,
       logs,
@@ -4764,6 +4771,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       wsStatus,
       health,
       entitlements,
+      account,
       visibleDeviceList,
       recording,
       logs,
