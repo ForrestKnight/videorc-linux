@@ -49,8 +49,8 @@ export function AccountMenu({
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          aria-label="Videorc account"
-          className="flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-1 text-sm transition-colors hover:bg-sidebar-accent/60"
+          aria-label={`Open account menu (backend ${statusLabel})`}
+          className="flex min-w-0 items-center gap-1.5 rounded-row px-1.5 py-1 text-sm transition-colors hover:bg-sidebar-accent/60"
         >
           <UserCircle
             className="size-4 shrink-0 text-muted-foreground"
@@ -67,7 +67,7 @@ export function AccountMenu({
           <span className="truncate text-sm font-medium text-foreground">
             {signedIn ? displayName : 'Not signed in'}
           </span>
-          <span className="shrink-0 rounded-md border px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+          <span className="shrink-0 rounded-chip border px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
             {tierLabel}
           </span>
         </DropdownMenuLabel>

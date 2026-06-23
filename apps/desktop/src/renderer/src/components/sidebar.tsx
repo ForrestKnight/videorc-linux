@@ -36,10 +36,11 @@ function NavRow({
     <button
       type="button"
       aria-current={isActive ? 'page' : undefined}
+      aria-keyshortcuts={shortcutDigit ? `Meta+${shortcutDigit}` : undefined}
       data-videorc-tab-trigger={triggerId}
       onClick={onClick}
       className={cn(
-        'group flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors',
+        'group flex items-center gap-2.5 rounded-row px-2.5 py-2 text-sm transition-colors',
         isActive
           ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground'
           : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground'
@@ -112,11 +113,12 @@ export function Sidebar({
       />
 
       {/* Four zones (ux-ia-refactor-plan): stage row, SETUP, LIBRARY, SYSTEM. */}
-      <nav className="flex flex-1 flex-col gap-5 overflow-y-auto px-3 py-2">
+      <nav aria-label="Primary" className="flex flex-1 flex-col gap-5 overflow-y-auto px-3 py-2">
         <button
           type="button"
+          aria-keyshortcuts="Meta+K"
           onClick={onOpenCommand}
-          className="flex items-center gap-2 rounded-lg border border-border px-2.5 py-1.5 text-sm text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-foreground"
+          className="flex items-center gap-2 rounded-row border border-border px-2.5 py-1.5 text-sm text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-foreground"
         >
           <MagnifyingGlass className="size-4 shrink-0" />
           <span className="flex-1 text-left">Search</span>
