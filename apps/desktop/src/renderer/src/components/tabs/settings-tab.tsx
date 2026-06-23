@@ -93,7 +93,7 @@ export function SettingsTab({
             </FieldDescription>
           </Field>
         </FieldGroup>
-        <div className="flex items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+        <div className="flex items-center gap-2 rounded-row border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
           <Database className="size-4 shrink-0" weight="duotone" />
           <span className="truncate">{health?.databasePath ?? 'Waiting for SQLite path.'}</span>
         </div>
