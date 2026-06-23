@@ -1060,6 +1060,12 @@ export function isStreamTargetStartReady(target: StreamTargetSettings): boolean 
   return target.authMode === 'oauth' || isStreamTargetReady(target)
 }
 
+export function readyStreamTargetLabels(streaming: StreamingSettings): string[] {
+  return streaming.targets
+    .filter((target) => target.enabled && isStreamTargetReady(target))
+    .map((target) => target.label)
+}
+
 export function areEnabledStreamTargetsStartReady(streaming: StreamingSettings): boolean {
   const enabled = streaming.targets.filter((target) => target.enabled)
   return enabled.length > 0 && enabled.every(isStreamTargetStartReady)
@@ -1238,6 +1244,7 @@ export function preparedYouTubeCompletionTargets(
       target.enabled &&
       target.authMode === 'oauth' &&
       target.platform === 'youtube' &&
+      target.status?.state === 'live' &&
       Boolean(target.platformBroadcastId)
   )
 }

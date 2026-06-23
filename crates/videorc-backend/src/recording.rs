@@ -292,10 +292,10 @@ pub async fn start_session(
         bail!("A capture session is already running");
     }
 
+    hydrate_stream_key_secret_refs(&state, &mut params)?;
     validate_session_entitlements(&params, &entitlements::current_entitlements())?;
 
     let capture_permit = state.ffmpeg_work.begin_capture_when_available().await;
-    hydrate_stream_key_secret_refs(&state, &mut params)?;
     validate_outputs(&params)?;
 
     let ffmpeg_path = resolve_ffmpeg_path(params.output.ffmpeg_path.clone());
@@ -6818,6 +6818,54 @@ mod tests {
     }
 
     #[test]
+    fn stream_target_secret_refs_must_hydrate_before_start_validation() {
+        let mut params = base_params(false, true);
+        params.output.video = VideoSettings {
+            preset: VideoPreset::StreamSafe1080p30,
+            width: 1920,
+            height: 1080,
+            fps: 30,
+            bitrate_kbps: 6000,
+        };
+        let mut streaming = streaming_for(&[(
+            StreamPlatform::Youtube,
+            "rtmp://a.rtmp.youtube.com/live2",
+            "",
+        )]);
+        let youtube = streaming
+            .targets
+            .iter_mut()
+            .find(|target| target.platform == StreamPlatform::Youtube)
+            .unwrap();
+        youtube.auth_mode = StreamAuthMode::Oauth;
+        youtube.stream_key_secret_ref = Some("platform:youtube:UC123:stream-key".to_string());
+        youtube.stream_key_present = true;
+        params.streaming = Some(streaming);
+        let snapshot = entitlements::entitlements_from_env_value(None);
+
+        let unhydrated_error = validate_session_entitlements(&params, &snapshot)
+            .expect_err("saved secret refs are not enough until their raw values are hydrated")
+            .to_string();
+        assert!(
+            unhydrated_error.contains("No streaming destination is ready"),
+            "validation should explain that no hydrated destination is ready: {unhydrated_error}"
+        );
+
+        hydrate_stream_key_secret_refs_from_credentials(
+            params.streaming.as_mut().unwrap(),
+            &[],
+            |secret_ref| {
+                assert_eq!(secret_ref, "platform:youtube:UC123:stream-key");
+                Ok("secret-youtube-key".to_string())
+            },
+        )
+        .unwrap();
+
+        validate_session_entitlements(&params, &snapshot).unwrap();
+        validate_outputs(&params).unwrap();
+    }
+
+    #[test]
     fn full_url_stream_targets_hydrate_url_from_target_secret_ref() {
         let mut streaming = streaming_for(&[(StreamPlatform::Custom, "", "")]);
         let custom = streaming
@@ -9858,7 +9906,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_youtube_4k30_stream_when_twitch_is_enabled() {
+    fn allows_youtube_4k30_stream_when_twitch_uses_safe_companion_profile() {
         let mut params = base_params(true, true);
         params.output.video = VideoSettings {
             preset: VideoPreset::Record4k30,
@@ -9879,10 +9927,35 @@ mod tests {
         streaming.default_bitrate_kbps = 30_000;
         params.streaming = Some(streaming);
 
-        let error = validate_outputs(&params).unwrap_err().to_string();
-        assert!(
-            error.contains("requires exactly one enabled YouTube destination"),
-            "{error}"
+        validate_outputs(&params).unwrap();
+        let targets = stream_targets_from_streaming(params.streaming.as_ref().unwrap()).unwrap();
+        let youtube = targets
+            .iter()
+            .find(|target| target.platform == StreamPlatform::Youtube)
+            .unwrap();
+        let twitch = targets
+            .iter()
+            .find(|target| target.platform == StreamPlatform::Twitch)
+            .unwrap();
+        assert_eq!(
+            youtube.output_video,
+            Some(VideoSettings {
+                preset: VideoPreset::StreamYoutube4k30,
+                width: 3840,
+                height: 2160,
+                fps: 30,
+                bitrate_kbps: 30_000,
+            })
+        );
+        assert_eq!(
+            twitch.output_video,
+            Some(VideoSettings {
+                preset: VideoPreset::StreamSafe1080p30,
+                width: 1920,
+                height: 1080,
+                fps: 30,
+                bitrate_kbps: 6000,
+            })
         );
     }
 

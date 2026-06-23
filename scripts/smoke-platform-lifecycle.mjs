@@ -27,18 +27,27 @@ try {
     defaultCaptureConfig,
     patchPreparedStreamTarget,
     preparedYouTubeActivationTargets,
-    preparedYouTubeCompletionTargets
+    preparedYouTubeCompletionTargets,
+    readyStreamTargetLabels
   } = require(tempModule)
 
   const streaming = {
     ...defaultCaptureConfig.streaming,
     enabled: true,
     mode: 'multi',
-    enabledTargetIds: ['youtube-ready', 'youtube-no-stream', 'twitch-ready', 'youtube-disabled', 'youtube-manual'],
+    enabledTargetIds: [
+      'youtube-ready',
+      'youtube-no-stream',
+      'twitch-ready',
+      'youtube-disabled',
+      'youtube-manual',
+      'x-missing'
+    ],
     targets: [
       target('youtube-ready', 'youtube', 'oauth', true, {
         platformBroadcastId: 'broadcast-ready',
-        platformStreamId: 'stream-ready'
+        platformStreamId: 'stream-ready',
+        status: { state: 'live', message: 'YouTube broadcast is live.' }
       }),
       target('youtube-no-stream', 'youtube', 'oauth', true, {
         platformBroadcastId: 'broadcast-no-stream'
@@ -54,6 +63,11 @@ try {
       target('youtube-manual', 'youtube', 'manual-rtmp', true, {
         platformBroadcastId: 'broadcast-manual',
         platformStreamId: 'stream-manual'
+      }),
+      target('x-missing', 'x', 'manual-rtmp', true, {
+        serverUrl: '',
+        streamKeyPresent: false,
+        streamKeySecretRef: undefined
       })
     ]
   }
@@ -64,7 +78,11 @@ try {
   )
   assert.deepEqual(
     preparedYouTubeCompletionTargets(streaming).map((item) => item.id),
-    ['youtube-ready', 'youtube-no-stream']
+    ['youtube-ready']
+  )
+  assert.deepEqual(
+    readyStreamTargetLabels(streaming),
+    ['youtube-ready', 'youtube-no-stream', 'twitch-ready', 'youtube-manual']
   )
 
   const patched = patchPreparedStreamTarget(

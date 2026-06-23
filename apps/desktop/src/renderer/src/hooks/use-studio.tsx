@@ -31,6 +31,7 @@ import {
   previewDeviceRefreshSignature,
   preparedYouTubeActivationTargets,
   preparedYouTubeCompletionTargets,
+  readyStreamTargetLabels,
   reconcileSourceSelection,
   rtmpDefaults,
   smokePreviewCompositorCaptureConfig,
@@ -3912,9 +3913,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     return {
       streaming: nextStreaming,
       failures,
-      readyLabels: nextStreaming.targets
-        .filter((target) => target.enabled)
-        .map((target) => target.label)
+      readyLabels: readyStreamTargetLabels(nextStreaming)
     }
   }, [captureConfig.streaming, captureConfig.video, client, refreshPlatformAccountsForClient])
 

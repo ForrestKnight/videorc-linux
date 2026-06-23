@@ -438,12 +438,6 @@ pub async fn start_preview_screen(
             selected_fps,
             message,
         } => {
-            let poll_task = tokio::spawn(poll_screen_metrics(
-                state.clone(),
-                run_id.clone(),
-                Arc::clone(&shared),
-                target_fps,
-            ));
             let initial_frame = {
                 let guard = shared
                     .lock()
@@ -495,17 +489,30 @@ pub async fn start_preview_screen(
             {
                 let mut slot = state.preview_screen.lock().await;
                 slot.status = status.clone();
-                slot.run_id = Some(run_id);
+                slot.run_id = Some(run_id.clone());
                 slot.source_key = Some(source_key.clone());
                 slot.starting = None;
                 slot.active = Some(NativeScreenPreviewThread {
                     stop_tx,
                     join_handle: Some(join_handle),
-                    shared,
+                    shared: Arc::clone(&shared),
                     video: params.video,
                     protected_overlay_window_ids: start_key.protected_overlay_window_ids.clone(),
                 });
-                slot.poll_task = Some(poll_task);
+            }
+            let poll_task = tokio::spawn(poll_screen_metrics(
+                state.clone(),
+                run_id.clone(),
+                Arc::clone(&shared),
+                target_fps,
+            ));
+            {
+                let mut slot = state.preview_screen.lock().await;
+                if slot.run_id.as_deref() == Some(run_id.as_str()) {
+                    slot.poll_task = Some(poll_task);
+                } else {
+                    poll_task.abort();
+                }
             }
             acquire_preview_screen_source(
                 &state,
