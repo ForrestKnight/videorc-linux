@@ -1654,7 +1654,26 @@ async fn handle_text_message(state: &AppState, text: &str) -> ServerResponse {
             );
             ServerResponse::ok(command.id, backend_health(state, &ffmpeg_path).await)
         }
-        "account.get" => ServerResponse::ok(command.id, account::current_account()),
+        "account.get" => {
+            let session = state.account_session.lock().await;
+            ServerResponse::ok(command.id, account::current_account(session.as_ref()))
+        }
+        "account.sign_out" => {
+            let signed_out = account::signed_out_account();
+            *state.account_session.lock().await = Some(signed_out.clone());
+            ServerResponse::ok(command.id, signed_out)
+        }
+        "account.complete_sign_in" => {
+            let token = command
+                .params
+                .get("token")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+            let resolved = account::complete_mock_sign_in(token, cfg!(debug_assertions))
+                .unwrap_or_else(account::signed_out_account);
+            *state.account_session.lock().await = Some(resolved.clone());
+            ServerResponse::ok(command.id, resolved)
+        }
         "entitlements.get" => ServerResponse::ok(command.id, entitlements::current_entitlements()),
         "devices.list" => {
             let ffmpeg_path = resolve_ffmpeg_path_ref(

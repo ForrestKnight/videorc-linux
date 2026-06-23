@@ -12,7 +12,9 @@ use crate::oauth::OAuthSessions;
 use crate::preview_camera::{PreviewCameraSlot, initial_preview_camera_state};
 use crate::preview_screen::{PreviewScreenSlot, initial_preview_screen_state};
 use crate::preview_surface::{PreviewSurfaceSlot, initial_preview_surface_state};
-use crate::protocol::{BackendLogEvent, DiagnosticStats, Scene, ServerEvent};
+use crate::protocol::{
+    BackendLogEvent, DiagnosticStats, Scene, ServerEvent, VideorcAccountSnapshot,
+};
 use crate::recording::{LivePreviewSlot, RecordingSlot, initial_live_preview_state};
 use crate::scene::default_scene;
 use crate::source_registry::SourceRegistry;
@@ -65,6 +67,9 @@ pub struct AppState {
     pub oauth: Arc<OAuthSessions>,
     pub ffmpeg_work: Arc<FfmpegWorkCoordinator>,
     pub live_chat: LiveChatSlot,
+    /// In-memory product-account session override (deep-link sign-in / Sign out).
+    /// None falls back to the dev env mock; persistent token storage replaces it.
+    pub account_session: Arc<tokio::sync::Mutex<Option<VideorcAccountSnapshot>>>,
 }
 
 impl AppState {
@@ -96,6 +101,7 @@ impl AppState {
             oauth: Arc::new(OAuthSessions::default()),
             ffmpeg_work: Arc::new(FfmpegWorkCoordinator::new()),
             live_chat: Arc::new(tokio::sync::Mutex::new(LiveChatCoordinator::default())),
+            account_session: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 
