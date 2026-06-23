@@ -648,6 +648,16 @@ function notesWindowGlobalId(): number | undefined {
   return Number.isFinite(id) && id > 0 ? id : undefined
 }
 
+function applyNotesWindowAlwaysOnTop(window: BrowserWindow, alwaysOnTop: boolean): void {
+  window.setAlwaysOnTop(alwaysOnTop, 'floating')
+  if (isMac) {
+    window.setVisibleOnAllWorkspaces(alwaysOnTop, { visibleOnFullScreen: alwaysOnTop })
+  }
+  if (alwaysOnTop) {
+    window.moveTop()
+  }
+}
+
 function notesWindowState(message?: string): NotesWindowState {
   const window = notesWindow
   const open = notesWindowIsOpen()
@@ -716,6 +726,7 @@ function saveNotesDocument(patch: Partial<NotesDocument>): NotesDocument {
 
 function notesWindowHtml(document: NotesDocument): string {
   const initialDocumentJson = jsonForInlineScript(document)
+  const initialAlwaysOnTopJson = jsonForInlineScript(notesWindowAlwaysOnTop)
   const smokeMarkerCss = notesWindowSmokeMarkerEnabled
     ? `
     body[data-smoke-marker="true"], body[data-smoke-marker="true"] textarea {
@@ -728,6 +739,9 @@ function notesWindowHtml(document: NotesDocument): string {
     body[data-smoke-marker="true"] .title,
     body[data-smoke-marker="true"] .footer {
       color: #ffffff;
+    }
+    body[data-smoke-marker="true"] button {
+      background: #ff0000; color: #ffffff; border-color: #ff0000;
     }
     body[data-smoke-marker="true"] textarea {
       font-size: 64px !important; line-height: 1.05; font-weight: 900;
@@ -748,6 +762,10 @@ function notesWindowHtml(document: NotesDocument): string {
       border-radius: 6px; background: rgba(255,255,255,.06); color: #e4e4e7;
       height: 22px; padding: 0 8px; font: inherit; font-size: 11px; cursor: default; }
     button[aria-pressed="true"] { background: #f4f4f5; color: #18181b; border-color: #f4f4f5; }
+    .icon-button { width: 24px; padding: 0; display: inline-flex; align-items: center;
+      justify-content: center; }
+    .icon-button svg { width: 14px; height: 14px; stroke: currentColor; stroke-width: 2;
+      fill: none; stroke-linecap: round; stroke-linejoin: round; }
     textarea { flex: 1; resize: none; border: 0; outline: none; padding: 20px 22px;
       box-sizing: border-box; background: #101012; color: #f4f4f5; caret-color: #f4f4f5;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -761,6 +779,13 @@ function notesWindowHtml(document: NotesDocument): string {
     ${smokeMarkerCss}
   </style></head><body data-smoke-marker="${notesWindowSmokeMarkerEnabled ? 'true' : 'false'}">
     <div class="drag-bar"><span class="title">Videorc Notes</span><span class="spacer"></span>
+      <button type="button" class="icon-button" data-sticky aria-label="Keep notes in front of all apps" title="Keep notes in front of all apps" aria-pressed="false">
+        <svg aria-hidden="true" viewBox="0 0 24 24">
+          <path d="M12 17v5"></path>
+          <path d="M5 17h14"></path>
+          <path d="M17 9.5V5.7a2 2 0 0 0-.59-1.41l-.7-.7A2 2 0 0 0 14.3 3H9.7a2 2 0 0 0-1.41.59l-.7.7A2 2 0 0 0 7 5.7v3.8L5 12v2h14v-2z"></path>
+        </svg>
+      </button>
       <button type="button" data-scale="sm">Sm</button>
       <button type="button" data-scale="md">Md</button>
       <button type="button" data-scale="lg">Lg</button>
@@ -770,11 +795,14 @@ function notesWindowHtml(document: NotesDocument): string {
     <script>
       (() => {
         const initialDocument = ${initialDocumentJson};
+        const initialAlwaysOnTop = ${initialAlwaysOnTopJson};
         const textarea = document.querySelector('textarea');
         const saveState = document.getElementById('save-state');
         const wordCount = document.getElementById('word-count');
         const buttons = Array.from(document.querySelectorAll('button[data-scale]'));
+        const stickyButton = document.querySelector('button[data-sticky]');
         let fontScale = initialDocument.fontScale || 'md';
+        let alwaysOnTop = Boolean(initialAlwaysOnTop);
         let saveTimer = null;
 
         textarea.value = initialDocument.text || '';
@@ -789,6 +817,19 @@ function notesWindowHtml(document: NotesDocument): string {
           wordCount.textContent = words(textarea.value) + ' words';
           for (const button of buttons) {
             button.setAttribute('aria-pressed', button.dataset.scale === fontScale ? 'true' : 'false');
+          }
+          if (stickyButton) {
+            const title = alwaysOnTop ? 'Allow notes behind other apps' : 'Keep notes in front of all apps';
+            stickyButton.setAttribute('aria-pressed', alwaysOnTop ? 'true' : 'false');
+            stickyButton.setAttribute('aria-label', title);
+            stickyButton.setAttribute('title', title);
+          }
+        }
+
+        function applyNotesWindowState(state) {
+          if (state && typeof state.alwaysOnTop === 'boolean') {
+            alwaysOnTop = state.alwaysOnTop;
+            render();
           }
         }
 
@@ -815,6 +856,23 @@ function notesWindowHtml(document: NotesDocument): string {
         textarea.addEventListener('keydown', (event) => {
           if (event.key === 'Escape') textarea.blur();
         });
+        stickyButton?.addEventListener('click', () => {
+          if (!window.videorc?.setNotesWindowAlwaysOnTop) {
+            saveState.textContent = 'Pin unavailable';
+            return;
+          }
+          const next = !alwaysOnTop;
+          alwaysOnTop = next;
+          render();
+          window.videorc.setNotesWindowAlwaysOnTop(next)
+            .then(applyNotesWindowState)
+            .catch(() => {
+              alwaysOnTop = !next;
+              render();
+              saveState.textContent = 'Pin failed';
+            });
+          textarea.focus();
+        });
         for (const button of buttons) {
           button.addEventListener('click', () => {
             fontScale = button.dataset.scale || 'md';
@@ -824,7 +882,12 @@ function notesWindowHtml(document: NotesDocument): string {
             textarea.focus();
           });
         }
-        window.addEventListener('beforeunload', save);
+        const unsubscribeNotesWindowState = window.videorc?.onNotesWindowState?.(applyNotesWindowState);
+        window.videorc?.getNotesWindowState?.().then(applyNotesWindowState).catch(() => {});
+        window.addEventListener('beforeunload', () => {
+          unsubscribeNotesWindowState?.();
+          save();
+        });
         window.__videorcNotesSnapshot = () => ({ text: textarea.value, fontScale });
         render();
         textarea.focus();
@@ -881,7 +944,7 @@ async function openNotesWindow(): Promise<NotesWindowState> {
     safeConsole.warn('Notes window content protection could not be enabled:', error)
   }
   if (notesWindowAlwaysOnTop) {
-    window.setAlwaysOnTop(true, 'floating')
+    applyNotesWindowAlwaysOnTop(window, true)
   }
   saveNotesWindowPrefs({ open: true })
 
@@ -937,7 +1000,7 @@ function closeNotesWindow(message?: string): NotesWindowState {
 function setNotesWindowAlwaysOnTop(alwaysOnTop: boolean): NotesWindowState {
   notesWindowAlwaysOnTop = alwaysOnTop
   if (notesWindow && !notesWindow.isDestroyed()) {
-    notesWindow.setAlwaysOnTop(alwaysOnTop, 'floating')
+    applyNotesWindowAlwaysOnTop(notesWindow, alwaysOnTop)
   }
   saveNotesWindowPrefs({ alwaysOnTop, alwaysOnTopPreferenceVersion: 2 })
   emitNotesWindowState()
