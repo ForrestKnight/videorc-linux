@@ -13,6 +13,7 @@ import {
 } from '@phosphor-icons/react'
 import { useRef, useState, type ReactElement } from 'react'
 
+import { ConfigGrid } from '@/components/page'
 import { PanelSection } from '@/components/panel-section'
 import { SourceSelect } from '@/components/source-select'
 import { StatusBadge, type StatusTone } from '@/components/status-badge'
@@ -238,7 +239,7 @@ export function SourcesTab(): ReactElement {
   }
 
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
+    <ConfigGrid>
       <PanelSection
         action={
           <Button size="sm" variant="outline" onClick={refreshBackend}>
@@ -621,7 +622,7 @@ export function SourcesTab(): ReactElement {
           </Collapsible>
         )}
       </PanelSection>
-    </div>
+    </ConfigGrid>
   )
 }
 
