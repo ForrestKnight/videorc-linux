@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type {
   BackendConnection,
   BackendLogEvent,
+  CommentsWindowState,
   GlassWallpaperState,
   NotesDocument,
   NotesWindowState,
@@ -62,6 +63,18 @@ const api: VideorcApi = {
       callback(document)
     ipcRenderer.on('notes-window:document', listener)
     return () => ipcRenderer.removeListener('notes-window:document', listener)
+  },
+  openCommentsWindow: () => ipcRenderer.invoke('comments-window:open'),
+  closeCommentsWindow: () => ipcRenderer.invoke('comments-window:close'),
+  toggleCommentsWindow: () => ipcRenderer.invoke('comments-window:toggle'),
+  getCommentsWindowState: () => ipcRenderer.invoke('comments-window:get-state'),
+  setCommentsWindowAlwaysOnTop: (alwaysOnTop) =>
+    ipcRenderer.invoke('comments-window:set-always-on-top', alwaysOnTop),
+  onCommentsWindowState: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, state: CommentsWindowState): void =>
+      callback(state)
+    ipcRenderer.on('comments-window:state', listener)
+    return () => ipcRenderer.removeListener('comments-window:state', listener)
   },
   createNativePreviewSurface: (bounds, generation) =>
     ipcRenderer.invoke('preview-surface:create', bounds, generation),

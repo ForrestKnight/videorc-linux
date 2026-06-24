@@ -1803,6 +1803,16 @@ export interface NotesDocument {
   updatedAt: string
 }
 
+export interface CommentsWindowState {
+  open: boolean
+  visible: boolean
+  bounds: { x: number; y: number; width: number; height: number } | null
+  windowId?: number
+  alwaysOnTop: boolean
+  enabled: boolean
+  message?: string
+}
+
 // Blurred-wallpaper glass underlay: real window-backdrop blur is unavailable
 // (Electron's vibrancy material renders opaque on current macOS), so the
 // renderer blurs the actual wallpaper as its own bottom layer instead, with
@@ -1853,6 +1863,12 @@ export interface VideorcApi {
   saveNotesDocument: (patch: Partial<NotesDocument>) => Promise<NotesDocument>
   onNotesWindowState: (callback: (state: NotesWindowState) => void) => () => void
   onNotesDocument: (callback: (document: NotesDocument) => void) => () => void
+  openCommentsWindow: () => Promise<CommentsWindowState>
+  closeCommentsWindow: () => Promise<CommentsWindowState>
+  toggleCommentsWindow: () => Promise<CommentsWindowState>
+  getCommentsWindowState: () => Promise<CommentsWindowState>
+  setCommentsWindowAlwaysOnTop: (alwaysOnTop: boolean) => Promise<CommentsWindowState>
+  onCommentsWindowState: (callback: (state: CommentsWindowState) => void) => () => void
   createNativePreviewSurface: (
     bounds: PreviewSurfaceBounds,
     generation?: number

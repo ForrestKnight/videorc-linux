@@ -68,6 +68,7 @@ import type {
   BackendConnection,
   BackendLogEvent,
   CameraShape,
+  CommentsWindowState,
   CompositorStatus,
   LayoutSettings,
   NativePreviewHostCommand,
@@ -96,6 +97,10 @@ let notesWindowLastFrame: Electron.Rectangle | null = null
 let notesWindowAlwaysOnTop = false
 let notesWindowClosing = false
 let notesWindowContentProtected = false
+let commentsWindow: BrowserWindow | null = null
+let commentsWindowLastFrame: Electron.Rectangle | null = null
+let commentsWindowAlwaysOnTop = false
+let commentsWindowClosing = false
 let nativePreviewSurfaceStatus: PreviewSurfaceStatus = idleNativePreviewSurfaceStatus()
 let nativePreviewSurfaceCompositorUpdateInFlight: Promise<PreviewSurfaceStatus> | null = null
 let nativePreviewSurfaceCompositorRequestSerial = 0
@@ -128,6 +133,7 @@ const nativePreviewFramePollingEnabled = process.env.VIDEORC_SMOKE_PREVIEW_MOTIO
 // Notes is on by default after the final-artifact invisibility smoke landed.
 // Keep a developer kill switch for emergency rollback.
 const notesWindowFeatureEnabled = process.env.VIDEORC_NOTES_WINDOW !== '0'
+const commentsWindowFeatureEnabled = process.env.VIDEORC_COMMENTS_WINDOW !== '0'
 const notesWindowSmokeMarkerEnabled =
   notesWindowFeatureEnabled &&
   process.env.VIDEORC_NOTES_SMOKE_MARKER === '1' &&
@@ -409,6 +415,9 @@ function createWindow(): void {
     if (notesWindow && !notesWindow.isDestroyed()) {
       notesWindow.close()
     }
+    if (commentsWindow && !commentsWindow.isDestroyed()) {
+      commentsWindow.close()
+    }
     mainWindow = null
   })
 
@@ -435,6 +444,7 @@ function createWindow(): void {
   mainWindow.webContents.once('did-finish-load', () => {
     restorePreviewWindowOnLaunch()
     restoreNotesWindowOnLaunch()
+    restoreCommentsWindowOnLaunch()
   })
 }
 
@@ -1014,6 +1024,214 @@ function restoreNotesWindowOnLaunch(): void {
   const prefs = loadNotesWindowPrefs()
   if (prefs.open === true) {
     void openNotesWindow()
+  }
+}
+
+// --- Detached Comments window -------------------------------------------------
+// A read-only live-chat reader in its own OS window (the comments plan's
+// "detachable second-monitor chat window"), mirroring the Notes window. This
+// slice (C1) is the shell + prefs; the React reader (C2) and live data relay
+// (C3) arrive next. Plain window — no native surface, no content protection.
+type CommentsWindowPrefs = {
+  frame?: Electron.Rectangle
+  alwaysOnTop?: boolean
+  alwaysOnTopPreferenceVersion?: number
+  open?: boolean
+}
+
+function commentsWindowPrefsPath(): string {
+  return join(app.getPath('userData'), 'comments-window.json')
+}
+
+function loadCommentsWindowPrefs(): CommentsWindowPrefs {
+  try {
+    return JSON.parse(readFileSync(commentsWindowPrefsPath(), 'utf8')) as CommentsWindowPrefs
+  } catch {
+    return {}
+  }
+}
+
+function saveCommentsWindowPrefs(patch: CommentsWindowPrefs): void {
+  if (!commentsWindowFeatureEnabled || process.env.VIDEORC_SMOKE_OUTPUT_DIR) {
+    return
+  }
+  try {
+    writeFileSync(
+      commentsWindowPrefsPath(),
+      JSON.stringify({ ...loadCommentsWindowPrefs(), ...patch })
+    )
+  } catch {
+    // A failed preference write must never break capture.
+  }
+}
+
+function commentsWindowAlwaysOnTopPreference(prefs: CommentsWindowPrefs): boolean {
+  return prefs.alwaysOnTopPreferenceVersion === 1 && prefs.alwaysOnTop === true
+}
+
+function commentsWindowIsOpen(): boolean {
+  return Boolean(commentsWindow && !commentsWindow.isDestroyed() && !commentsWindowClosing)
+}
+
+function commentsWindowGlobalId(): number | undefined {
+  const window = commentsWindow
+  if (!commentsWindowIsOpen() || !window) {
+    return undefined
+  }
+  const match = /^window:(\d+):/.exec(window.getMediaSourceId())
+  const id = match ? Number(match[1]) : Number.NaN
+  return Number.isFinite(id) && id > 0 ? id : undefined
+}
+
+function commentsWindowState(message?: string): CommentsWindowState {
+  const window = commentsWindow
+  const open = commentsWindowIsOpen()
+  return {
+    open,
+    visible: open ? window!.isVisible() && !window!.isMinimized() : false,
+    bounds: open ? window!.getBounds() : null,
+    windowId: commentsWindowGlobalId(),
+    alwaysOnTop: commentsWindowAlwaysOnTop,
+    enabled: commentsWindowFeatureEnabled,
+    message:
+      message ??
+      (commentsWindowFeatureEnabled
+        ? undefined
+        : 'Comments window is disabled by VIDEORC_COMMENTS_WINDOW=0.')
+  }
+}
+
+function emitCommentsWindowState(message?: string): void {
+  if (appIsQuitting) {
+    return
+  }
+  const state = commentsWindowState(message)
+  for (const window of [mainWindow, commentsWindow]) {
+    if (window && !window.webContents.isDestroyed()) {
+      try {
+        window.webContents.send('comments-window:state', state)
+      } catch (error) {
+        if (!appIsQuitting) {
+          safeConsole.warn('Comments window state emit failed:', error)
+        }
+      }
+    }
+  }
+}
+
+// Placeholder until the React reader is wired (C2). Dark glass-matched, drag region.
+function commentsWindowPlaceholderHtml(): string {
+  return `<!doctype html><html><head><meta charset="utf-8" /><style>html,body{margin:0;height:100%;background:#101012;color:#a1a1aa;font:14px/1.5 -apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',system-ui,sans-serif;display:flex;align-items:center;justify-content:center;-webkit-app-region:drag}</style></head><body>Comments — coming online…</body></html>`
+}
+
+async function openCommentsWindow(): Promise<CommentsWindowState> {
+  if (!commentsWindowFeatureEnabled) {
+    return commentsWindowState()
+  }
+  const existingWindow = commentsWindow
+  if (commentsWindowIsOpen() && existingWindow) {
+    if (existingWindow.isMinimized()) {
+      existingWindow.restore()
+    }
+    existingWindow.show()
+    existingWindow.focus()
+    emitCommentsWindowState()
+    return commentsWindowState()
+  }
+
+  const prefs = loadCommentsWindowPrefs()
+  const rememberedFrame = commentsWindowLastFrame ?? prefs.frame ?? null
+  const frame = rememberedFrame ? clampFrameToWorkArea(rememberedFrame) : null
+  const window = new BrowserWindow({
+    width: frame?.width ?? 420,
+    height: frame?.height ?? 640,
+    ...(frame ? { x: frame.x, y: frame.y } : {}),
+    minWidth: 320,
+    minHeight: 360,
+    title: 'Videorc Comments',
+    ...(isMac ? { titleBarStyle: 'hiddenInset' as const } : {}),
+    backgroundColor: '#101012',
+    show: false,
+    ...appWindowIconOptions(),
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false
+    }
+  })
+  commentsWindowClosing = false
+  commentsWindow = window
+  commentsWindowAlwaysOnTop = commentsWindowAlwaysOnTopPreference(prefs)
+  if (commentsWindowAlwaysOnTop) {
+    applyNotesWindowAlwaysOnTop(window, true)
+  }
+  saveCommentsWindowPrefs({ open: true })
+
+  for (const event of ['move', 'resize', 'show', 'hide', 'minimize', 'restore', 'focus'] as const) {
+    window.on(event as 'move', () => {
+      if (commentsWindow === window) {
+        emitCommentsWindowState()
+      }
+    })
+  }
+  window.on('close', () => {
+    if (commentsWindow === window) {
+      commentsWindowClosing = true
+      commentsWindowLastFrame = window.getBounds()
+      saveCommentsWindowPrefs({ frame: commentsWindowLastFrame, open: false })
+    }
+  })
+  window.on('closed', () => {
+    if (commentsWindow === window) {
+      commentsWindow = null
+      commentsWindowClosing = false
+      emitCommentsWindowState()
+    }
+  })
+
+  await window.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(commentsWindowPlaceholderHtml())}`
+  )
+  window.show()
+  window.focus()
+  emitCommentsWindowState()
+  return commentsWindowState()
+}
+
+function closeCommentsWindow(message?: string): CommentsWindowState {
+  if (commentsWindow && !commentsWindow.isDestroyed()) {
+    commentsWindowClosing = true
+    commentsWindow.close()
+  }
+  return commentsWindowState(message)
+}
+
+async function toggleCommentsWindow(): Promise<CommentsWindowState> {
+  if (commentsWindowIsOpen()) {
+    return closeCommentsWindow()
+  }
+  return openCommentsWindow()
+}
+
+function setCommentsWindowAlwaysOnTop(alwaysOnTop: boolean): CommentsWindowState {
+  commentsWindowAlwaysOnTop = alwaysOnTop
+  if (commentsWindow && !commentsWindow.isDestroyed()) {
+    applyNotesWindowAlwaysOnTop(commentsWindow, alwaysOnTop)
+  }
+  saveCommentsWindowPrefs({ alwaysOnTop, alwaysOnTopPreferenceVersion: 1 })
+  emitCommentsWindowState()
+  return commentsWindowState()
+}
+
+function restoreCommentsWindowOnLaunch(): void {
+  if (!commentsWindowFeatureEnabled || !previewWindowAutoRestoreEnabled) {
+    return
+  }
+  const prefs = loadCommentsWindowPrefs()
+  if (prefs.open === true) {
+    void openCommentsWindow()
   }
 }
 
@@ -4336,6 +4554,39 @@ async function runSmokePreviewMotionCommand(
     return notesWindowState()
   }
 
+  if (command === 'comments-window-open') {
+    return openCommentsWindow()
+  }
+
+  if (command === 'comments-window-close') {
+    return closeCommentsWindow()
+  }
+
+  if (command === 'comments-window-toggle') {
+    return toggleCommentsWindow()
+  }
+
+  if (command === 'comments-window-set-bounds') {
+    const window = commentsWindow
+    if (!commentsWindowIsOpen() || !window) {
+      return commentsWindowState('Comments window is not open.')
+    }
+    const current = window.getBounds()
+    window.setBounds({
+      x: typeof params.x === 'number' ? params.x : current.x,
+      y: typeof params.y === 'number' ? params.y : current.y,
+      width: typeof params.width === 'number' ? params.width : current.width,
+      height: typeof params.height === 'number' ? params.height : current.height
+    })
+    window.show()
+    emitCommentsWindowState()
+    return commentsWindowState()
+  }
+
+  if (command === 'comments-window-state') {
+    return commentsWindowState()
+  }
+
   if (command === 'notes-window-save-document') {
     return saveNotesDocument({
       text: typeof params.text === 'string' ? params.text : undefined,
@@ -5383,6 +5634,13 @@ app.whenReady().then(async () => {
   ipcMain.handle('notes-window:get-document', () => defaultNotesDocument())
   ipcMain.handle('notes-window:save-document', (_event, patch: Partial<NotesDocument>) =>
     saveNotesDocument(patch ?? {})
+  )
+  ipcMain.handle('comments-window:open', () => openCommentsWindow())
+  ipcMain.handle('comments-window:close', () => closeCommentsWindow())
+  ipcMain.handle('comments-window:toggle', () => toggleCommentsWindow())
+  ipcMain.handle('comments-window:get-state', () => commentsWindowState())
+  ipcMain.handle('comments-window:set-always-on-top', (_event, alwaysOnTop: boolean) =>
+    setCommentsWindowAlwaysOnTop(Boolean(alwaysOnTop))
   )
   ipcMain.handle('preview-surface:create', (_event, bounds: PreviewSurfaceBounds, generation) => {
     const requestedGeneration = previewSurfaceGenerationFromIpc(generation)
