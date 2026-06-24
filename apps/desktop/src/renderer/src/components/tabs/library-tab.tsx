@@ -11,6 +11,7 @@ import {
 import { type ReactElement, useState } from 'react'
 import { toast } from 'sonner'
 
+import { PageHeader } from '@/components/page'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -36,13 +37,10 @@ export function LibraryTab({
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-xl font-semibold tracking-tight">Library</h1>
-        <p className="max-w-2xl text-sm text-muted-foreground">
-          Every recording and stream becomes a local session. Files stay on disk; AI work happens in
-          the AI tab.
-        </p>
-      </div>
+      <PageHeader
+        title="Library"
+        description="Every recording and stream becomes a local session. Files stay on disk; AI work happens in the AI tab."
+      />
       {sessions.length === 0 ? (
         <Empty className="rounded-panel border py-16">
           <EmptyMedia variant="icon">

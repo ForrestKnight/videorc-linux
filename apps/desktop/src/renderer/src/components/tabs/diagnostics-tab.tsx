@@ -108,7 +108,7 @@ export function DiagnosticsTab(): ReactElement {
   const networkSummary = useMemo(() => networkSummaryCopy(streamTargets), [streamTargets])
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+    <div className="grid gap-5 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
       <div className="flex flex-col gap-4">
         {/* Verdicts first (ux-ia plan, slice 8): the page answers "is anything
             wrong?" before offering the numbers. */}
