@@ -817,125 +817,23 @@ describe('videoProfileCompatibility', () => {
     })
   })
 
-  it('routes a shared-output 4K stream to the YouTube 4K30 path (no stale v1 block)', () => {
-    const result = videoProfileCompatibility({
-      recordEnabled: true,
-      streamEnabled: true,
-      video: videoPresets['record-4k30']
-    })
-
-    // 4K livestreaming ships now (YouTube 4K30); the old "not available in v1"
-    // block is gone, so the user gets the real requirement instead.
-    expect(result.blockingReason).not.toContain('not available in v1')
-    expect(result.blockingReason).toContain('YouTube destination')
-  })
-
-  it('allows YouTube-only 4K30 streaming with local 4K recording enabled', () => {
-    const config = captureConfigFixture()
-    config.recordEnabled = true
-    config.streamEnabled = true
-    config.video = videoPresets['record-4k30']
-    config.streaming = {
-      ...config.streaming,
-      enabled: true,
-      defaultOutputPreset: 'stream-youtube-4k30',
-      defaultBitrateKbps: 30000,
-      targets: config.streaming.targets.map((target) => ({
-        ...target,
-        enabled: target.platform === 'youtube'
-      }))
-    }
-
-    const result = videoProfileCompatibility(config)
-
-    expect(result.blockingReason).toBeNull()
-    expect(result.warning).toContain('normal latency')
-  })
-
-  it('allows YouTube 4K30 streaming with a Twitch stream-safe companion output', () => {
-    const config = captureConfigFixture()
-    config.recordEnabled = true
-    config.streamEnabled = true
-    config.video = videoPresets['record-4k30']
-    config.streaming = {
-      ...config.streaming,
-      enabled: true,
-      defaultOutputPreset: 'stream-youtube-4k30',
-      defaultBitrateKbps: 30000,
-      targets: config.streaming.targets.map((target) => ({
-        ...target,
-        enabled: target.platform === 'youtube' || target.platform === 'twitch'
-      }))
-    }
-
-    const result = videoProfileCompatibility(config)
-
-    expect(result.blockingReason).toBeNull()
-    expect(result.warning).toContain('non-YouTube destinations use stream-safe 1080p')
-  })
-
-  it('blocks YouTube 4K30 streaming without local 4K recording during acceptance', () => {
-    const config = captureConfigFixture()
-    config.recordEnabled = false
-    config.streamEnabled = true
-    config.video = videoPresets['stream-safe-1080p30']
-    config.streaming = {
-      ...config.streaming,
-      enabled: true,
-      defaultOutputPreset: 'stream-youtube-4k30',
-      defaultBitrateKbps: 30000,
-      targets: config.streaming.targets.map((target) => ({
-        ...target,
-        enabled: target.platform === 'youtube'
-      }))
-    }
-
-    expect(videoProfileCompatibility(config).blockingReason).toContain(
-      'requires local 4K recording'
-    )
-  })
-
-  it('blocks livestream bitrates above the platform-safe budget', () => {
-    const result = videoProfileCompatibility({
-      recordEnabled: false,
-      streamEnabled: true,
-      video: videoPresets['stream-1080p60']
-    })
-
-    expect(result.blockingReason).toContain('6000 kbps or lower')
-  })
-
-  it('blocks 4K record plus stream when the stream FPS is higher than the recording FPS', () => {
-    const config = captureConfigFixture()
-    config.recordEnabled = true
-    config.streamEnabled = true
-    config.video = videoPresets['record-4k30']
-    config.streaming = {
-      ...config.streaming,
-      enabled: true,
-      defaultOutputPreset: 'stream-safe-1080p60',
-      defaultBitrateKbps: 6000
-    }
-
-    expect(videoProfileCompatibility(config).blockingReason).toContain('stream FPS no higher')
-  })
-
-  it('allows stream-safe profiles and warns for experimental 4K60 recording', () => {
-    expect(
-      videoProfileCompatibility({
-        recordEnabled: false,
-        streamEnabled: true,
-        video: videoPresets['stream-safe-1080p30']
-      }).blockingReason
-    ).toBeNull()
-
-    expect(
-      videoProfileCompatibility({
+  it('is permissive now — guardrails removed, never blocks or warns on a profile', () => {
+    // 4K livestreaming (YouTube 4K30), higher-bitrate and non-YouTube outputs ship
+    // now; videoProfileCompatibility no longer pre-blocks any profile. Unsupported
+    // combinations are rejected by the platform/backend at runtime.
+    const cases: Parameters<typeof videoProfileCompatibility>[0][] = [
+      { recordEnabled: true, streamEnabled: true, video: videoPresets['record-4k30'] },
+      { recordEnabled: false, streamEnabled: true, video: videoPresets['record-4k30'] },
+      { recordEnabled: false, streamEnabled: true, video: videoPresets['stream-1080p60'] },
+      {
         recordEnabled: true,
         streamEnabled: false,
         video: videoPresets['record-4k60-experimental']
-      }).warning
-    ).toContain('experimental')
+      }
+    ]
+    for (const config of cases) {
+      expect(videoProfileCompatibility(config)).toEqual({ blockingReason: null, warning: null })
+    }
   })
 })
 

@@ -307,160 +307,12 @@ export function videoProfileCompatibility(
     streaming?: StreamingSettings
   }
 ): VideoProfileCompatibility {
-  const { recordEnabled, streamEnabled, video, streaming } = config
-  const streamVideo = streamEnabled ? streamOutputVideoSettings(video, streaming) : video
-  const streamTargets = streaming?.targets.filter((target) => target.enabled) ?? []
-  const targetOutputs =
-    streamEnabled && streamTargets.length > 0
-      ? streamOutputVideosForTargets(video, streaming)
-      : [{ target: undefined, video: streamVideo }]
-  const streamVideos = targetOutputs.map((output) => output.video)
-  const true4kStreamOutput = streamEnabled && streamVideos.some(is4kVideo)
-  let true4kStreamWarning: string | null = null
-
-  if (streamEnabled && is4kVideo(video) && !recordEnabled) {
-    return {
-      blockingReason: '4K profiles require local recording to be enabled.',
-      warning: null
-    }
-  }
-
-  if (true4kStreamOutput) {
-    const youtube4kCompatibility = youtube4kStreamCompatibility({
-      recordEnabled,
-      recordingVideo: video,
-      outputs: targetOutputs
-    })
-    if (youtube4kCompatibility.blockingReason) {
-      return youtube4kCompatibility
-    }
-    true4kStreamWarning = youtube4kCompatibility.warning
-  }
-
-  const oversizedStream = streamVideos.find(
-    (output) =>
-      (output.width > 1920 || output.height > 1080) && output.preset !== 'stream-youtube-4k30'
-  )
-  if (streamEnabled && oversizedStream) {
-    return {
-      blockingReason: 'Stream output must be 1080p or lower for the v1 platform-safe path.',
-      warning: null
-    }
-  }
-
-  const highBitrateStream = streamVideos.find(
-    (output) => output.bitrateKbps > 6000 && output.preset !== 'stream-youtube-4k30'
-  )
-  if (streamEnabled && highBitrateStream) {
-    return {
-      blockingReason:
-        'Livestream bitrate must be 6000 kbps or lower for the v1 platform-safe path.',
-      warning: null
-    }
-  }
-
-  if (streamEnabled && is4kVideo(video) && streamVideos.some((output) => output.fps > video.fps)) {
-    return {
-      blockingReason:
-        '4K local recording plus streaming requires a stream FPS no higher than the recording FPS for v1.',
-      warning: null
-    }
-  }
-
-  if (is4kVideo(video) && video.fps > 30 && video.preset !== 'record-4k60-experimental') {
-    return {
-      blockingReason:
-        '4K60 is experimental. Choose Record 4K60 experimental explicitly or use Record 4K30.',
-      warning: null
-    }
-  }
-
-  if (video.preset === 'record-4k60-experimental') {
-    return {
-      blockingReason: null,
-      warning: '4K60 is experimental and is not part of v1 acceptance.'
-    }
-  }
-
-  if (
-    streamEnabled &&
-    streamVideos.some(
-      (output) =>
-        !output.preset.startsWith('stream-safe-') &&
-        output.preset !== 'stream-youtube-4k30' &&
-        output.preset !== 'custom'
-    )
-  ) {
-    return {
-      blockingReason: null,
-      warning: 'Use a stream-safe 1080p profile for v1 livestream acceptance.'
-    }
-  }
-
-  return { blockingReason: null, warning: true4kStreamWarning }
-}
-
-function youtube4kStreamCompatibility({
-  recordEnabled,
-  recordingVideo,
-  outputs
-}: {
-  recordEnabled: boolean
-  recordingVideo: VideoSettings
-  outputs: StreamTargetOutput[]
-}): VideoProfileCompatibility {
-  const true4kOutputs = outputs.filter((output) => is4kVideo(output.video))
-  if (true4kOutputs.length === 0) {
-    return {
-      blockingReason: 'True 4K streaming requires the YouTube 4K30 stream profile.',
-      warning: null
-    }
-  }
-  if (!recordEnabled || !is4kVideo(recordingVideo)) {
-    return {
-      blockingReason:
-        'YouTube 4K30 streaming requires local 4K recording to stay enabled during v1 acceptance.',
-      warning: null
-    }
-  }
-  const nonYoutube4kOutput = true4kOutputs.find((output) => output.target?.platform !== 'youtube')
-  if (nonYoutube4kOutput) {
-    return {
-      blockingReason: 'True 4K streaming requires a YouTube destination.',
-      warning: null
-    }
-  }
-  const invalid4kOutput = true4kOutputs.find(
-    (output) =>
-      output.video.preset !== 'stream-youtube-4k30' ||
-      output.video.fps !== 30 ||
-      output.video.bitrateKbps !== 30000
-  )
-  if (invalid4kOutput) {
-    return {
-      blockingReason: 'YouTube 4K30 streaming requires 3840x2160 @ 30fps and 30000 kbps.',
-      warning: null
-    }
-  }
-  const unsafeCompanion = outputs.find(
-    (output) =>
-      !is4kVideo(output.video) &&
-      (output.video.width > 1920 || output.video.height > 1080 || output.video.bitrateKbps > 6000)
-  )
-  if (unsafeCompanion) {
-    return {
-      blockingReason:
-        'Mixed 4K streaming requires non-YouTube destinations to use stream-safe 1080p output.',
-      warning: null
-    }
-  }
-  const mixedDestinations = outputs.length > true4kOutputs.length
-  return {
-    blockingReason: null,
-    warning: mixedDestinations
-      ? 'YouTube 4K30 uses normal latency; non-YouTube destinations use stream-safe 1080p output.'
-      : 'YouTube 4K30 uses normal latency and needs stable upload above 30 Mbps.'
-  }
+  // Video-profile / streaming guardrails removed per owner (2026-06-24): 4K
+  // livestreaming (YouTube 4K30), higher-bitrate and non-YouTube stream outputs
+  // ship now, so the app no longer pre-blocks these profiles. Platforms and the
+  // backend reject genuinely-unsupported combinations at runtime.
+  void config
+  return { blockingReason: null, warning: null }
 }
 
 export interface StreamTargetOutput {
@@ -519,10 +371,6 @@ export function streamOutputVideosForTargets(
     target,
     video: streamOutputVideoForTarget(fallback, streaming, target)
   }))
-}
-
-function is4kVideo(video: VideoSettings): boolean {
-  return video.width >= 3840 || video.height >= 2160
 }
 
 export const defaultCaptureConfig: CaptureConfig = {
