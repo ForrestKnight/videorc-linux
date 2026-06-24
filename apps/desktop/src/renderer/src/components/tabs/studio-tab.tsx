@@ -19,6 +19,7 @@ import { PanelSection } from '@/components/panel-section'
 import { PreviewStage } from '@/components/preview-stage'
 import { StatusBadge } from '@/components/status-badge'
 import { QuickSettings } from '@/components/studio/quick-settings'
+import { ScenesGallery } from '@/components/studio/scenes-gallery'
 import { SessionPanel } from '@/components/studio/session-panel'
 import { Button } from '@/components/ui/button'
 import {
@@ -289,6 +290,10 @@ export function StudioTab(): ReactElement {
           {/* Quick Settings: compact mirrors of Source / Mic / Layout / Output,
               each editing the same captureConfig and deep-linking to its page. */}
           <QuickSettings />
+
+          {/* Scenes (preset-backed). SD5 arranges this into the 3-col bottom row
+              with the Audio Mixer + Activity feed. */}
+          <ScenesGallery />
         </PageStack>
       </div>
 
