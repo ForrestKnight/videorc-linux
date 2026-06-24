@@ -18,6 +18,8 @@ import { PageHeader, PageStack } from '@/components/page'
 import { PanelSection } from '@/components/panel-section'
 import { PreviewStage } from '@/components/preview-stage'
 import { StatusBadge } from '@/components/status-badge'
+import { ActivityFeed } from '@/components/studio/activity-feed'
+import { AudioMixer } from '@/components/studio/audio-mixer'
 import { QuickSettings } from '@/components/studio/quick-settings'
 import { ScenesGallery } from '@/components/studio/scenes-gallery'
 import { SessionPanel } from '@/components/studio/session-panel'
@@ -291,9 +293,13 @@ export function StudioTab(): ReactElement {
               each editing the same captureConfig and deep-linking to its page. */}
           <QuickSettings />
 
-          {/* Scenes (preset-backed). SD5 arranges this into the 3-col bottom row
-              with the Audio Mixer + Activity feed. */}
+          {/* Scenes (preset-backed). SD5 folds these three into one 3-col row. */}
           <ScenesGallery />
+
+          <div className="grid gap-5 lg:grid-cols-2">
+            <AudioMixer />
+            <ActivityFeed />
+          </div>
         </PageStack>
       </div>
 
