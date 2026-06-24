@@ -147,8 +147,8 @@ export function StudioTab(): ReactElement {
         : 'Stop recording'
 
   return (
-    <div className="flex items-start gap-4">
-      <div className="flex min-w-0 flex-1 flex-col gap-4">
+    <div className="flex items-start gap-5">
+      <div className="flex min-w-0 flex-1 flex-col gap-5">
         <GoLiveConfirmationDialog
           draft={streamMetadataDraft}
           entitlementGate={goLiveEntitlement}
@@ -231,14 +231,7 @@ export function StudioTab(): ReactElement {
             <span>{liveStreamBlockedReason}</span>
           </div>
         ) : null}
-        <div className="flex items-center gap-2 rounded-row border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-          <FolderOpen className="size-4 shrink-0" weight="duotone" />
-          <span className="truncate">
-            {recording.outputPath ?? recording.streamUrl ?? 'Output appears after session start.'}
-          </span>
-        </div>
-
-        {/* Big preview below the command module. */}
+        {/* The preview is the hero — directly under the command band. */}
         <PreviewStage
           onOpenPermissions={openPreviewPermissions}
           onRetry={refreshPreview}
@@ -246,6 +239,14 @@ export function StudioTab(): ReactElement {
           previewSurfaceStatus={previewSurfaceStatus}
           nativePreviewSurfaceEnabled={nativePreviewSurfaceEnabled}
         />
+
+        {/* Output destination, a quiet caption under the preview. */}
+        <div className="flex items-center gap-2 rounded-row border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+          <FolderOpen className="size-4 shrink-0" weight="duotone" />
+          <span className="truncate">
+            {recording.outputPath ?? recording.streamUrl ?? 'Output appears after session start.'}
+          </span>
+        </div>
 
         {/* Session strip: every former accordion is now a chip that shows
             state and deep-links to its owning page (ux-ia plan, slice 5). */}
