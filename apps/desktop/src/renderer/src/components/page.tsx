@@ -17,6 +17,14 @@ import { cn } from '@/lib/utils'
  *   Gallery     — Assets / Screens: a responsive card grid via <Gallery>.
  *   Browse      — Library / AI: a <PageHeader> over a list/grid.
  *   Inspect     — Diagnostics: dense, sectioned metric rows. Bespoke.
+ *
+ * Breakpoints (one set): `lg` is THE archetype breakpoint — Config-grid, Bench,
+ * and the custom-ratio 2-col pages (Streaming 1.5/1, Layout 1.3/1, Assets
+ * 1fr/360) split at `lg`, and their sticky panes (preview, readiness) engage
+ * only there; below `lg` every page is a single column. Galleries are
+ * breakpoint-free (auto-fill). The dense Inspect page (Diagnostics) may split
+ * later, at `xl`. Inner form sub-grids use `sm`/`md`. Min card width (180px)
+ * keeps galleries usable on narrow windows.
  */
 
 /** Page header: title + optional description + optional primary affordance. */
