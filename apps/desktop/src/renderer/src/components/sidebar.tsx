@@ -174,11 +174,11 @@ export function Sidebar({
 
         <div className="flex flex-col gap-0.5">
           <GroupLabel>System</GroupLabel>
-          {/* Health (Diagnostics) is mostly dev/forensic — keep it out of the
-              sidebar for users (still reachable via ⌘K, ⌘9, and the account
-              menu; the support-bundle export lives in Settings). */}
+          {/* Health (Diagnostics) is dev/forensic — kept out of the sidebar
+              entirely. It stays reachable via ⌘K and the account menu; the
+              support-bundle export lives in Settings. */}
           {tabsIn('system')
-            .filter((tab) => import.meta.env.DEV || tab.id !== 'diagnostics')
+            .filter((tab) => tab.id !== 'diagnostics')
             .map((tab) => (
               <NavRow
                 key={tab.id}

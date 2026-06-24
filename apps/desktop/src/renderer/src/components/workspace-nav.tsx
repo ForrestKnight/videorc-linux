@@ -63,10 +63,10 @@ export const STUDIO_PANELS: StudioPanelMeta[] = [
   { id: 'recording', label: 'Output', icon: Record, legacyTabId: 'recording' }
 ]
 
-// Page shortcuts in sidebar order (stage → setup → library → system). The nine
-// workflow pages take ⌘1–⌘9; Settings keeps the macOS convention ⌘, rather than
-// consuming a digit (Assets Tab plan, 2026-06-15), so `digit` holds ',' for it.
-// The main process emits the raw key ('1'–'9' or ',') and AppShell maps it here.
+// Page shortcuts in sidebar order. Studio + the Setup pages + Library take ⌘1–⌘7,
+// and Settings takes ⌘8. AI and Health (Diagnostics) intentionally have NO digit —
+// both stay reachable via ⌘K (and the account menu). The main process emits the
+// raw key ('1'–'9' or ',') and AppShell maps whatever is listed here.
 export const WORKSPACE_SHORTCUTS: { digit: string; tab: WorkspaceTab }[] = [
   { digit: '1', tab: 'studio' },
   { digit: '2', tab: 'sources' },
@@ -75,9 +75,7 @@ export const WORKSPACE_SHORTCUTS: { digit: string; tab: WorkspaceTab }[] = [
   { digit: '5', tab: 'live' },
   { digit: '6', tab: 'recording' },
   { digit: '7', tab: 'library' },
-  { digit: '8', tab: 'ai' },
-  { digit: '9', tab: 'diagnostics' },
-  { digit: ',', tab: 'settings' }
+  { digit: '8', tab: 'settings' }
 ]
 
 export function shortcutDigitFor(tab: WorkspaceTab): string | undefined {

@@ -10,10 +10,10 @@ import {
   type WorkspaceTab
 } from './workspace-nav'
 
-// The Assets Tab plan (2026-06-15) made Assets a first-class Setup page at ⌘4 and
-// pushed Settings off the digit slots onto ⌘,. These invariants guard the IA so a
-// later edit can't silently drop a page, duplicate a shortcut, or rename a legacy
-// trigger id that smokes/deep-links depend on.
+// Assets is a first-class Setup page at ⌘4. Settings moved onto ⌘8 (2026-06-24),
+// and AI + Health (Diagnostics) intentionally have no digit — both stay reachable
+// via ⌘K. These invariants guard the IA so a later edit can't silently drop a page,
+// duplicate a shortcut, or rename a legacy trigger id that smokes/deep-links depend on.
 describe('workspace navigation', () => {
   it('registers Assets as a Setup panel between Scene and Destinations', () => {
     expect(STUDIO_PANELS.map((panel) => panel.id)).toEqual([
@@ -41,9 +41,8 @@ describe('workspace navigation', () => {
     })
   })
 
-  it('maps ⌘1–⌘9 to the nine workflow pages in sidebar order', () => {
-    const digitShortcuts = WORKSPACE_SHORTCUTS.filter((entry) => entry.digit !== ',')
-    expect(digitShortcuts.map((entry) => [entry.digit, entry.tab])).toEqual([
+  it('maps ⌘1–⌘8 to the workflow pages in sidebar order, ending with Settings', () => {
+    expect(WORKSPACE_SHORTCUTS.map((entry) => [entry.digit, entry.tab])).toEqual([
       ['1', 'studio'],
       ['2', 'sources'],
       ['3', 'layouts'],
@@ -51,28 +50,32 @@ describe('workspace navigation', () => {
       ['5', 'live'],
       ['6', 'recording'],
       ['7', 'library'],
-      ['8', 'ai'],
-      ['9', 'diagnostics']
+      ['8', 'settings']
     ])
   })
 
-  it('gives Settings ⌘, instead of a digit, and never duplicates a key', () => {
-    expect(shortcutDigitFor('settings')).toBe(',')
+  it('puts Settings on ⌘8 and never duplicates a key', () => {
+    expect(shortcutDigitFor('settings')).toBe('8')
     expect(WORKSPACE_SHORTCUTS.filter((entry) => entry.tab === 'settings')).toHaveLength(1)
 
     const keys = WORKSPACE_SHORTCUTS.map((entry) => entry.digit)
     expect(new Set(keys).size).toBe(keys.length)
   })
 
-  it('assigns exactly one shortcut to every reachable page', () => {
+  it('gives every reachable page a digit except AI and Health (⌘K-only)', () => {
+    const noDigit: WorkspaceTab[] = ['ai', 'diagnostics']
     const reachable: WorkspaceTab[] = [
       ...WORKSPACE_TABS.map((tab) => tab.id),
       ...STUDIO_PANELS.map((panel) => panel.id)
     ]
     for (const tab of reachable) {
-      expect(shortcutDigitFor(tab), `${tab} needs a shortcut`).toBeDefined()
+      if (noDigit.includes(tab)) {
+        expect(shortcutDigitFor(tab), `${tab} should have no digit`).toBeUndefined()
+      } else {
+        expect(shortcutDigitFor(tab), `${tab} needs a shortcut`).toBeDefined()
+      }
     }
-    expect(WORKSPACE_SHORTCUTS).toHaveLength(reachable.length)
+    expect(WORKSPACE_SHORTCUTS).toHaveLength(reachable.length - noDigit.length)
   })
 
   it('classifies Assets as a Studio panel and labels it', () => {
