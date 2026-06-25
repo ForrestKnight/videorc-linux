@@ -35,7 +35,6 @@ export function AppShell(): ReactElement {
     recording,
     runtimeInfo,
     entitlements,
-    refreshBackend,
     previewWindow,
     togglePreviewWindow,
     notesWindow,
@@ -162,7 +161,6 @@ export function AppShell(): ReactElement {
           statusTone={statusTone}
           statusLabel={statusLabel}
           live={live}
-          onRefresh={refreshBackend}
           onOpenCommand={() => setCommandOpen(true)}
         />
 

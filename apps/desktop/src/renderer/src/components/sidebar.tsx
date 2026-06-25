@@ -1,11 +1,10 @@
-import { ArrowsClockwise, MagnifyingGlass, type Icon } from '@phosphor-icons/react'
+import { MagnifyingGlass, type Icon } from '@phosphor-icons/react'
 import type { ReactElement } from 'react'
 
 import logoUrl from '@/assets/videorc-logo.png'
 import { AccountMenu } from '@/components/account-menu'
 import { type StatusDotTone } from '@/components/status-dot'
 import { ThemeToggle } from '@/components/theme-toggle'
-import { Button } from '@/components/ui/button'
 import { Kbd, KbdGroup } from '@/components/ui/kbd'
 import {
   STUDIO_PANELS,
@@ -73,7 +72,6 @@ export function Sidebar({
   statusTone,
   statusLabel,
   live,
-  onRefresh,
   onOpenCommand
 }: {
   active: WorkspaceTab
@@ -84,7 +82,6 @@ export function Sidebar({
   statusTone: StatusDotTone
   statusLabel: string
   live: boolean
-  onRefresh: () => void
   onOpenCommand: () => void
 }): ReactElement {
   const tabsIn = (group: string): typeof WORKSPACE_TABS =>
@@ -204,19 +201,7 @@ export function Sidebar({
           onOpenHealth={() => onSelect('diagnostics')}
           onOpenSettings={() => onSelect('settings')}
         />
-        <div className="flex items-center gap-0.5">
-          <Button
-            aria-label="Refresh backend"
-            size="icon"
-            variant="ghost"
-            className="size-8"
-            title="Refresh backend"
-            onClick={onRefresh}
-          >
-            <ArrowsClockwise className="size-4" />
-          </Button>
-          <ThemeToggle />
-        </div>
+        <ThemeToggle />
       </div>
     </aside>
   )
