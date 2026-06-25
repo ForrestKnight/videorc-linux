@@ -13,6 +13,7 @@ import type { ReactElement, ReactNode } from 'react'
 import { PanelSection } from '@/components/panel-section'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
+import { Kbd } from '@/components/ui/kbd'
 import { useWorkspaceNav } from '@/components/workspace-nav'
 import { useStudio } from '@/hooks/use-studio'
 import {
@@ -115,6 +116,7 @@ export function SessionPanel({
               >
                 <Record data-icon="inline-start" weight="fill" />
                 Start recording
+                <Kbd className="ml-1.5">␣</Kbd>
               </Button>
               <Button
                 disabled={Boolean(liveStreamBlockedReason) || startRequestPending}

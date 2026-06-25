@@ -381,6 +381,7 @@ function StudioTransport({
             >
               <Record data-icon="inline-start" weight="fill" />
               {startRequestPending ? 'Starting…' : 'Record'}
+              <Kbd className="ml-1.5">␣</Kbd>
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
