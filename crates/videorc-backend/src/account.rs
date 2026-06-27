@@ -106,11 +106,15 @@ fn persist_account(session_token: &str, snapshot: &VideorcAccountSnapshot) -> Re
 // Restore the signed-in account from the local secrets store at startup (no
 // network). Returns None when there is no stored token.
 pub fn restore_persisted_account() -> Option<VideorcAccountSnapshot> {
-    let token = secrets::try_get_secret(SESSION_TOKEN_SECRET).ok().flatten()?;
+    let token = secrets::try_get_secret(SESSION_TOKEN_SECRET)
+        .ok()
+        .flatten()?;
     if token.trim().is_empty() {
         return None;
     }
-    let raw = secrets::try_get_secret(ACCOUNT_SNAPSHOT_SECRET).ok().flatten()?;
+    let raw = secrets::try_get_secret(ACCOUNT_SNAPSHOT_SECRET)
+        .ok()
+        .flatten()?;
     serde_json::from_str(&raw).ok()
 }
 

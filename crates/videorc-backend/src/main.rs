@@ -36,7 +36,6 @@ mod scene;
 mod screen_capture;
 mod secrets;
 mod source_registry;
-mod videorc_api;
 mod source_status;
 mod state;
 mod storage;
@@ -47,6 +46,7 @@ mod twitch;
 mod twitch_chat;
 #[cfg(target_os = "macos")]
 mod video_toolbox_encoder;
+mod videorc_api;
 mod x_chat;
 mod x_live;
 mod youtube;

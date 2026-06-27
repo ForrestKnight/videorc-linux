@@ -7,7 +7,7 @@
 //! `http://localhost:3000` and may override via `VIDEORC_API_BASE_URL`, so local
 //! sign-in testing works out of the box.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
 const PRODUCTION_API_BASE_URL: &str = "https://videorc.com";
@@ -27,7 +27,10 @@ fn resolve_api_base_url(dev_build: bool, env_override: Option<&str>) -> String {
         // Packaged builds are pinned — never honor the override in production.
         return PRODUCTION_API_BASE_URL.to_string();
     }
-    match env_override.map(str::trim).filter(|value| !value.is_empty()) {
+    match env_override
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         Some(url) => url.trim_end_matches('/').to_string(),
         // Dev defaults to a local videorc-web so sign-in testing is zero-config.
         None => DEV_API_BASE_URL.to_string(),
