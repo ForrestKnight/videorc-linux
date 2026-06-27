@@ -1732,6 +1732,11 @@ function previewLayerShape(source: SceneSource, layout: LayoutSettings): CameraS
 // the device pixels. Per-layer requests still scale by the layer's fraction of
 // the canvas and stay capped at the source's real width.
 const PREVIEW_MIN_DRAWABLE_WIDTH = 1280
+// Upper bound on a single requested frame width so a large window on a 4K/5K
+// Retina panel can't ask for an enormous PNG every poll. 1920 is plenty sharp
+// for a preview; the backend clamps further (camera 1920 / screen 2560) and the
+// per-source `sourceWidth` cap keeps us from ever upscaling past the real frame.
+const PREVIEW_MAX_DRAWABLE_WIDTH = 1920
 function previewDrawableWidth(): number {
   const bounds = nativePreviewSurfaceStatus.bounds
   const width = bounds?.width ?? nativePreviewSurfaceStatus.width
@@ -1745,7 +1750,7 @@ function previewDrawableWidth(): number {
 function previewLayerSnapshotWidth(transform: SceneTransform, sourceWidth?: number): number {
   const drawableWidth = previewDrawableWidth()
   const layerWidth = Math.max(0.01, Number(transform.width || 1))
-  const requestedWidth = Math.ceil(drawableWidth * layerWidth)
+  const requestedWidth = Math.min(PREVIEW_MAX_DRAWABLE_WIDTH, Math.ceil(drawableWidth * layerWidth))
   return typeof sourceWidth === 'number' && Number.isFinite(sourceWidth)
     ? Math.min(sourceWidth, requestedWidth)
     : requestedWidth
@@ -2072,7 +2077,7 @@ function nativePreviewSurfaceHtml(initialScene: PreviewSurfaceSceneState | null)
               return;
             }
             if (poller.pending) {
-              window.setTimeout(poll, 33);
+              window.setTimeout(poll, 40);
               return;
             }
             poller.pending = true;
@@ -2085,7 +2090,11 @@ function nativePreviewSurfaceHtml(initialScene: PreviewSurfaceSceneState | null)
                 markLive(kind, id);
               }
               poller.pending = false;
-              window.setTimeout(poll, 33);
+              // ~25fps idle poll ceiling: trims idle CPU now that preview frames
+              // render at a higher resolution (preview-sizing fix), while staying
+              // visually smooth. Frame polling is suppressed entirely while
+              // recording (the compositor surface takes over).
+              window.setTimeout(poll, 40);
             };
             next.onerror = () => {
               poller.pending = false;
