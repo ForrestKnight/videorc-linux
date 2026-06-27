@@ -87,11 +87,11 @@ const NATIVE_AUDIO_SAMPLE_INTERVAL: Duration = Duration::from_millis(1000);
 const RECORDING_PREVIEW_WIDTH: u32 = 640;
 const RECORDING_PREVIEW_HEIGHT: u32 = 360;
 const RECORDING_PREVIEW_FPS: u32 = 5;
-const RECORDING_PREVIEW_JPEG_QUALITY: u32 = 12;
-const IDLE_PREVIEW_WIDTH: u32 = 640;
-const IDLE_PREVIEW_HEIGHT: u32 = 360;
+const RECORDING_PREVIEW_JPEG_QUALITY: u32 = 6;
+const IDLE_PREVIEW_WIDTH: u32 = 1280;
+const IDLE_PREVIEW_HEIGHT: u32 = 720;
 const IDLE_PREVIEW_FPS: u32 = 10;
-const IDLE_PREVIEW_JPEG_QUALITY: u32 = 10;
+const IDLE_PREVIEW_JPEG_QUALITY: u32 = 4;
 const CAMERA_REFERENCE_WIDTH: u32 = 1280;
 const CAMERA_REFERENCE_HEIGHT: u32 = 720;
 const STOP_FINALIZE_TIMEOUT: Duration = Duration::from_secs(12);
@@ -8953,7 +8953,7 @@ mod tests {
         assert!(args.iter().any(|arg| arg.contains("pad=640:360")));
         assert!(args.iter().any(|arg| arg == "-an"));
         assert!(args.iter().any(|arg| arg == "mjpeg"));
-        assert_eq!(arg_value(&args, "-q:v"), Some("12"));
+        assert_eq!(arg_value(&args, "-q:v"), Some("6"));
         assert!(args.iter().any(|arg| arg == "mpjpeg"));
         assert_eq!(arg_value(&args, "-flush_packets"), Some("1"));
         assert!(args.iter().any(|arg| arg == "videorc"));
@@ -9042,12 +9042,12 @@ mod tests {
         );
         assert!(!input_has_arg(&args, "0:none", "-capture_cursor"));
         assert!(!args.iter().any(|arg| arg.ends_with(":a?")));
-        assert!(args.iter().any(|arg| arg.contains("pad=640:360")));
+        assert!(args.iter().any(|arg| arg.contains("pad=1280:720")));
         assert!(args.iter().any(|arg| arg.contains("fps=30")));
         assert!(args.iter().any(|arg| arg.contains("fps=10")));
         assert!(args.iter().any(|arg| arg.contains("setpts=PTS-STARTPTS")));
         assert!(args.iter().any(|arg| arg == "[preview]"));
-        assert_eq!(arg_value(&args, "-q:v"), Some("10"));
+        assert_eq!(arg_value(&args, "-q:v"), Some("4"));
         assert!(args.iter().any(|arg| arg == "pipe:1"));
     }
 
@@ -9099,8 +9099,8 @@ mod tests {
 
         assert!(recording_filter.contains("scale=720:406"));
         assert!(recording_filter.contains("overlay=x=W-w-64:y=H-h-64"));
-        assert!(preview_filter.contains("scale=180:102"));
-        assert!(preview_filter.contains("overlay=x=W-w-16:y=H-h-16"));
+        assert!(preview_filter.contains("scale=360:203"));
+        assert!(preview_filter.contains("overlay=x=W-w-32:y=H-h-32"));
     }
 
     #[test]
