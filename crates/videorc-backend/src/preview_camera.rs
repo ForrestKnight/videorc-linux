@@ -28,7 +28,7 @@ use crate::source_registry::{SourceConsumerReason, SourceKey};
 use crate::source_status::SourceLifecycleStatus;
 use crate::state::AppState;
 
-const PREVIEW_CAMERA_DEFAULT_PNG_WIDTH: u32 = 640;
+const PREVIEW_CAMERA_DEFAULT_PNG_WIDTH: u32 = 1280;
 const PREVIEW_CAMERA_MAX_PNG_WIDTH: u32 = 1920;
 const CAMERA_REFERENCE_WIDTH: u32 = 1280;
 const CAMERA_REFERENCE_HEIGHT: u32 = 720;
@@ -2080,7 +2080,7 @@ mod tests {
 
     #[test]
     fn camera_png_width_defaults_and_clamps_requested_quality() {
-        assert_eq!(preview_camera_png_max_width(None), 640);
+        assert_eq!(preview_camera_png_max_width(None), 1280);
         assert_eq!(preview_camera_png_max_width(Some(0)), 1);
         assert_eq!(preview_camera_png_max_width(Some(1280)), 1280);
         assert_eq!(preview_camera_png_max_width(Some(4096)), 1920);

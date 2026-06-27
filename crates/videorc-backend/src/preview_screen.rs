@@ -24,7 +24,7 @@ use crate::source_registry::{SourceConsumerReason, SourceIdentityConfidence, Sou
 use crate::source_status::SourceLifecycleStatus;
 use crate::state::AppState;
 
-const PREVIEW_SCREEN_DEFAULT_DEBUG_PNG_WIDTH: u32 = 960;
+const PREVIEW_SCREEN_DEFAULT_DEBUG_PNG_WIDTH: u32 = 1600;
 const PREVIEW_SCREEN_MAX_DEBUG_PNG_WIDTH: u32 = 2560;
 const PREVIEW_SCREEN_MAX_PRODUCTION_CAPTURE_WIDTH: u32 = 3840;
 const PREVIEW_SCREEN_MAX_PRODUCTION_CAPTURE_HEIGHT: u32 = 2160;
@@ -2198,7 +2198,7 @@ mod tests {
 
     #[test]
     fn screen_png_width_defaults_and_clamps_requested_quality() {
-        assert_eq!(preview_screen_png_max_width(None), 960);
+        assert_eq!(preview_screen_png_max_width(None), 1600);
         assert_eq!(preview_screen_png_max_width(Some(0)), 1);
         assert_eq!(preview_screen_png_max_width(Some(1920)), 1920);
         assert_eq!(preview_screen_png_max_width(Some(4096)), 2560);

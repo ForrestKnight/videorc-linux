@@ -1726,24 +1726,24 @@ function previewLayerShape(source: SceneSource, layout: LayoutSettings): CameraS
     : 'rectangle'
 }
 
-function previewDrawableWidth(): number | undefined {
+// A floor on the requested full-canvas width so preview frames stay sharp even
+// before the surface reports bounds (drawable would otherwise be undefined → the
+// backend uses its low PNG default) or when a non-Retina scaleFactor understates
+// the device pixels. Per-layer requests still scale by the layer's fraction of
+// the canvas and stay capped at the source's real width.
+const PREVIEW_MIN_DRAWABLE_WIDTH = 1280
+function previewDrawableWidth(): number {
   const bounds = nativePreviewSurfaceStatus.bounds
   const width = bounds?.width ?? nativePreviewSurfaceStatus.width
   const scaleFactor = bounds?.scaleFactor ?? 1
   if (typeof width !== 'number' || !Number.isFinite(width) || width <= 0) {
-    return undefined
+    return PREVIEW_MIN_DRAWABLE_WIDTH
   }
-  return width * Math.max(1, scaleFactor)
+  return Math.max(width * Math.max(1, scaleFactor), PREVIEW_MIN_DRAWABLE_WIDTH)
 }
 
-function previewLayerSnapshotWidth(
-  transform: SceneTransform,
-  sourceWidth?: number
-): number | undefined {
+function previewLayerSnapshotWidth(transform: SceneTransform, sourceWidth?: number): number {
   const drawableWidth = previewDrawableWidth()
-  if (!drawableWidth) {
-    return undefined
-  }
   const layerWidth = Math.max(0.01, Number(transform.width || 1))
   const requestedWidth = Math.ceil(drawableWidth * layerWidth)
   return typeof sourceWidth === 'number' && Number.isFinite(sourceWidth)
