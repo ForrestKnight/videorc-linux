@@ -353,6 +353,29 @@ pub fn apply_runtime_resource_snapshot(mut stats: DiagnosticStats) -> Diagnostic
 const RISK_ENCODER_SPEED_MIN: f64 = 0.98;
 /// Mic capture coverage below this fraction during a run is a capture gap.
 const RISK_MIC_COVERAGE_MIN: f64 = 0.95;
+/// Strict post-recording analysis treats freezes longer than this as quality defects.
+const RISK_FRAME_FRESHNESS_BUDGET_MS: f64 = 100.0;
+
+fn push_ms_budget_risk(
+    reasons: &mut Vec<String>,
+    label: &str,
+    budget_ms: f64,
+    metrics: &[(&str, Option<f64>)],
+) {
+    if !metrics
+        .iter()
+        .any(|(_, value)| value.is_some_and(|ms| ms > budget_ms))
+    {
+        return;
+    }
+
+    let detail = metrics
+        .iter()
+        .filter_map(|(name, value)| value.map(|ms| format!("{name} {ms:.0}ms")))
+        .collect::<Vec<_>>()
+        .join(", ");
+    reasons.push(format!("{label} over {budget_ms:.0}ms budget ({detail})"));
+}
 
 /// Whether an active recording session is currently being compromised, and why. Pure and
 /// deterministic over the diagnostics, so it is unit-tested directly. Returns `(false, [])`
@@ -402,6 +425,38 @@ pub fn classify_recording_risk(stats: &DiagnosticStats) -> (bool, Vec<String>) {
             stats.encoder_bridge_synthetic_frames
         ));
     }
+    push_ms_budget_risk(
+        &mut reasons,
+        "encoder source freshness",
+        RISK_FRAME_FRESHNESS_BUDGET_MS,
+        &[
+            ("p95 age", stats.encoder_bridge_source_age_p95_ms),
+            (
+                "latest age",
+                stats
+                    .encoder_bridge_source_age_ms
+                    .map(|age_ms| age_ms as f64),
+            ),
+        ],
+    );
+    push_ms_budget_risk(
+        &mut reasons,
+        "compositor tick cadence",
+        RISK_FRAME_FRESHNESS_BUDGET_MS,
+        &[
+            ("p95 gap", stats.compositor_tick_gap_p95_ms),
+            ("max gap", stats.compositor_tick_gap_max_ms),
+        ],
+    );
+    push_ms_budget_risk(
+        &mut reasons,
+        "encoder writer deadline",
+        RISK_FRAME_FRESHNESS_BUDGET_MS,
+        &[
+            ("p95 lag", stats.encoder_bridge_deadline_lag_p95_ms),
+            ("max lag", stats.encoder_bridge_deadline_lag_max_ms),
+        ],
+    );
     if stats.mic_dropped_frames > 0 {
         reasons.push(format!(
             "microphone dropped {} frame(s)",
@@ -1230,6 +1285,58 @@ mod tests {
                 .iter()
                 .any(|reason| reason.contains("microphone capture gap"))
         );
+    }
+
+    #[test]
+    fn recording_risk_flags_sustained_freshness_stalls() {
+        let mut healthy = starting_diagnostics("s", 30, "record");
+        healthy.encoder_speed = Some(1.0);
+        healthy.encoder_bridge_source_age_ms = Some(100);
+        healthy.encoder_bridge_source_age_p95_ms = Some(100.0);
+        healthy.compositor_tick_gap_p95_ms = Some(100.0);
+        healthy.compositor_tick_gap_max_ms = Some(100.0);
+        healthy.encoder_bridge_deadline_lag_p95_ms = Some(100.0);
+        healthy.encoder_bridge_deadline_lag_max_ms = Some(100.0);
+
+        let (risk, reasons) = classify_recording_risk(&healthy);
+        assert!(!risk, "budget-bound run flagged: {reasons:?}");
+
+        let mut stale_source = healthy.clone();
+        stale_source.encoder_bridge_source_age_p95_ms = Some(141.0);
+        let (risk, reasons) = classify_recording_risk(&stale_source);
+        assert!(risk);
+        assert!(
+            reasons
+                .iter()
+                .any(|reason| reason.contains("encoder source freshness"))
+        );
+
+        let mut stalled_compositor = healthy.clone();
+        stalled_compositor.compositor_tick_gap_max_ms = Some(186.0);
+        let (risk, reasons) = classify_recording_risk(&stalled_compositor);
+        assert!(risk);
+        assert!(
+            reasons
+                .iter()
+                .any(|reason| reason.contains("compositor tick cadence"))
+        );
+
+        let mut late_writer = healthy.clone();
+        late_writer.encoder_bridge_deadline_lag_max_ms = Some(132.0);
+        let (risk, reasons) = classify_recording_risk(&late_writer);
+        assert!(risk);
+        assert!(
+            reasons
+                .iter()
+                .any(|reason| reason.contains("encoder writer deadline"))
+        );
+
+        let mut idle = idle_diagnostics();
+        idle.encoder_bridge_source_age_p95_ms = Some(250.0);
+        idle.compositor_tick_gap_max_ms = Some(250.0);
+        idle.encoder_bridge_deadline_lag_max_ms = Some(250.0);
+        let (risk, reasons) = classify_recording_risk(&idle);
+        assert!(!risk, "idle diagnostics flagged: {reasons:?}");
     }
 
     #[test]
