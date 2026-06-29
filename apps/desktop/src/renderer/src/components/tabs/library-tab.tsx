@@ -91,6 +91,9 @@ function SessionRow({
           {session.healthEvents.length ? (
             <Badge variant="outline">{session.healthEvents.length} health</Badge>
           ) : null}
+          {session.finalDiagnostics?.recordingAtRisk ? (
+            <Badge variant="destructive">At risk</Badge>
+          ) : null}
           {session.aiArtifacts.length ? (
             <Badge variant="secondary">{session.aiArtifacts.length} AI</Badge>
           ) : null}
@@ -106,6 +109,19 @@ function SessionRow({
       <p className="truncate rounded-row bg-muted/40 px-2.5 py-1.5 text-xs text-muted-foreground">
         {session.mp4Path ?? session.outputPath ?? session.streamPreset ?? 'No local file'}
       </p>
+      {session.finalDiagnostics?.recordingRiskReasons.length ? (
+        <Alert variant="destructive">
+          <WarningCircle />
+          <AlertTitle>Recording diagnostics</AlertTitle>
+          <AlertDescription>
+            <ul className="list-disc pl-4">
+              {session.finalDiagnostics.recordingRiskReasons.map((reason) => (
+                <li key={reason}>{reason}</li>
+              ))}
+            </ul>
+          </AlertDescription>
+        </Alert>
+      ) : null}
       {filePath ? (
         <SessionActions filePath={filePath} session={session} onOpenInAi={onOpenInAi} />
       ) : (

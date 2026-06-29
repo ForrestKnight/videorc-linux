@@ -1938,6 +1938,8 @@ pub struct SessionSummary {
     pub duration_ms: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quality_status: Option<GateStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub final_diagnostics: Option<DiagnosticStats>,
     pub layout: LayoutSettings,
     pub sources: SourceSelection,
     pub health_events: Vec<HealthEvent>,

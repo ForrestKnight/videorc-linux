@@ -81,6 +81,7 @@ pub struct SupportBundleSessionSummary {
     pub container: Option<String>,
     pub duration_ms: Option<i64>,
     pub quality_status: Option<GateStatus>,
+    pub final_diagnostics: Option<DiagnosticStats>,
     pub health_events: Vec<HealthEvent>,
     pub session_logs: Vec<SessionLogEntry>,
     pub ai_artifacts: Vec<SupportBundleAiArtifact>,
@@ -297,6 +298,7 @@ fn redact_sessions(
                 container: session.container,
                 duration_ms: session.duration_ms,
                 quality_status: session.quality_status,
+                final_diagnostics: session.final_diagnostics,
                 health_events: session
                     .health_events
                     .into_iter()
@@ -553,6 +555,7 @@ mod tests {
             container: Some("mp4".to_string()),
             duration_ms: Some(1000),
             quality_status: None,
+            final_diagnostics: None,
             layout: crate::protocol::default_layout_settings(),
             sources: crate::protocol::SourceSelection {
                 screen_id: None,

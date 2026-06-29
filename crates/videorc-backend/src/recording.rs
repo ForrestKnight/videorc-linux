@@ -58,13 +58,14 @@ use crate::preview_screen::preview_screen_latest_frame_info;
 use crate::protocol::{
     AudioSettings, AudioTrack, AudioTrackSource, BackgroundFit, CameraCorner, CameraFit,
     CameraShape, CameraSize, CameraTransformMode, CompositorBackend, CompositorSceneUpdateParams,
-    CompositorState, EffectiveSceneBackground, EncodeBackend, EntitlementsSnapshot, FeatureId,
-    HealthLevel, LayoutPreset, LayoutSettings, PreviewCameraState, PreviewLiveParams,
-    PreviewLiveSource, PreviewLiveState, PreviewLiveStatus, PreviewScreenSourceKind,
-    PreviewScreenState, PreviewSnapshot, PreviewSnapshotParams, PreviewTransport,
-    RecordingPipelineStage, RecordingState, RecordingStatus, RemuxSessionParams, RtmpPreset,
-    RtmpSettings, Scene, SceneConfigParams, SceneSourceKind, SceneTransform, SideBySideCameraSide,
-    SideBySideSplit, StartSessionParams, StreamHealth, VideoPreset, VideoSettings,
+    CompositorState, DiagnosticStats, EffectiveSceneBackground, EncodeBackend,
+    EntitlementsSnapshot, FeatureId, HealthLevel, LayoutPreset, LayoutSettings, PreviewCameraState,
+    PreviewLiveParams, PreviewLiveSource, PreviewLiveState, PreviewLiveStatus,
+    PreviewScreenSourceKind, PreviewScreenState, PreviewSnapshot, PreviewSnapshotParams,
+    PreviewTransport, RecordingPipelineStage, RecordingState, RecordingStatus, RemuxSessionParams,
+    RtmpPreset, RtmpSettings, Scene, SceneConfigParams, SceneSourceKind, SceneTransform,
+    SideBySideCameraSide, SideBySideSplit, StartSessionParams, StreamHealth, VideoPreset,
+    VideoSettings,
 };
 use crate::repair::{
     GateStatus, MAINTENANCE_CANCELLED, QualityExpectations, QualityThresholds, RepairJob,
@@ -401,7 +402,6 @@ pub async fn start_session(
         None,
     );
 
-    emit_foundation_health_events(&state, &session_id, &params)?;
     if params.output.record_enabled {
         emit_disk_space_health_event(&state, &session_id, &output_dir).await?;
     }
@@ -449,13 +449,20 @@ pub async fn start_session(
         };
         emit_health_event(&state, Some(&session_id), HealthLevel::Warn, code, message)?;
     }
-    // The screen+camera overlay and side-by-side paths both rely on the camera;
-    // camera-only handles an unavailable camera via the test-pattern fallback
-    // above and screen-only deliberately omits the camera.
-    if matches!(
-        params.layout.layout_preset,
-        LayoutPreset::ScreenCamera | LayoutPreset::SideBySide
-    ) && params.sources.camera_id.is_some()
+    emit_audio_track_health_events(&state, &session_id, &params, &audio_tracks)?;
+    let active_screen = state.database.active_stream_screen()?;
+    let use_encoder_bridge =
+        should_use_compositor_encoder_bridge(&state, &params, active_screen.as_ref()).await?;
+    emit_foundation_health_events(&state, &session_id, &params, use_encoder_bridge)?;
+    // The legacy FFmpeg screen+camera overlay and side-by-side paths both rely on the
+    // camera device index. The protected compositor bridge uses native source frames, so
+    // an unavailable FFmpeg camera index is not itself a recording-path failure there.
+    if !use_encoder_bridge
+        && matches!(
+            params.layout.layout_preset,
+            LayoutPreset::ScreenCamera | LayoutPreset::SideBySide
+        )
+        && params.sources.camera_id.is_some()
         && capture.camera_index.is_none()
     {
         emit_health_event(
@@ -466,10 +473,6 @@ pub async fn start_session(
             "Selected camera could not be bridged to the current FFmpeg recording path; continuing without the camera.",
         )?;
     }
-    emit_audio_track_health_events(&state, &session_id, &params, &audio_tracks)?;
-    let active_screen = state.database.active_stream_screen()?;
-    let use_encoder_bridge =
-        should_use_compositor_encoder_bridge(&state, &params, active_screen.as_ref()).await?;
     if !use_encoder_bridge {
         state.emit_log(
             "warn",
@@ -2183,6 +2186,17 @@ async fn sample_native_audio_during_recording(state: AppState, session_id: Strin
     }
 }
 
+async fn final_session_diagnostics_snapshot(state: &AppState, session_id: &str) -> DiagnosticStats {
+    let diagnostic_stats = {
+        let diagnostics = state.diagnostics.lock().await;
+        diagnostics.clone()
+    };
+    let mut snapshot =
+        apply_runtime_diagnostics_snapshot(diagnostic_stats, state.ffmpeg_work.snapshot());
+    snapshot.session_id = Some(session_id.to_string());
+    snapshot
+}
+
 async fn monitor_session(
     state: AppState,
     mut child: tokio::process::Child,
@@ -2268,6 +2282,7 @@ async fn monitor_session(
 
     let ended_at = Utc::now().to_rfc3339();
     let duration_ms = recording_duration_ms(&monitored_recording.started_at, &ended_at);
+    let final_diagnostics = final_session_diagnostics_snapshot(&state, &session_id).await;
     match status {
         Ok(exit_status) if exit_status.success() || monitored_recording.stop_requested => {
             let message = if exit_status.success() {
@@ -2323,6 +2338,9 @@ async fn monitor_session(
                 mp4_path.as_ref().map(|path| path.display().to_string()),
                 duration_ms,
             );
+            let _ = state
+                .database
+                .save_session_diagnostics(&session_id, &final_diagnostics);
             let _ = emit_health_event(
                 &state,
                 Some(&session_id),
@@ -2373,6 +2391,9 @@ async fn monitor_session(
                 None,
                 duration_ms,
             );
+            let _ = state
+                .database
+                .save_session_diagnostics(&session_id, &final_diagnostics);
             let _ = emit_health_event(
                 &state,
                 Some(&session_id),
@@ -2408,6 +2429,9 @@ async fn monitor_session(
                 None,
                 duration_ms,
             );
+            let _ = state
+                .database
+                .save_session_diagnostics(&session_id, &final_diagnostics);
             let _ = emit_health_event(
                 &state,
                 Some(&session_id),
@@ -5996,6 +6020,7 @@ fn emit_foundation_health_events(
     state: &AppState,
     session_id: &str,
     params: &StartSessionParams,
+    use_encoder_bridge: bool,
 ) -> Result<()> {
     if params.sources.microphone_id.is_none() {
         emit_health_event(
@@ -6019,7 +6044,7 @@ fn emit_foundation_health_events(
             Some(session_id),
             HealthLevel::Info,
             "screen-screencapturekit-discovery",
-            "Screen source was discovered with native ScreenCaptureKit. Recording still uses the FFmpeg AVFoundation fallback bridge until the native video bridge lands.",
+            native_screen_recording_path_message(use_encoder_bridge),
         )?;
     }
 
@@ -6033,9 +6058,17 @@ fn emit_foundation_health_events(
         emit_health_event(
             state,
             Some(session_id),
-            HealthLevel::Warn,
-            "window-capture-fallback",
-            "Window source was selected with native ScreenCaptureKit discovery, but this phase records the primary display through the FFmpeg AVFoundation fallback bridge.",
+            if use_encoder_bridge {
+                HealthLevel::Info
+            } else {
+                HealthLevel::Warn
+            },
+            if use_encoder_bridge {
+                "window-screencapturekit-discovery"
+            } else {
+                "window-capture-fallback"
+            },
+            native_window_recording_path_message(use_encoder_bridge),
         )?;
     }
 
@@ -6051,7 +6084,7 @@ fn emit_foundation_health_events(
             Some(session_id),
             HealthLevel::Info,
             "camera-native-avfoundation-discovery",
-            "Camera source was discovered with native AVFoundation and selected by unique ID. Recording still uses the FFmpeg AVFoundation fallback bridge until the native camera frame bridge lands.",
+            native_camera_recording_path_message(use_encoder_bridge),
         )?;
     }
 
@@ -6061,7 +6094,7 @@ fn emit_foundation_health_events(
             Some(session_id),
             HealthLevel::Info,
             "camera-shape-circle",
-            "Circle camera shape is applied with an FFmpeg alpha mask in the current preview/recording path.",
+            camera_circle_recording_path_message(use_encoder_bridge),
         )?;
     }
 
@@ -6076,6 +6109,38 @@ fn emit_foundation_health_events(
     }
 
     Ok(())
+}
+
+fn native_screen_recording_path_message(use_encoder_bridge: bool) -> &'static str {
+    if use_encoder_bridge {
+        "Screen source was discovered with native ScreenCaptureKit. Recording uses the protected compositor encoder bridge."
+    } else {
+        "Screen source was discovered with native ScreenCaptureKit. Recording still uses the FFmpeg AVFoundation fallback bridge until the native video bridge lands."
+    }
+}
+
+fn native_window_recording_path_message(use_encoder_bridge: bool) -> &'static str {
+    if use_encoder_bridge {
+        "Window source was selected with native ScreenCaptureKit discovery. Recording uses the protected compositor encoder bridge."
+    } else {
+        "Window source was selected with native ScreenCaptureKit discovery, but this phase records the primary display through the FFmpeg AVFoundation fallback bridge."
+    }
+}
+
+fn native_camera_recording_path_message(use_encoder_bridge: bool) -> &'static str {
+    if use_encoder_bridge {
+        "Camera source was discovered with native AVFoundation and selected by unique ID. Recording uses the protected compositor encoder bridge."
+    } else {
+        "Camera source was discovered with native AVFoundation and selected by unique ID. Recording still uses the FFmpeg AVFoundation fallback bridge until the native camera frame bridge lands."
+    }
+}
+
+fn camera_circle_recording_path_message(use_encoder_bridge: bool) -> &'static str {
+    if use_encoder_bridge {
+        "Circle camera shape is applied by the compositor recording path."
+    } else {
+        "Circle camera shape is applied with an FFmpeg alpha mask in the current preview/recording path."
+    }
 }
 
 fn emit_audio_track_health_events(
@@ -8124,6 +8189,19 @@ mod tests {
         assert_eq!(
             select_encoder_bridge_video_output(Some("mpeg-ts"), true, true),
             EncoderBridgeVideoOutput::VideoToolboxH264MpegTs
+        );
+    }
+
+    #[test]
+    fn native_source_health_copy_matches_selected_recording_path() {
+        assert!(native_screen_recording_path_message(true).contains("protected compositor"));
+        assert!(native_camera_recording_path_message(true).contains("protected compositor"));
+        assert!(camera_circle_recording_path_message(true).contains("compositor recording path"));
+        assert!(
+            native_screen_recording_path_message(false).contains("FFmpeg AVFoundation fallback")
+        );
+        assert!(
+            native_window_recording_path_message(false).contains("FFmpeg AVFoundation fallback")
         );
     }
 

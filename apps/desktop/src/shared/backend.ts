@@ -1684,6 +1684,7 @@ export interface SessionSummary {
   container?: RecordingContainer
   durationMs?: number
   qualityStatus?: GateStatus | null
+  finalDiagnostics?: DiagnosticStats | null
   layout: LayoutSettings
   sources: SourceSelection
   healthEvents: HealthEvent[]

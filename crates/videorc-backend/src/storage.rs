@@ -10,8 +10,8 @@ use uuid::Uuid;
 
 use crate::diagnostics::permission_pane_for_log;
 use crate::protocol::{
-    AiArtifact, AiArtifactKind, AiArtifactStatus, HealthEvent, HealthLevel, LayoutSettings,
-    OutputSettings, SessionLogEntry, SessionSummary, SourceSelection, StreamScreen,
+    AiArtifact, AiArtifactKind, AiArtifactStatus, DiagnosticStats, HealthEvent, HealthLevel,
+    LayoutSettings, OutputSettings, SessionLogEntry, SessionSummary, SourceSelection, StreamScreen,
     StreamScreenStatus,
 };
 use crate::repair::{GateStatus, RepairJob, RepairJobStatus};
@@ -136,6 +136,21 @@ impl Database {
             .optional()?
             .flatten();
         Ok(path)
+    }
+
+    pub fn save_session_diagnostics(
+        &self,
+        session_id: &str,
+        diagnostics: &DiagnosticStats,
+    ) -> Result<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "UPDATE sessions
+             SET diagnostics_json = ?2
+             WHERE id = ?1",
+            params![session_id, serde_json::to_string(diagnostics)?],
+        )?;
+        Ok(())
     }
 
     pub fn session_output_path(&self, session_id: &str) -> Result<Option<String>> {
@@ -280,7 +295,8 @@ impl Database {
         let conn = self.lock()?;
         let mut stmt = conn.prepare(
             "SELECT id, title, started_at, ended_at, status, mode, output_path, mp4_path,
-                    stream_preset, container, duration_ms, sources_json, layout_json
+                    stream_preset, container, duration_ms, sources_json, layout_json,
+                    diagnostics_json
              FROM sessions
              ORDER BY started_at DESC
              LIMIT ?1",
@@ -289,6 +305,7 @@ impl Database {
             let id: String = row.get(0)?;
             let sources_json: String = row.get(11)?;
             let layout_json: String = row.get(12)?;
+            let diagnostics_json: Option<String> = row.get(13)?;
             Ok((
                 id,
                 row.get::<_, String>(1)?,
@@ -303,6 +320,7 @@ impl Database {
                 row.get::<_, Option<i64>>(10)?,
                 sources_json,
                 layout_json,
+                diagnostics_json,
             ))
         })?;
 
@@ -322,6 +340,7 @@ impl Database {
                 duration_ms,
                 sources_json,
                 layout_json,
+                diagnostics_json,
             ) = row?;
 
             sessions.push(SessionSummary {
@@ -344,6 +363,9 @@ impl Database {
                 stream_preset,
                 container,
                 duration_ms,
+                final_diagnostics: diagnostics_json
+                    .as_deref()
+                    .and_then(|value| serde_json::from_str(value).ok()),
                 sources: serde_json::from_str(&sources_json)?,
                 layout: serde_json::from_str(&layout_json)?,
             });
@@ -895,7 +917,8 @@ impl Database {
                 duration_ms INTEGER,
                 sources_json TEXT NOT NULL,
                 layout_json TEXT NOT NULL,
-                output_json TEXT NOT NULL
+                output_json TEXT NOT NULL,
+                diagnostics_json TEXT
             );
 
             CREATE TABLE IF NOT EXISTS health_events (
@@ -981,6 +1004,12 @@ impl Database {
         )?;
         ensure_column(&conn, "sessions", "container", "container TEXT")?;
         ensure_column(&conn, "sessions", "duration_ms", "duration_ms INTEGER")?;
+        ensure_column(
+            &conn,
+            "sessions",
+            "diagnostics_json",
+            "diagnostics_json TEXT",
+        )?;
         ensure_column(
             &conn,
             "health_events",
@@ -1629,6 +1658,39 @@ mod tests {
                 .unwrap()
                 .as_deref(),
             Some("/tmp/videorc-test.mp4")
+        );
+    }
+
+    #[test]
+    fn session_summary_includes_saved_final_diagnostics() {
+        let database = test_database();
+        database
+            .create_session(&sample_session("session-1"))
+            .unwrap();
+
+        let mut diagnostics = crate::diagnostics::starting_diagnostics("session-1", 30, "record");
+        diagnostics.encoder_bridge_repeated_frames = 4;
+        diagnostics.encoder_bridge_repeated_frame_bursts = 1;
+        diagnostics.encoder_bridge_max_repeated_frame_run = 3;
+        diagnostics.recording_at_risk = true;
+        diagnostics
+            .recording_risk_reasons
+            .push("4 duplicate frame(s) re-fed to the encoder".to_string());
+        database
+            .save_session_diagnostics("session-1", &diagnostics)
+            .unwrap();
+
+        let sessions = database.list_sessions(1).unwrap();
+        let final_diagnostics = sessions[0]
+            .final_diagnostics
+            .as_ref()
+            .expect("final diagnostics");
+        assert_eq!(final_diagnostics.session_id.as_deref(), Some("session-1"));
+        assert_eq!(final_diagnostics.encoder_bridge_repeated_frames, 4);
+        assert!(final_diagnostics.recording_at_risk);
+        assert_eq!(
+            final_diagnostics.recording_risk_reasons,
+            vec!["4 duplicate frame(s) re-fed to the encoder".to_string()]
         );
     }
 
