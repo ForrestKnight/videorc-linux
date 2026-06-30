@@ -1761,6 +1761,12 @@ export interface AiQuotaStatus {
 }
 
 export interface AiJobSnapshot {
+  artifacts?: {
+    creatorIntelligence: unknown
+    publishPack: unknown
+    transcript: { text: string } | null
+    transcriptionMetadata: unknown
+  }
   clientRequestId: string | null
   completedAt: string | null
   costEstimateCents: number | null

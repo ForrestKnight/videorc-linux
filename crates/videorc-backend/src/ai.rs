@@ -2,28 +2,35 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use anyhow::{Context, Result, bail};
-use reqwest::multipart;
-use serde::Deserialize;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use tokio::fs;
 use tokio::process::Command;
-use tokio::time::{Duration, timeout};
+use tokio::time::{Duration, sleep, timeout};
 
-use crate::entitlements;
+use crate::account;
 use crate::ffmpeg::resolve_ffmpeg_path;
 use crate::protocol::{
-    AiArtifact, AiArtifactKind, AiArtifactStatus, AiWorkflowResult, EntitlementsSnapshot,
-    ExportPublishPackParams, ExportPublishPackResult, FeatureId, HealthEvent, HealthLevel,
+    AiArtifact, AiArtifactKind, AiArtifactStatus, AiCapabilities, AiJobSnapshot, AiWorkflowResult,
+    ExportPublishPackParams, ExportPublishPackResult, HealthEvent, HealthLevel,
     RunAiWorkflowParams,
 };
 use crate::recording::emit_health_event;
 use crate::state::AppState;
 use crate::storage::default_artifacts_dir;
+use crate::videorc_api::{AiAudioJobRequest, AiObjectUploadRequest, VideorcApiClient};
 
-const OPENAI_TRANSCRIPTIONS_URL: &str = "https://api.openai.com/v1/audio/transcriptions";
-const OPENAI_RESPONSES_URL: &str = "https://api.openai.com/v1/responses";
-const OPENAI_AUDIO_UPLOAD_LIMIT_BYTES: u64 = 25 * 1024 * 1024;
-const TRANSCRIPTION_CHUNK_SECONDS: u64 = 30 * 60;
+const AI_WORKFLOW_KIND_POST_RECORDING: &str = "post-recording-publish-pack";
+const AI_JOB_POLL_INTERVAL: Duration = Duration::from_secs(2);
+const AI_JOB_POLL_TIMEOUT: Duration = Duration::from_secs(45 * 60);
+const DESKTOP_CLIENT_VERSION: &str = concat!("videorc-desktop/", env!("CARGO_PKG_VERSION"));
+
+struct WebAiJobContext<'a> {
+    session_id: &'a str,
+    client_request_id: &'a str,
+    diagnostic_summary: Option<&'a str>,
+    health_events: &'a [HealthEvent],
+}
 
 pub async fn run_ai_workflow(
     state: AppState,
@@ -79,41 +86,27 @@ pub async fn run_ai_workflow(
         });
     }
 
-    if let Err(error) = validate_cloud_ai_entitlement(&entitlements::current_entitlements()) {
-        artifacts.push(state.database.save_ai_artifact(
-            &params.session_id,
-            AiArtifactKind::Transcript,
-            AiArtifactStatus::Failed,
-            json!({
-                "message": error.to_string(),
-                "entitlement": "cloud-ai",
-            }),
-            None,
-        )?);
-        emit_health_event(
-            &state,
-            Some(&params.session_id),
-            HealthLevel::Warn,
-            "cloud-ai-premium-required",
-            "Audio was extracted locally. Cloud AI did not run because the current entitlement does not include cloud AI.",
-        )?;
-        emit_ai_artifacts_changed(&state, &params.session_id)?;
-        return Ok(AiWorkflowResult {
-            session_id: params.session_id,
-            audio_path: audio_path.display().to_string(),
-            artifacts,
-        });
-    }
-
-    let api_key = match std::env::var("OPENAI_API_KEY") {
-        Ok(value) if !value.trim().is_empty() => value,
-        _ => {
+    let cloud_artifacts = match run_web_ai_job(&state, &params.session_id, &audio_path).await {
+        Ok(artifacts) => artifacts,
+        Err(error) => {
+            let message = error.to_string();
+            let code = if message.contains("Sign in") {
+                "cloud-ai-sign-in-required"
+            } else {
+                "cloud-ai-job-failed"
+            };
+            let event_message = if code == "cloud-ai-sign-in-required" {
+                "Audio was extracted locally. Cloud AI did not run because the Videorc session is not signed in."
+            } else {
+                "Cloud AI failed. The local recording and extracted audio are still available."
+            };
             artifacts.push(state.database.save_ai_artifact(
                 &params.session_id,
                 AiArtifactKind::Transcript,
                 AiArtifactStatus::Failed,
                 json!({
-                    "message": "OPENAI_API_KEY is not configured, so cloud transcription could not run.",
+                    "message": message,
+                    "provider": "videorc",
                 }),
                 None,
             )?);
@@ -121,8 +114,8 @@ pub async fn run_ai_workflow(
                 &state,
                 Some(&params.session_id),
                 HealthLevel::Warn,
-                "openai-api-key-missing",
-                "Set OPENAI_API_KEY before running cloud transcription.",
+                code,
+                event_message,
             )?;
             emit_ai_artifacts_changed(&state, &params.session_id)?;
             return Ok(AiWorkflowResult {
@@ -132,181 +125,7 @@ pub async fn run_ai_workflow(
             });
         }
     };
-
-    let client = reqwest::Client::new();
-    let transcription_inputs = match transcription_audio_inputs(
-        &ffmpeg_path,
-        &audio_path,
-        &artifact_dir,
-    )
-    .await
-    {
-        Ok(inputs) => inputs,
-        Err(error) => {
-            artifacts.push(state.database.save_ai_artifact(
-                &params.session_id,
-                AiArtifactKind::Transcript,
-                AiArtifactStatus::Failed,
-                json!({
-                    "message": format!("Could not prepare audio for cloud transcription: {error}"),
-                    "provider": "openai",
-                    "model": transcription_model(),
-                }),
-                None,
-            )?);
-            emit_health_event(
-                &state,
-                Some(&params.session_id),
-                HealthLevel::Warn,
-                "ai-transcription-prepare-failed",
-                "Audio preparation for cloud transcription failed. The local recording and extracted audio are still available.",
-            )?;
-            emit_ai_artifacts_changed(&state, &params.session_id)?;
-            return Ok(AiWorkflowResult {
-                session_id: params.session_id,
-                audio_path: audio_path.display().to_string(),
-                artifacts,
-            });
-        }
-    };
-    let transcript = match transcribe_audio_files(&client, &api_key, &transcription_inputs).await {
-        Ok(transcript) => transcript,
-        Err(error) => {
-            artifacts.push(state.database.save_ai_artifact(
-                &params.session_id,
-                AiArtifactKind::Transcript,
-                AiArtifactStatus::Failed,
-                json!({
-                    "message": format!("Cloud transcription failed: {error}"),
-                    "provider": "openai",
-                    "model": transcription_model(),
-                }),
-                None,
-            )?);
-            emit_health_event(
-                &state,
-                Some(&params.session_id),
-                HealthLevel::Warn,
-                "ai-transcription-failed",
-                "Cloud transcription failed. The local recording and extracted audio are still available.",
-            )?;
-            emit_ai_artifacts_changed(&state, &params.session_id)?;
-            return Ok(AiWorkflowResult {
-                session_id: params.session_id,
-                audio_path: audio_path.display().to_string(),
-                artifacts,
-            });
-        }
-    };
-    artifacts.push(state.database.save_ai_artifact(
-        &params.session_id,
-        AiArtifactKind::Transcript,
-        AiArtifactStatus::Ready,
-        json!({
-            "text": transcript,
-            "provider": "openai",
-            "model": transcription_model(),
-            "chunked": transcription_inputs.len() > 1,
-            "chunkCount": transcription_inputs.len(),
-            "uploadLimitBytes": OPENAI_AUDIO_UPLOAD_LIMIT_BYTES,
-        }),
-        None,
-    )?);
-
-    let publish_pack = match summarize_and_chapter(&client, &api_key, &transcript).await {
-        Ok(publish_pack) => publish_pack,
-        Err(error) => {
-            artifacts.push(state.database.save_ai_artifact(
-                &params.session_id,
-                AiArtifactKind::Summary,
-                AiArtifactStatus::Failed,
-                json!({
-                    "message": format!("Summary and chapter generation failed: {error}"),
-                    "provider": "openai",
-                    "model": text_model(),
-                }),
-                None,
-            )?);
-            emit_health_event(
-                &state,
-                Some(&params.session_id),
-                HealthLevel::Warn,
-                "ai-publish-pack-failed",
-                "Transcript was saved, but summary and chapter generation failed.",
-            )?;
-            emit_ai_artifacts_changed(&state, &params.session_id)?;
-            return Ok(AiWorkflowResult {
-                session_id: params.session_id,
-                audio_path: audio_path.display().to_string(),
-                artifacts,
-            });
-        }
-    };
-    artifacts.push(state.database.save_ai_artifact(
-        &params.session_id,
-        AiArtifactKind::TitleDescription,
-        AiArtifactStatus::Ready,
-        json!({
-            "title": publish_pack.title,
-            "description": publish_pack.description,
-            "provider": "openai",
-            "model": text_model(),
-        }),
-        None,
-    )?);
-    artifacts.push(state.database.save_ai_artifact(
-        &params.session_id,
-        AiArtifactKind::Summary,
-        AiArtifactStatus::Ready,
-        json!({
-            "text": publish_pack.summary,
-            "provider": "openai",
-            "model": text_model(),
-        }),
-        None,
-    )?);
-    artifacts.push(state.database.save_ai_artifact(
-        &params.session_id,
-        AiArtifactKind::Chapters,
-        AiArtifactStatus::Ready,
-        json!({
-            "chapters": publish_pack.chapters,
-            "provider": "openai",
-            "model": text_model(),
-        }),
-        None,
-    )?);
-
-    let health_events = state.database.list_health_events(&params.session_id)?;
-    match generate_creator_intelligence(&client, &api_key, &transcript, &health_events).await {
-        Ok(intelligence) => {
-            artifacts.extend(save_creator_intelligence_artifacts(
-                &state,
-                &params.session_id,
-                intelligence,
-            )?);
-        }
-        Err(error) => {
-            artifacts.push(state.database.save_ai_artifact(
-                &params.session_id,
-                AiArtifactKind::HealthAssistant,
-                AiArtifactStatus::Failed,
-                json!({
-                    "message": format!("Advanced creator intelligence failed: {error}"),
-                    "provider": "openai",
-                    "model": text_model(),
-                }),
-                None,
-            )?);
-            emit_health_event(
-                &state,
-                Some(&params.session_id),
-                HealthLevel::Warn,
-                "ai-creator-intelligence-failed",
-                "Publish pack was saved, but advanced creator intelligence failed.",
-            )?;
-        }
-    }
+    artifacts.extend(cloud_artifacts);
 
     emit_ai_artifacts_changed(&state, &params.session_id)?;
 
@@ -315,6 +134,419 @@ pub async fn run_ai_workflow(
         audio_path: audio_path.display().to_string(),
         artifacts,
     })
+}
+
+async fn run_web_ai_job(
+    state: &AppState,
+    session_id: &str,
+    audio_path: &Path,
+) -> Result<Vec<AiArtifact>> {
+    let token = account::stored_session_token().context("Sign in to use cloud AI.")?;
+    let client = VideorcApiClient::new()?;
+    let capabilities = client.get_ai_capabilities(&token).await?;
+    validate_cloud_ai_capabilities(&capabilities)?;
+    let audio_size = fs::metadata(audio_path)
+        .await
+        .with_context(|| format!("Could not inspect {}", audio_path.display()))?
+        .len();
+    let client_request_id = ai_client_request_id(session_id, audio_path).await?;
+    let health_events = state.database.list_health_events(session_id)?;
+    let health_events_json =
+        serde_json::to_string(&health_events).context("Could not serialize AI health events.")?;
+    let diagnostic_summary = diagnostic_summary_for_session(state, session_id);
+    let job_context = WebAiJobContext {
+        session_id,
+        client_request_id: &client_request_id,
+        diagnostic_summary: diagnostic_summary.as_deref(),
+        health_events: &health_events,
+    };
+    let audio_intake_error = audio_intake_error(&capabilities, audio_size);
+    let initial_job = if capabilities.features.multipart_audio_jobs_enabled
+        && audio_intake_error.is_none()
+    {
+        client
+            .create_ai_job_from_audio(
+                &token,
+                AiAudioJobRequest {
+                    audio_path,
+                    client_request_id: &client_request_id,
+                    client_version: DESKTOP_CLIENT_VERSION,
+                    diagnostic_summary: job_context.diagnostic_summary,
+                    health_events_json: &health_events_json,
+                    session_client_id: session_id,
+                },
+            )
+            .await?
+            .job
+    } else if capabilities.features.object_backed_jobs_enabled && audio_intake_error.is_none() {
+        create_object_backed_ai_job(&client, &token, &job_context, audio_path, audio_size).await?
+    } else if capabilities.features.transcript_jobs_enabled {
+        let transcript = latest_local_transcript_text(state, session_id)?.with_context(|| {
+            audio_intake_error.clone().unwrap_or_else(|| {
+                "No ready local transcript is available for transcript-backed AI.".to_string()
+            })
+        })?;
+        create_transcript_backed_ai_job(&client, &token, &job_context, &transcript).await?
+    } else if let Some(error) = audio_intake_error {
+        bail!("{error}");
+    } else {
+        bail!("Videorc AI audio intake is not enabled for this account.");
+    };
+
+    let completed_job = wait_for_ai_job(&client, &token, initial_job).await?;
+    save_completed_web_ai_artifacts(state, session_id, &completed_job)
+}
+
+fn validate_cloud_ai_capabilities(capabilities: &AiCapabilities) -> Result<()> {
+    if !capabilities.entitlement.cloud_ai || !capabilities.readiness.access.cloud_ai_entitled {
+        bail!("Cloud AI requires Videorc Premium.");
+    }
+    if capabilities.readiness.access.globally_disabled {
+        bail!("Cloud AI is disabled on the Videorc server.");
+    }
+    if !capabilities.readiness.gateway.configured {
+        bail!(
+            "{}",
+            capabilities
+                .readiness
+                .gateway
+                .config_error
+                .as_deref()
+                .unwrap_or("Videorc AI Gateway is not configured.")
+        );
+    }
+    if !capabilities.features.cloud_ai_enabled {
+        bail!("Videorc cloud AI is not ready for this account.");
+    }
+    Ok(())
+}
+
+fn audio_intake_error(capabilities: &AiCapabilities, audio_size: u64) -> Option<String> {
+    if !capabilities.readiness.transcription.configured {
+        return Some(
+            capabilities
+                .readiness
+                .transcription
+                .config_error
+                .clone()
+                .unwrap_or_else(|| "Videorc cloud transcription is not configured.".to_string()),
+        );
+    }
+    if let Some(max_audio_bytes) = capabilities.limits.max_audio_bytes
+        && audio_size > max_audio_bytes
+    {
+        return Some(format!(
+            "Recording audio is too large for configured AI intake ({} > {} bytes).",
+            audio_size, max_audio_bytes
+        ));
+    }
+    None
+}
+
+async fn create_object_backed_ai_job(
+    client: &VideorcApiClient,
+    token: &str,
+    job_context: &WebAiJobContext<'_>,
+    audio_path: &Path,
+    audio_size: u64,
+) -> Result<AiJobSnapshot> {
+    let upload = client
+        .request_ai_object_upload(
+            token,
+            &AiObjectUploadRequest {
+                client_request_id: job_context.client_request_id,
+                client_version: DESKTOP_CLIENT_VERSION,
+                consent_to_upload_audio: true,
+                file_name: "audio.m4a",
+                mime_type: "audio/mp4",
+                session_client_id: job_context.session_id,
+                size_bytes: audio_size,
+                workflow_kind: AI_WORKFLOW_KIND_POST_RECORDING,
+            },
+        )
+        .await?;
+    client.upload_ai_object(&upload.ticket, audio_path).await?;
+
+    let mut job_request = upload.job_request;
+    let input_json = json!({
+        "diagnosticSummary": job_context.diagnostic_summary,
+        "healthEvents": job_context.health_events,
+    });
+    let object = job_request
+        .as_object_mut()
+        .context("AI object upload response did not include a job request object.")?;
+    object.insert("inputJson".to_string(), input_json);
+    Ok(client.create_ai_job(token, &job_request).await?.job)
+}
+
+async fn create_transcript_backed_ai_job(
+    client: &VideorcApiClient,
+    token: &str,
+    job_context: &WebAiJobContext<'_>,
+    transcript: &str,
+) -> Result<AiJobSnapshot> {
+    let body = json!({
+        "clientRequestId": job_context.client_request_id,
+        "clientVersion": DESKTOP_CLIENT_VERSION,
+        "inputJson": {
+            "diagnosticSummary": job_context.diagnostic_summary,
+            "healthEvents": job_context.health_events,
+            "transcript": transcript,
+        },
+        "sessionClientId": job_context.session_id,
+        "workflowKind": AI_WORKFLOW_KIND_POST_RECORDING,
+    });
+    Ok(client.create_ai_job(token, &body).await?.job)
+}
+
+async fn wait_for_ai_job(
+    client: &VideorcApiClient,
+    token: &str,
+    initial_job: AiJobSnapshot,
+) -> Result<AiJobSnapshot> {
+    let started = tokio::time::Instant::now();
+    let mut job = initial_job;
+    loop {
+        match job.status.as_str() {
+            "completed" => return Ok(job),
+            "failed" => {
+                bail!(
+                    "{}",
+                    job.error_message
+                        .as_deref()
+                        .unwrap_or("Videorc AI job failed.")
+                )
+            }
+            "cancelled" => bail!("Videorc AI job was cancelled."),
+            _ => {}
+        }
+        if started.elapsed() > AI_JOB_POLL_TIMEOUT {
+            bail!("Videorc AI job timed out before completion.");
+        }
+        sleep(AI_JOB_POLL_INTERVAL).await;
+        job = client.get_ai_job(token, &job.id).await?;
+    }
+}
+
+fn save_completed_web_ai_artifacts(
+    state: &AppState,
+    session_id: &str,
+    job: &AiJobSnapshot,
+) -> Result<Vec<AiArtifact>> {
+    let owner_artifacts = job
+        .artifacts
+        .as_ref()
+        .context("Completed Videorc AI job did not include owner artifacts.")?;
+    let mut saved = Vec::new();
+
+    if let Some(transcript) = &owner_artifacts.transcript {
+        saved.push(state.database.save_ai_artifact(
+            session_id,
+            AiArtifactKind::Transcript,
+            AiArtifactStatus::Ready,
+            json!({
+                "jobId": job.id,
+                "model": job.model,
+                "provider": job.provider,
+                "text": transcript.text,
+                "transcription": owner_artifacts.transcription_metadata,
+            }),
+            None,
+        )?);
+    }
+
+    let publish_pack = object_or_empty(&owner_artifacts.publish_pack);
+    saved.push(state.database.save_ai_artifact(
+        session_id,
+        AiArtifactKind::TitleDescription,
+        AiArtifactStatus::Ready,
+        json!({
+            "description": string_field(publish_pack, "description"),
+            "jobId": job.id,
+            "model": job.model,
+            "provider": job.provider,
+            "title": string_field(publish_pack, "title"),
+        }),
+        None,
+    )?);
+    saved.push(state.database.save_ai_artifact(
+        session_id,
+        AiArtifactKind::Summary,
+        AiArtifactStatus::Ready,
+        json!({
+            "jobId": job.id,
+            "model": job.model,
+            "provider": job.provider,
+            "text": string_field(publish_pack, "summary"),
+        }),
+        None,
+    )?);
+    saved.push(state.database.save_ai_artifact(
+        session_id,
+        AiArtifactKind::Chapters,
+        AiArtifactStatus::Ready,
+        json!({
+            "chapters": value_field(publish_pack, "chapters"),
+            "jobId": job.id,
+            "model": job.model,
+            "provider": job.provider,
+        }),
+        None,
+    )?);
+
+    saved.extend(save_creator_intelligence_value_artifacts(
+        state,
+        session_id,
+        job,
+        &owner_artifacts.creator_intelligence,
+    )?);
+    Ok(saved)
+}
+
+fn object_or_empty(value: &Value) -> &serde_json::Map<String, Value> {
+    static EMPTY: std::sync::OnceLock<serde_json::Map<String, Value>> = std::sync::OnceLock::new();
+    value
+        .as_object()
+        .unwrap_or_else(|| EMPTY.get_or_init(serde_json::Map::new))
+}
+
+fn string_field(object: &serde_json::Map<String, Value>, field: &str) -> String {
+    object
+        .get(field)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn value_field(object: &serde_json::Map<String, Value>, field: &str) -> Value {
+    object.get(field).cloned().unwrap_or(Value::Null)
+}
+
+fn save_creator_intelligence_value_artifacts(
+    state: &AppState,
+    session_id: &str,
+    job: &AiJobSnapshot,
+    creator_intelligence: &Value,
+) -> Result<Vec<AiArtifact>> {
+    let intelligence = object_or_empty(creator_intelligence);
+    Ok(vec![
+        state.database.save_ai_artifact(
+            session_id,
+            AiArtifactKind::Highlights,
+            AiArtifactStatus::Ready,
+            json!({
+                "highlights": value_field(intelligence, "highlights"),
+                "jobId": job.id,
+                "model": job.model,
+                "provider": job.provider,
+            }),
+            None,
+        )?,
+        state.database.save_ai_artifact(
+            session_id,
+            AiArtifactKind::SmartZoom,
+            AiArtifactStatus::Ready,
+            json!({
+                "jobId": job.id,
+                "model": job.model,
+                "provider": job.provider,
+                "suggestions": value_field(intelligence, "smartZoom"),
+            }),
+            None,
+        )?,
+        state.database.save_ai_artifact(
+            session_id,
+            AiArtifactKind::NoiseCleanup,
+            AiArtifactStatus::Ready,
+            json!({
+                "jobId": job.id,
+                "model": job.model,
+                "provider": job.provider,
+                "suggestions": value_field(intelligence, "noiseCleanup"),
+            }),
+            None,
+        )?,
+        state.database.save_ai_artifact(
+            session_id,
+            AiArtifactKind::SilenceRemoval,
+            AiArtifactStatus::Ready,
+            json!({
+                "jobId": job.id,
+                "model": job.model,
+                "provider": job.provider,
+                "suggestions": value_field(intelligence, "silenceRemoval"),
+            }),
+            None,
+        )?,
+        state.database.save_ai_artifact(
+            session_id,
+            AiArtifactKind::HealthAssistant,
+            AiArtifactStatus::Ready,
+            json!({
+                "explanations": value_field(intelligence, "healthAssistant"),
+                "jobId": job.id,
+                "model": job.model,
+                "provider": job.provider,
+            }),
+            None,
+        )?,
+    ])
+}
+
+fn diagnostic_summary_for_session(state: &AppState, session_id: &str) -> Option<String> {
+    state
+        .database
+        .list_sessions(500)
+        .ok()?
+        .into_iter()
+        .find(|session| session.id == session_id)
+        .and_then(|session| session.final_diagnostics)
+        .and_then(|diagnostics| serde_json::to_string(&diagnostics).ok())
+}
+
+fn latest_local_transcript_text(state: &AppState, session_id: &str) -> Result<Option<String>> {
+    Ok(state
+        .database
+        .list_ai_artifacts(session_id)?
+        .into_iter()
+        .rev()
+        .find_map(|artifact| {
+            if artifact.kind != AiArtifactKind::Transcript
+                || artifact.status != AiArtifactStatus::Ready
+            {
+                return None;
+            }
+            content_string(&artifact, "text").filter(|text| !text.trim().is_empty())
+        }))
+}
+
+async fn ai_client_request_id(session_id: &str, audio_path: &Path) -> Result<String> {
+    let audio = fs::read(audio_path)
+        .await
+        .with_context(|| format!("Could not read {}", audio_path.display()))?;
+    let hash = format!("{:x}", Sha256::digest(&audio));
+    Ok(build_ai_client_request_id(session_id, &hash))
+}
+
+fn build_ai_client_request_id(session_id: &str, audio_hash: &str) -> String {
+    let session_component = safe_client_request_component(session_id)
+        .chars()
+        .take(40)
+        .collect::<String>();
+    format!("desktop:{session_component}:{audio_hash}")
+}
+
+fn safe_client_request_component(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | ':' | '-') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 pub fn list_ai_artifacts(state: &AppState, session_id: &str) -> Result<Vec<AiArtifact>> {
@@ -355,10 +587,6 @@ fn emit_ai_artifacts_changed(state: &AppState, session_id: &str) -> Result<()> {
         state.database.list_ai_artifacts(session_id)?,
     );
     Ok(())
-}
-
-fn validate_cloud_ai_entitlement(snapshot: &EntitlementsSnapshot) -> Result<()> {
-    entitlements::require_feature(snapshot, FeatureId::CloudAi)
 }
 
 async fn extract_audio(ffmpeg_path: &str, input_path: &Path, output_path: &Path) -> Result<()> {
@@ -404,385 +632,6 @@ async fn extract_audio(ffmpeg_path: &str, input_path: &Path, output_path: &Path)
     }
 
     Ok(())
-}
-
-async fn transcription_audio_inputs(
-    ffmpeg_path: &str,
-    audio_path: &Path,
-    artifact_dir: &Path,
-) -> Result<Vec<PathBuf>> {
-    let audio_size = fs::metadata(audio_path)
-        .await
-        .with_context(|| format!("Could not inspect {}", audio_path.display()))?
-        .len();
-    if !needs_transcription_chunking(audio_size) {
-        return Ok(vec![audio_path.to_path_buf()]);
-    }
-
-    let chunk_dir = artifact_dir.join("transcription-chunks");
-    match fs::remove_dir_all(&chunk_dir).await {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => {
-            return Err(error).with_context(|| format!("Could not clear {}", chunk_dir.display()));
-        }
-    }
-    fs::create_dir_all(&chunk_dir)
-        .await
-        .with_context(|| format!("Could not create {}", chunk_dir.display()))?;
-
-    let audio_arg = audio_path.display().to_string();
-    let segment_seconds = TRANSCRIPTION_CHUNK_SECONDS.to_string();
-    let chunk_pattern = chunk_dir.join("chunk-%03d.m4a");
-    let chunk_pattern_arg = chunk_pattern.display().to_string();
-    let mut command = Command::new(ffmpeg_path);
-    command
-        .args([
-            "-y",
-            "-hide_banner",
-            "-loglevel",
-            "warning",
-            "-i",
-            &audio_arg,
-            "-vn",
-            "-ac",
-            "1",
-            "-ar",
-            "16000",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "64k",
-            "-f",
-            "segment",
-            "-segment_time",
-            &segment_seconds,
-            "-reset_timestamps",
-            "1",
-            &chunk_pattern_arg,
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped());
-
-    let output = timeout(Duration::from_secs(20 * 60), command.output())
-        .await
-        .context("FFmpeg transcription audio chunking timed out")?
-        .with_context(|| format!("Could not start {ffmpeg_path} for transcription chunking"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        bail!(
-            "FFmpeg transcription chunking failed with {}{}",
-            output.status,
-            if stderr.is_empty() {
-                String::new()
-            } else {
-                format!(": {stderr}")
-            }
-        );
-    }
-
-    let mut chunks = Vec::new();
-    let mut entries = fs::read_dir(&chunk_dir)
-        .await
-        .with_context(|| format!("Could not read {}", chunk_dir.display()))?;
-    while let Some(entry) = entries
-        .next_entry()
-        .await
-        .with_context(|| format!("Could not read entry in {}", chunk_dir.display()))?
-    {
-        let path = entry.path();
-        let is_m4a = path
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("m4a"));
-        if is_m4a {
-            chunks.push(path);
-        }
-    }
-    chunks.sort();
-
-    if chunks.is_empty() {
-        bail!("FFmpeg transcription chunking did not produce any .m4a chunks");
-    }
-
-    for chunk in &chunks {
-        let chunk_size = fs::metadata(chunk)
-            .await
-            .with_context(|| format!("Could not inspect {}", chunk.display()))?
-            .len();
-        if chunk_size > OPENAI_AUDIO_UPLOAD_LIMIT_BYTES {
-            bail!(
-                "Transcription chunk {} is larger than the OpenAI upload limit ({} > {} bytes)",
-                chunk.display(),
-                chunk_size,
-                OPENAI_AUDIO_UPLOAD_LIMIT_BYTES
-            );
-        }
-    }
-
-    Ok(chunks)
-}
-
-fn needs_transcription_chunking(audio_size: u64) -> bool {
-    audio_size > OPENAI_AUDIO_UPLOAD_LIMIT_BYTES
-}
-
-async fn transcribe_audio_files(
-    client: &reqwest::Client,
-    api_key: &str,
-    audio_paths: &[PathBuf],
-) -> Result<String> {
-    if audio_paths.is_empty() {
-        bail!("No audio inputs were prepared for cloud transcription");
-    }
-    if audio_paths.len() == 1 {
-        return transcribe_audio(client, api_key, &audio_paths[0]).await;
-    }
-
-    let mut transcripts = Vec::with_capacity(audio_paths.len());
-    for audio_path in audio_paths {
-        transcripts.push(transcribe_audio(client, api_key, audio_path).await?);
-    }
-
-    Ok(combine_transcript_chunks(&transcripts))
-}
-
-fn combine_transcript_chunks(chunks: &[String]) -> String {
-    match chunks {
-        [] => String::new(),
-        [single] => single.clone(),
-        _ => chunks
-            .iter()
-            .enumerate()
-            .map(|(index, text)| format!("[Chunk {}]\n{}", index + 1, text.trim()))
-            .collect::<Vec<_>>()
-            .join("\n\n"),
-    }
-}
-
-async fn transcribe_audio(
-    client: &reqwest::Client,
-    api_key: &str,
-    audio_path: &Path,
-) -> Result<String> {
-    let audio = fs::read(audio_path)
-        .await
-        .with_context(|| format!("Could not read {}", audio_path.display()))?;
-    let file_part = multipart::Part::bytes(audio)
-        .file_name("videorc-audio.m4a")
-        .mime_str("audio/mp4")?;
-    let form = multipart::Form::new()
-        .text("model", transcription_model())
-        .text("response_format", "json")
-        .part("file", file_part);
-
-    let response = client
-        .post(OPENAI_TRANSCRIPTIONS_URL)
-        .bearer_auth(api_key)
-        .multipart(form)
-        .send()
-        .await?
-        .error_for_status()?
-        .json::<OpenAiTranscriptionResponse>()
-        .await?;
-
-    Ok(response.text)
-}
-
-async fn summarize_and_chapter(
-    client: &reqwest::Client,
-    api_key: &str,
-    transcript: &str,
-) -> Result<PublishPack> {
-    let prompt = format!(
-        "You are helping a creator publish a recorded gaming or coding tutorial session.\n\
-         Return strict JSON with keys title, description, summary, and chapters. \
-         title should be one strong YouTube-style title under 80 characters. \
-         description should be a concise publish-ready description. \
-         chapters must be an array of objects with timestamp and title. \
-         Use approximate timestamps if the transcript has no timings.\n\n\
-         Transcript:\n{transcript}"
-    );
-    let response = client
-        .post(OPENAI_RESPONSES_URL)
-        .bearer_auth(api_key)
-        .json(&json!({
-            "model": text_model(),
-            "input": prompt,
-        }))
-        .send()
-        .await?
-        .error_for_status()?
-        .json::<Value>()
-        .await?;
-    let output_text = response
-        .get("output_text")
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .or_else(|| response_output_text(&response))
-        .unwrap_or_default();
-
-    parse_publish_pack(&output_text)
-}
-
-async fn generate_creator_intelligence(
-    client: &reqwest::Client,
-    api_key: &str,
-    transcript: &str,
-    health_events: &[HealthEvent],
-) -> Result<CreatorIntelligence> {
-    let health_context = if health_events.is_empty() {
-        "No health events were recorded for this session.".to_string()
-    } else {
-        health_events
-            .iter()
-            .map(|event| {
-                format!(
-                    "- {:?} [{}] {} ({})",
-                    event.level, event.code, event.message, event.created_at
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-    let prompt = format!(
-        "You are Videorc's creator intelligence assistant for gaming and coding/tutorial recordings.\n\
-         Return strict JSON with keys highlights, smartZoom, noiseCleanup, silenceRemoval, and healthAssistant.\n\
-         highlights: array of objects with timestamp, title, reason, suggestedUse.\n\
-         smartZoom: array of objects with timestamp, action, subject, reason.\n\
-         noiseCleanup: array of objects with issue, suggestion, confidence.\n\
-         silenceRemoval: array of objects with timestamp, reason, editSuggestion.\n\
-         healthAssistant: array of objects with level, issue, explanation, action.\n\
-         Prefer concrete creator-editing advice. If signal is weak, return short conservative arrays rather than guessing.\n\n\
-         Health events:\n{health_context}\n\n\
-         Transcript:\n{transcript}"
-    );
-    let response = client
-        .post(OPENAI_RESPONSES_URL)
-        .bearer_auth(api_key)
-        .json(&json!({
-            "model": text_model(),
-            "input": prompt,
-        }))
-        .send()
-        .await?
-        .error_for_status()?
-        .json::<Value>()
-        .await?;
-    let output_text = response
-        .get("output_text")
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .or_else(|| response_output_text(&response))
-        .unwrap_or_default();
-
-    parse_creator_intelligence(&output_text)
-}
-
-fn parse_publish_pack(output_text: &str) -> Result<PublishPack> {
-    if let Ok(pack) = serde_json::from_str::<PublishPack>(output_text) {
-        return Ok(pack);
-    }
-
-    let Some(start) = output_text.find('{') else {
-        bail!("AI response did not include JSON");
-    };
-    let Some(end) = output_text.rfind('}') else {
-        bail!("AI response did not include complete JSON");
-    };
-    serde_json::from_str(&output_text[start..=end]).context("Could not parse AI publish pack JSON")
-}
-
-fn parse_creator_intelligence(output_text: &str) -> Result<CreatorIntelligence> {
-    if let Ok(intelligence) = serde_json::from_str::<CreatorIntelligence>(output_text) {
-        return Ok(intelligence);
-    }
-
-    let Some(start) = output_text.find('{') else {
-        bail!("AI response did not include JSON");
-    };
-    let Some(end) = output_text.rfind('}') else {
-        bail!("AI response did not include complete JSON");
-    };
-    serde_json::from_str(&output_text[start..=end])
-        .context("Could not parse AI creator intelligence JSON")
-}
-
-fn save_creator_intelligence_artifacts(
-    state: &AppState,
-    session_id: &str,
-    intelligence: CreatorIntelligence,
-) -> Result<Vec<AiArtifact>> {
-    Ok(vec![
-        state.database.save_ai_artifact(
-            session_id,
-            AiArtifactKind::Highlights,
-            AiArtifactStatus::Ready,
-            json!({
-                "highlights": intelligence.highlights,
-                "provider": "openai",
-                "model": text_model(),
-            }),
-            None,
-        )?,
-        state.database.save_ai_artifact(
-            session_id,
-            AiArtifactKind::SmartZoom,
-            AiArtifactStatus::Ready,
-            json!({
-                "suggestions": intelligence.smart_zoom,
-                "provider": "openai",
-                "model": text_model(),
-            }),
-            None,
-        )?,
-        state.database.save_ai_artifact(
-            session_id,
-            AiArtifactKind::NoiseCleanup,
-            AiArtifactStatus::Ready,
-            json!({
-                "suggestions": intelligence.noise_cleanup,
-                "provider": "openai",
-                "model": text_model(),
-            }),
-            None,
-        )?,
-        state.database.save_ai_artifact(
-            session_id,
-            AiArtifactKind::SilenceRemoval,
-            AiArtifactStatus::Ready,
-            json!({
-                "suggestions": intelligence.silence_removal,
-                "provider": "openai",
-                "model": text_model(),
-            }),
-            None,
-        )?,
-        state.database.save_ai_artifact(
-            session_id,
-            AiArtifactKind::HealthAssistant,
-            AiArtifactStatus::Ready,
-            json!({
-                "explanations": intelligence.health_assistant,
-                "provider": "openai",
-                "model": text_model(),
-            }),
-            None,
-        )?,
-    ])
-}
-
-fn response_output_text(value: &Value) -> Option<String> {
-    let mut chunks = Vec::new();
-    for item in value.get("output")?.as_array()? {
-        for content in item.get("content")?.as_array()? {
-            if let Some(text) = content.get("text").and_then(Value::as_str) {
-                chunks.push(text.to_string());
-            }
-        }
-    }
-    (!chunks.is_empty()).then(|| chunks.join("\n"))
 }
 
 fn render_publish_pack(artifacts: &[AiArtifact]) -> String {
@@ -979,154 +828,9 @@ fn push_markdown_list(markdown: &mut String, lines: Vec<String>) {
     markdown.push('\n');
 }
 
-fn transcription_model() -> String {
-    std::env::var("VIDEORC_OPENAI_TRANSCRIPTION_MODEL")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "gpt-4o-mini-transcribe".to_string())
-}
-
-fn text_model() -> String {
-    std::env::var("VIDEORC_OPENAI_TEXT_MODEL")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "gpt-5-mini".to_string())
-}
-
-#[derive(Debug, Deserialize)]
-struct OpenAiTranscriptionResponse {
-    text: String,
-}
-
-#[derive(Debug, Deserialize, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PublishPack {
-    title: String,
-    description: String,
-    summary: String,
-    chapters: Vec<Chapter>,
-}
-
-#[derive(Debug, Deserialize, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Chapter {
-    timestamp: String,
-    title: String,
-}
-
-#[derive(Debug, Deserialize, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CreatorIntelligence {
-    #[serde(default)]
-    highlights: Vec<HighlightSuggestion>,
-    #[serde(default)]
-    smart_zoom: Vec<SmartZoomSuggestion>,
-    #[serde(default)]
-    noise_cleanup: Vec<NoiseCleanupSuggestion>,
-    #[serde(default)]
-    silence_removal: Vec<SilenceRemovalSuggestion>,
-    #[serde(default)]
-    health_assistant: Vec<HealthAssistantExplanation>,
-}
-
-#[derive(Debug, Deserialize, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct HighlightSuggestion {
-    #[serde(default)]
-    timestamp: String,
-    #[serde(default)]
-    title: String,
-    #[serde(default)]
-    reason: String,
-    #[serde(default)]
-    suggested_use: String,
-}
-
-#[derive(Debug, Deserialize, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SmartZoomSuggestion {
-    #[serde(default)]
-    timestamp: String,
-    #[serde(default)]
-    action: String,
-    #[serde(default)]
-    subject: String,
-    #[serde(default)]
-    reason: String,
-}
-
-#[derive(Debug, Deserialize, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct NoiseCleanupSuggestion {
-    #[serde(default)]
-    issue: String,
-    #[serde(default)]
-    suggestion: String,
-    #[serde(default)]
-    confidence: String,
-}
-
-#[derive(Debug, Deserialize, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SilenceRemovalSuggestion {
-    #[serde(default)]
-    timestamp: String,
-    #[serde(default)]
-    reason: String,
-    #[serde(default)]
-    edit_suggestion: String,
-}
-
-#[derive(Debug, Deserialize, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct HealthAssistantExplanation {
-    #[serde(default)]
-    level: String,
-    #[serde(default)]
-    issue: String,
-    #[serde(default)]
-    explanation: String,
-    #[serde(default)]
-    action: String,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parses_json_from_model_output() {
-        let pack = parse_publish_pack(
-            r#"```json
-{"title":"Build a CLI in Rust","description":"A quick walkthrough.","summary":"A short session.","chapters":[{"timestamp":"00:00","title":"Intro"}]}
-```"#,
-        )
-        .unwrap();
-
-        assert_eq!(pack.title, "Build a CLI in Rust");
-        assert_eq!(pack.description, "A quick walkthrough.");
-        assert_eq!(pack.summary, "A short session.");
-        assert_eq!(pack.chapters[0].title, "Intro");
-    }
-
-    #[test]
-    fn parses_creator_intelligence_from_model_output() {
-        let intelligence = parse_creator_intelligence(
-            r#"```json
-{"highlights":[{"timestamp":"00:12","title":"Fix the auth bug","reason":"Clear aha moment","suggestedUse":"Short clip"}],"smartZoom":[{"timestamp":"00:18","action":"Zoom editor","subject":"diff hunk","reason":"Small code text"}],"noiseCleanup":[{"issue":"Keyboard noise","suggestion":"Apply light gate","confidence":"medium"}],"silenceRemoval":[{"timestamp":"01:02","reason":"Long pause","editSuggestion":"Trim 4 seconds"}],"healthAssistant":[{"level":"warn","issue":"Dropped frames","explanation":"Encoder fell behind","action":"Lower bitrate"}]}
-```"#,
-        )
-        .unwrap();
-
-        assert_eq!(intelligence.highlights[0].title, "Fix the auth bug");
-        assert_eq!(intelligence.smart_zoom[0].subject, "diff hunk");
-        assert_eq!(intelligence.noise_cleanup[0].issue, "Keyboard noise");
-        assert_eq!(
-            intelligence.silence_removal[0].edit_suggestion,
-            "Trim 4 seconds"
-        );
-        assert_eq!(intelligence.health_assistant[0].action, "Lower bitrate");
-    }
 
     #[test]
     fn renders_publish_pack_markdown() {
@@ -1188,42 +892,25 @@ mod tests {
     }
 
     #[test]
-    fn entitlement_guard_blocks_cloud_ai_in_basic_mode() {
-        let snapshot = entitlements::entitlements_from_env_value(None);
-        let error = validate_cloud_ai_entitlement(&snapshot)
-            .expect_err("cloud AI should require premium entitlement");
-
-        assert!(error.to_string().contains("Premium"));
-    }
-
-    #[test]
-    fn entitlement_guard_allows_cloud_ai_with_developer_override() {
-        let snapshot = entitlements::entitlements_from_env_value(Some("1"));
-
-        validate_cloud_ai_entitlement(&snapshot).unwrap();
-    }
-
-    #[test]
-    fn transcription_chunking_starts_after_upload_limit() {
-        assert!(!needs_transcription_chunking(
-            OPENAI_AUDIO_UPLOAD_LIMIT_BYTES
-        ));
-        assert!(needs_transcription_chunking(
-            OPENAI_AUDIO_UPLOAD_LIMIT_BYTES + 1
-        ));
-    }
-
-    #[test]
-    fn combines_multiple_transcript_chunks_with_order_labels() {
-        let single = combine_transcript_chunks(&["leave me alone".to_string()]);
-        assert_eq!(single, "leave me alone");
-
-        let combined =
-            combine_transcript_chunks(&["first chunk ".to_string(), "\nsecond chunk".to_string()]);
-
+    fn client_request_component_uses_supported_characters() {
         assert_eq!(
-            combined,
-            "[Chunk 1]\nfirst chunk\n\n[Chunk 2]\nsecond chunk"
+            safe_client_request_component("session id/with spaces"),
+            "session_id_with_spaces"
         );
+        assert_eq!(
+            safe_client_request_component("retry:session_123.1"),
+            "retry:session_123.1"
+        );
+    }
+
+    #[test]
+    fn client_request_id_preserves_hash_with_long_session_ids() {
+        let hash = "a".repeat(64);
+        let id = build_ai_client_request_id("session/with spaces/".repeat(8).as_str(), &hash);
+
+        assert!(id.len() <= 120);
+        assert!(id.ends_with(&format!(":{hash}")));
+        assert!(!id.contains('/'));
+        assert!(!id.contains(' '));
     }
 }

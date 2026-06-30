@@ -2236,6 +2236,8 @@ pub struct AiQuotaWindow {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiJobSnapshot {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifacts: Option<AiJobOwnerArtifacts>,
     pub client_request_id: Option<String>,
     pub completed_at: Option<String>,
     pub cost_estimate_cents: Option<u32>,
@@ -2255,6 +2257,64 @@ pub struct AiJobSnapshot {
     pub started_at: Option<String>,
     pub status: String,
     pub workflow_kind: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiJobOwnerArtifacts {
+    pub creator_intelligence: serde_json::Value,
+    pub publish_pack: serde_json::Value,
+    pub transcript: Option<AiJobTranscriptArtifact>,
+    pub transcription_metadata: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiJobTranscriptArtifact {
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiJobEnvelope {
+    pub job: AiJobSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiJobCreateResponse {
+    #[serde(default)]
+    pub daily_limit: Option<u32>,
+    #[serde(default)]
+    pub idempotent: bool,
+    pub job: AiJobSnapshot,
+    #[serde(default)]
+    pub monthly_limit: Option<u32>,
+    #[serde(default)]
+    pub remaining_this_month: Option<u32>,
+    #[serde(default)]
+    pub remaining_today: Option<u32>,
+    #[serde(default)]
+    pub transcription: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiObjectUploadTicket {
+    pub expires_at: Option<String>,
+    pub max_bytes: Option<u64>,
+    pub object_key: String,
+    #[serde(default)]
+    pub upload_headers: BTreeMap<String, String>,
+    pub upload_method: String,
+    pub upload_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiObjectUploadResponse {
+    pub job_request: serde_json::Value,
+    pub ticket: AiObjectUploadTicket,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
