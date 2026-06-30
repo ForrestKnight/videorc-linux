@@ -2058,6 +2058,207 @@ pub struct ExportPublishPackResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AiJobGetParams {
+    pub job_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiCapabilities {
+    pub entitlement: AiCapabilitiesEntitlement,
+    pub features: AiCapabilitiesFeatures,
+    pub generated_at: String,
+    pub limits: AiCapabilitiesLimits,
+    pub models: AiCapabilitiesModels,
+    pub object_storage: AiCapabilitiesObjectStorage,
+    pub readiness: AiCapabilitiesReadiness,
+    pub transcription: AiCapabilitiesTranscription,
+    pub workflow: AiCapabilitiesWorkflow,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiCapabilitiesEntitlement {
+    pub checked_at: String,
+    pub cloud_ai: bool,
+    pub expires_at: String,
+    pub is_premium: bool,
+    pub subscription_status: String,
+    pub tier: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiCapabilitiesFeatures {
+    pub cloud_ai_enabled: bool,
+    pub gateway_configured: bool,
+    pub model_testing_enabled: bool,
+    pub multipart_audio_jobs_enabled: bool,
+    pub object_backed_jobs_enabled: bool,
+    pub transcript_jobs_enabled: bool,
+    pub upload_tickets_enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiCapabilitiesLimits {
+    pub daily_jobs: u32,
+    pub max_audio_bytes: Option<u64>,
+    pub max_audio_megabytes: Option<f64>,
+    pub max_output_tokens: Option<u32>,
+    pub max_transcript_characters: u32,
+    pub monthly_jobs: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiCapabilitiesModels {
+    pub allowed_text_model_count: u32,
+    pub allowed_text_models_configured: bool,
+    pub default_text_model: Option<String>,
+    #[serde(default)]
+    pub fallback_text_models: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiCapabilitiesObjectStorage {
+    pub delete_configured: bool,
+    pub download_configured: bool,
+    pub provider: Option<String>,
+    pub provider_error: Option<String>,
+    pub proof_configured: bool,
+    pub proof_ttl_ms: Option<u64>,
+    pub upload_configured: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiCapabilitiesReadiness {
+    pub access: AiCapabilitiesAccessReadiness,
+    pub gateway: AiCapabilitiesServiceReadiness,
+    pub object_storage: AiCapabilitiesObjectStorageReadiness,
+    pub transcription: AiCapabilitiesServiceReadiness,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiCapabilitiesAccessReadiness {
+    pub cloud_ai_entitled: bool,
+    pub globally_disabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiCapabilitiesServiceReadiness {
+    pub config_error: Option<String>,
+    pub configured: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiCapabilitiesObjectStorageReadiness {
+    pub delete_config_error: Option<String>,
+    pub download_config_error: Option<String>,
+    pub proof_config_error: Option<String>,
+    pub provider_error: Option<String>,
+    pub upload_config_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiCapabilitiesTranscription {
+    pub configured: bool,
+    pub config_error: Option<String>,
+    pub max_audio_bytes: Option<u64>,
+    pub max_audio_megabytes: Option<f64>,
+    pub request_timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiCapabilitiesWorkflow {
+    #[serde(default)]
+    pub input_modes: Vec<AiCapabilitiesInputMode>,
+    pub kind: String,
+    #[serde(default)]
+    pub outputs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiCapabilitiesInputMode {
+    pub enabled: bool,
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiQuotaStatus {
+    pub access: AiQuotaAccess,
+    pub entitlement: AiQuotaEntitlement,
+    pub generated_at: String,
+    pub monthly: AiQuotaWindow,
+    pub today: AiQuotaWindow,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiQuotaAccess {
+    pub allowed: bool,
+    pub code: Option<String>,
+    pub message: Option<String>,
+    pub status: Option<u16>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiQuotaEntitlement {
+    pub cancel_at_period_end: bool,
+    pub checked_at: String,
+    pub cloud_ai: bool,
+    pub current_period_end: Option<String>,
+    pub expires_at: String,
+    pub is_premium: bool,
+    pub subscription_status: String,
+    pub tier: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiQuotaWindow {
+    pub limit: u32,
+    pub remaining: u32,
+    pub reset_at: String,
+    pub used: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiJobSnapshot {
+    pub client_request_id: Option<String>,
+    pub completed_at: Option<String>,
+    pub cost_estimate_cents: Option<u32>,
+    pub created_at: String,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    #[serde(default)]
+    pub fallback_models: Vec<String>,
+    pub id: String,
+    pub input_tokens: Option<u32>,
+    pub model: Option<String>,
+    pub output_json: serde_json::Value,
+    pub output_tokens: Option<u32>,
+    pub provider: String,
+    pub run_attempts: u32,
+    pub session_client_id: String,
+    pub started_at: Option<String>,
+    pub status: String,
+    pub workflow_kind: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AiWorkflowResult {
     pub session_id: String,
     pub audio_path: String,

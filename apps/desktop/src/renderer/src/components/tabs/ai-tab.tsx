@@ -30,8 +30,8 @@ import {
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { useStudio } from '@/hooks/use-studio'
+import { cloudAiReadiness } from '@/lib/ai-readiness'
 import type { SessionSummary } from '@/lib/backend'
-import { entitlementDisabledReason } from '@/lib/entitlements'
 import {
   artifactChapters,
   artifactField,
@@ -58,9 +58,19 @@ export function AiTab({
     exportPublishPack,
     aiRunningSessionId,
     exportRunningSessionId,
-    entitlements
+    account,
+    aiCapabilities,
+    aiQuota,
+    aiReadinessError,
+    aiReadinessLoading
   } = useStudio()
-  const cloudAiEntitlementReason = entitlementDisabledReason(entitlements, 'cloud-ai')
+  const cloudAi = cloudAiReadiness({
+    account,
+    capabilities: aiCapabilities,
+    error: aiReadinessError,
+    loading: aiReadinessLoading,
+    quota: aiQuota
+  })
 
   useEffect(() => {
     if (!selectedSessionId && sessions.length > 0) {
@@ -126,18 +136,28 @@ export function AiTab({
               <ShieldCheck weight="fill" />
               <AlertTitle>Recordings stay local by default</AlertTitle>
               <AlertDescription>
-                Without consent, Videorc only extracts local audio. Uses OPENAI_API_KEY when
-                present; artifacts are stored locally with each session.
+                Without consent, Videorc only extracts local audio. With consent, signed-in cloud AI
+                runs through Videorc and stores returned artifacts locally with each session.
               </AlertDescription>
             </Alert>
-            {cloudAiEntitlementReason ? (
-              <Alert variant="warning">
-                <Warning weight="fill" />
-                <AlertTitle>Cloud AI requires Videorc Premium</AlertTitle>
-                <AlertDescription>
-                  <p>
-                    {cloudAiEntitlementReason} Local audio extraction still works without upload.
-                  </p>
+            <Alert variant={cloudAi.ready ? 'success' : 'warning'}>
+              {cloudAi.ready ? <ShieldCheck weight="fill" /> : <Warning weight="fill" />}
+              <AlertTitle>{cloudAi.title}</AlertTitle>
+              <AlertDescription>
+                <p>{cloudAi.description}</p>
+                {cloudAi.inputModeLabels.length ? (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {cloudAi.inputModeLabels.map((label) => (
+                      <Badge key={label} variant={cloudAi.ready ? 'success' : 'secondary'}>
+                        {label}
+                      </Badge>
+                    ))}
+                    {cloudAi.quotaLabel ? (
+                      <Badge variant="outline">{cloudAi.quotaLabel}</Badge>
+                    ) : null}
+                  </div>
+                ) : null}
+                {cloudAi.state === 'premium-required' ? (
                   <div className="mt-2 flex">
                     <Button
                       className="w-fit"
@@ -148,21 +168,21 @@ export function AiTab({
                       View Premium
                     </Button>
                   </div>
-                </AlertDescription>
-              </Alert>
-            ) : null}
+                ) : null}
+              </AlertDescription>
+            </Alert>
             <Field orientation="horizontal">
               <FieldContent>
                 <FieldLabel htmlFor="ai-consent">Allow cloud upload</FieldLabel>
                 <FieldDescription>
-                  {cloudAiEntitlementReason
-                    ? 'Premium unlocks cloud transcription, summaries, chapters, highlights, and suggestions.'
-                    : 'Upload extracted audio and transcript for summaries, chapters, highlights, and suggestions.'}
+                  {cloudAi.ready
+                    ? 'Upload extracted audio for cloud transcription, summaries, chapters, highlights, and suggestions.'
+                    : `${cloudAi.description} Local audio extraction still works without upload.`}
                 </FieldDescription>
               </FieldContent>
               <Switch
-                checked={aiConsent && !cloudAiEntitlementReason}
-                disabled={Boolean(cloudAiEntitlementReason)}
+                checked={aiConsent && cloudAi.ready}
+                disabled={!cloudAi.ready}
                 id="ai-consent"
                 onCheckedChange={setAiConsent}
               />
@@ -203,17 +223,21 @@ export function AiTab({
     )
     const aiRunning = aiRunningSessionId === session.id
     const exportRunning = exportRunningSessionId === session.id
-    const cloudAiBlocked = aiConsent && Boolean(cloudAiEntitlementReason)
+    const cloudAiBlocked = aiConsent && !cloudAi.ready
 
     return (
       <div className="flex flex-wrap gap-2">
         <Button
           disabled={!canRunAi || aiRunning || cloudAiBlocked}
-          title={cloudAiBlocked ? (cloudAiEntitlementReason ?? undefined) : undefined}
+          title={cloudAiBlocked ? cloudAi.description : undefined}
           onClick={() => runAiWorkflow(session.id)}
         >
           <Lightning data-icon="inline-start" weight="fill" />
-          {aiRunning ? 'Running…' : aiConsent ? 'Run AI workflow' : 'Extract local audio'}
+          {aiRunning
+            ? 'Running…'
+            : aiConsent && cloudAi.ready
+              ? 'Run AI workflow'
+              : 'Extract local audio'}
         </Button>
         <Button
           disabled={!canExportPublishPack || exportRunning}

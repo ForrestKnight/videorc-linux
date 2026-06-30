@@ -1681,6 +1681,25 @@ async fn handle_text_message(state: &AppState, text: &str) -> ServerResponse {
             ServerResponse::ok(command.id, resolved)
         }
         "entitlements.get" => ServerResponse::ok(command.id, entitlements::current_entitlements()),
+        "ai.capabilities.get" => match get_ai_capabilities().await {
+            Ok(capabilities) => ServerResponse::ok(command.id, capabilities),
+            Err(error) => {
+                ServerResponse::error(command.id, "ai-capabilities-failed", error.to_string())
+            }
+        },
+        "ai.quota.get" => match get_ai_quota().await {
+            Ok(quota) => ServerResponse::ok(command.id, quota),
+            Err(error) => ServerResponse::error(command.id, "ai-quota-failed", error.to_string()),
+        },
+        "ai.jobs.get" => match serde_json::from_value::<protocol::AiJobGetParams>(command.params) {
+            Ok(params) => match get_ai_job(&params.job_id).await {
+                Ok(job) => ServerResponse::ok(command.id, job),
+                Err(error) => {
+                    ServerResponse::error(command.id, "ai-job-get-failed", error.to_string())
+                }
+            },
+            Err(error) => ServerResponse::error(command.id, "invalid-params", error.to_string()),
+        },
         "devices.list" => {
             let ffmpeg_path = resolve_ffmpeg_path_ref(
                 command
@@ -2760,6 +2779,32 @@ async fn handle_text_message(state: &AppState, text: &str) -> ServerResponse {
             format!("Unknown backend method: {method}"),
         ),
     }
+}
+
+fn stored_ai_session_token() -> Result<String> {
+    account::stored_session_token().context("Sign in to use cloud AI.")
+}
+
+async fn get_ai_capabilities() -> Result<protocol::AiCapabilities> {
+    let token = stored_ai_session_token()?;
+    let client = videorc_api::VideorcApiClient::new()?;
+    client.get_ai_capabilities(&token).await
+}
+
+async fn get_ai_quota() -> Result<protocol::AiQuotaStatus> {
+    let token = stored_ai_session_token()?;
+    let client = videorc_api::VideorcApiClient::new()?;
+    client.get_ai_quota(&token).await
+}
+
+async fn get_ai_job(job_id: &str) -> Result<protocol::AiJobSnapshot> {
+    let job_id = job_id.trim();
+    if job_id.is_empty() {
+        anyhow::bail!("jobId is required");
+    }
+    let token = stored_ai_session_token()?;
+    let client = videorc_api::VideorcApiClient::new()?;
+    client.get_ai_job(&token, job_id).await
 }
 
 async fn backend_health(state: &AppState, ffmpeg_path: &str) -> BackendHealth {

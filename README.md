@@ -140,17 +140,16 @@ The AI workflow is explicit-consent and post-recording only:
 
 - Audio is extracted locally from the session recording into app support storage.
 - No upload happens unless the user enables cloud AI consent in the UI and runs AI for a session.
-- Cloud transcription uses `OPENAI_API_KEY` when present.
+- Cloud AI requires a signed-in Videorc account with Cloud AI entitlement and server readiness from `videorc.com`.
+- Desktop never reads AI provider keys. The web server owns Gateway/transcription credentials and exposes safe capabilities, quota, and job metadata to the app.
 - Generated transcript, title/description, summary, chapters, highlights, smart zoom notes, cleanup suggestions, and health explanations are stored as local SQLite artifacts.
 - Publish packs can be exported as local Markdown files beside the session's AI artifacts.
-- Single-upload transcription currently fails fast when the extracted audio is over 25 MB; chunking is a later slice.
+- Local audio extraction still works without sign-in or upload consent.
 
-Optional model overrides:
+Local development can point the desktop at a local web server for signed-in AI testing:
 
 ```sh
-export OPENAI_API_KEY=...
-export VIDEORC_OPENAI_TRANSCRIPTION_MODEL=gpt-4o-mini-transcribe
-export VIDEORC_OPENAI_TEXT_MODEL=gpt-5-mini
+export VIDEORC_API_BASE_URL=http://localhost:3000
 ```
 
 ## Verification

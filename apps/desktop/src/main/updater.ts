@@ -53,7 +53,9 @@ function attachUpdaterListeners(): void {
   // never clicks "Restart & install".
   autoUpdater.autoInstallOnAppQuit = true
 
-  autoUpdater.on('checking-for-update', () => setStatus(updateStatusFromEvent({ type: 'checking' })))
+  autoUpdater.on('checking-for-update', () =>
+    setStatus(updateStatusFromEvent({ type: 'checking' }))
+  )
   autoUpdater.on('update-available', (info: UpdateInfo) => {
     setStatus(updateStatusFromEvent({ type: 'available', version: info.version }))
   })

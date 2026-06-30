@@ -15,6 +15,7 @@ import { toast } from 'sonner'
 
 import { BackendClient } from '@/backendClient'
 import { previewSurfaceBoundsChanged } from '../../../shared/native-preview-bounds'
+import { cloudAiReadiness } from '@/lib/ai-readiness'
 import {
   applyStoredManualStreamKeyResult,
   bridgeStreamingToLegacy,
@@ -59,6 +60,8 @@ import {
   shouldAutoRefreshYouTubeChannels
 } from '@/lib/youtube-channels'
 import type {
+  AiCapabilities,
+  AiQuotaStatus,
   AiWorkflowResult,
   AudioMeterResult,
   BackendConnection,
@@ -294,6 +297,10 @@ export type StudioContextValue = {
   health: BackendHealth | null
   entitlements: EntitlementsSnapshot | null
   account: VideorcAccountSnapshot | null
+  aiCapabilities: AiCapabilities | null
+  aiQuota: AiQuotaStatus | null
+  aiReadinessError: string | null
+  aiReadinessLoading: boolean
   signOutAccount: () => Promise<void>
   deviceList: DeviceList
   recording: RecordingStatus
@@ -758,6 +765,10 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   const [health, setHealth] = useState<BackendHealth | null>(null)
   const [entitlements, setEntitlements] = useState<EntitlementsSnapshot | null>(null)
   const [account, setAccount] = useState<VideorcAccountSnapshot | null>(null)
+  const [aiCapabilities, setAiCapabilities] = useState<AiCapabilities | null>(null)
+  const [aiQuota, setAiQuota] = useState<AiQuotaStatus | null>(null)
+  const [aiReadinessError, setAiReadinessError] = useState<string | null>(null)
+  const [aiReadinessLoading, setAiReadinessLoading] = useState(false)
   const [deviceList, setDeviceList] = useState<DeviceList>({ devices: [], warnings: [] })
   const previewDevicesSignature = useMemo(
     () => previewDeviceRefreshSignature(deviceList.devices),
@@ -980,6 +991,36 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     }
     toast.error(message)
   }, [])
+
+  const refreshAiReadinessForClient = useCallback(
+    async (activeClient: BackendClient | null, accountSnapshot: VideorcAccountSnapshot | null) => {
+      if (!activeClient || accountSnapshot?.status !== 'signed-in') {
+        setAiCapabilities(null)
+        setAiQuota(null)
+        setAiReadinessError(null)
+        setAiReadinessLoading(false)
+        return
+      }
+
+      setAiReadinessLoading(true)
+      try {
+        const [nextCapabilities, nextQuota] = await Promise.all([
+          activeClient.request<AiCapabilities>('ai.capabilities.get'),
+          activeClient.request<AiQuotaStatus>('ai.quota.get')
+        ])
+        setAiCapabilities(nextCapabilities)
+        setAiQuota(nextQuota)
+        setAiReadinessError(null)
+      } catch (error) {
+        setAiCapabilities(null)
+        setAiQuota(null)
+        setAiReadinessError(error instanceof Error ? error.message : String(error))
+      } finally {
+        setAiReadinessLoading(false)
+      }
+    },
+    []
+  )
 
   const appendLog = useCallback((log: BackendLogEvent) => {
     setLogs((current) => [...current.slice(-79), log])
@@ -1982,6 +2023,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
         setEntitlements(nextEntitlements)
         const nextAccount = await nextClient.request<VideorcAccountSnapshot>('account.get')
         setAccount(nextAccount)
+        await refreshAiReadinessForClient(nextClient, nextAccount)
         const nextDevices = await nextClient.request<DeviceList>('devices.list', {
           ffmpegPath: settings.ffmpegPath.trim() || undefined
         })
@@ -2047,6 +2089,10 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       setClient(null)
       setEntitlements(null)
       setAccount(null)
+      setAiCapabilities(null)
+      setAiQuota(null)
+      setAiReadinessError(null)
+      setAiReadinessLoading(false)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -2063,6 +2109,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     queueNativePreviewCompositorPresent,
     resetNativePreviewCompositorTiming,
     refreshPlatformAccountsForClient,
+    refreshAiReadinessForClient,
     refreshScreensForClient,
     refreshStreamMetadataForClient,
     validatePlatformAccountsForClient,
@@ -2134,6 +2181,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       const [
         nextHealth,
         nextEntitlements,
+        nextAccount,
         nextDevices,
         nextSessions,
         nextDiagnostics,
@@ -2148,6 +2196,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
           ffmpegPath: settings.ffmpegPath.trim() || undefined
         }),
         client.request<EntitlementsSnapshot>('entitlements.get'),
+        client.request<VideorcAccountSnapshot>('account.get'),
         client.request<DeviceList>('devices.list', {
           ffmpegPath: settings.ffmpegPath.trim() || undefined
         }),
@@ -2162,6 +2211,8 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
         client.request<PlatformAccountValidation[]>('platformAccounts.validate'),
         client.request<StreamMetadataDraft>('streamTargets.metadata.get')
       ])
+      setAccount(nextAccount)
+      await refreshAiReadinessForClient(client, nextAccount)
       const nextStreamMetadataValidation = await client.request<StreamMetadataValidation>(
         'streamTargets.metadata.validate',
         nextStreamMetadataDraft
@@ -2184,7 +2235,14 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     } catch (error) {
       reportError(error)
     }
-  }, [client, reloadSceneFromCaptureConfig, reportError, sceneEditMode, settings.ffmpegPath])
+  }, [
+    client,
+    refreshAiReadinessForClient,
+    reloadSceneFromCaptureConfig,
+    reportError,
+    sceneEditMode,
+    settings.ffmpegPath
+  ])
 
   useEffect(() => {
     if (!client || wsStatus !== 'connected' || sceneEditMode) {
@@ -3356,15 +3414,21 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
         video: streamOutputVideoSettings(captureConfig.video, captureConfig.streaming)
       })
     : { allowed: true as const }
-  const cloudAiEntitlementReason = entitlementDisabledReason(entitlements, 'cloud-ai')
+  const currentCloudAiReadiness = cloudAiReadiness({
+    account,
+    capabilities: aiCapabilities,
+    error: aiReadinessError,
+    loading: aiReadinessLoading,
+    quota: aiQuota
+  })
   const isSessionActive =
     isActiveRecordingState(recording.state) || startRequestPending || stopRequestPending
 
   useEffect(() => {
-    if (aiConsent && cloudAiEntitlementReason) {
+    if (aiConsent && !currentCloudAiReadiness.ready) {
       setAiConsent(false)
     }
-  }, [aiConsent, cloudAiEntitlementReason])
+  }, [aiConsent, currentCloudAiReadiness.ready])
 
   const renameScreen = useCallback(
     async (screenId: string, name: string) => {
@@ -3563,11 +3627,13 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       return
     }
     try {
-      setAccount(await client.request<VideorcAccountSnapshot>('account.sign_out'))
+      const nextAccount = await client.request<VideorcAccountSnapshot>('account.sign_out')
+      setAccount(nextAccount)
+      await refreshAiReadinessForClient(client, nextAccount)
     } catch (error) {
       reportError(error)
     }
-  }, [client, reportError, wsStatus])
+  }, [client, refreshAiReadinessForClient, reportError, wsStatus])
 
   const completeAccountSignIn = useCallback(
     async (token: string) => {
@@ -3575,14 +3641,19 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
         return
       }
       try {
-        setAccount(
-          await client.request<VideorcAccountSnapshot>('account.complete_sign_in', { token })
+        const nextAccount = await client.request<VideorcAccountSnapshot>(
+          'account.complete_sign_in',
+          {
+            token
+          }
         )
+        setAccount(nextAccount)
+        await refreshAiReadinessForClient(client, nextAccount)
       } catch (error) {
         reportError(error)
       }
     },
-    [client, reportError, wsStatus]
+    [client, refreshAiReadinessForClient, reportError, wsStatus]
   )
 
   useEffect(() => {
@@ -4319,11 +4390,10 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       if (!client) {
         return
       }
-      if (aiConsent && cloudAiEntitlementReason) {
-        toast.error(
-          'Cloud AI requires Videorc Premium.',
-          premiumUpgradeToastOptions(cloudAiEntitlementReason)
-        )
+      if (aiConsent && !currentCloudAiReadiness.ready) {
+        toast.error(currentCloudAiReadiness.title, {
+          description: currentCloudAiReadiness.description
+        })
         return
       }
 
@@ -4347,7 +4417,16 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
         setAiRunningSessionId(null)
       }
     },
-    [aiConsent, client, cloudAiEntitlementReason, refreshSessions, reportError, settings.ffmpegPath]
+    [
+      aiConsent,
+      client,
+      currentCloudAiReadiness.description,
+      currentCloudAiReadiness.ready,
+      currentCloudAiReadiness.title,
+      refreshSessions,
+      reportError,
+      settings.ffmpegPath
+    ]
   )
 
   const exportPublishPack = useCallback(
@@ -4746,6 +4825,10 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       health,
       entitlements,
       account,
+      aiCapabilities,
+      aiQuota,
+      aiReadinessError,
+      aiReadinessLoading,
       signOutAccount,
       deviceList: visibleDeviceList,
       recording,
@@ -4892,6 +4975,10 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       health,
       entitlements,
       account,
+      aiCapabilities,
+      aiQuota,
+      aiReadinessError,
+      aiReadinessLoading,
       signOutAccount,
       visibleDeviceList,
       recording,

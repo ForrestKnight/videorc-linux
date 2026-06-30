@@ -1648,6 +1648,139 @@ export interface ExportPublishPackResult {
   markdownPath: string
 }
 
+export interface AiCapabilities {
+  entitlement: {
+    checkedAt: string
+    cloudAi: boolean
+    expiresAt: string
+    isPremium: boolean
+    subscriptionStatus: string
+    tier: string
+  }
+  features: {
+    cloudAiEnabled: boolean
+    gatewayConfigured: boolean
+    modelTestingEnabled: boolean
+    multipartAudioJobsEnabled: boolean
+    objectBackedJobsEnabled: boolean
+    transcriptJobsEnabled: boolean
+    uploadTicketsEnabled: boolean
+  }
+  generatedAt: string
+  limits: {
+    dailyJobs: number
+    maxAudioBytes: number | null
+    maxAudioMegabytes: number | null
+    maxOutputTokens: number | null
+    maxTranscriptCharacters: number
+    monthlyJobs: number
+  }
+  models: {
+    allowedTextModelCount: number
+    allowedTextModelsConfigured: boolean
+    defaultTextModel: string | null
+    fallbackTextModels: string[]
+  }
+  objectStorage: {
+    deleteConfigured: boolean
+    downloadConfigured: boolean
+    provider: string | null
+    providerError: string | null
+    proofConfigured: boolean
+    proofTtlMs: number | null
+    uploadConfigured: boolean
+  }
+  readiness: {
+    access: {
+      cloudAiEntitled: boolean
+      globallyDisabled: boolean
+    }
+    gateway: {
+      configError: string | null
+      configured: boolean
+    }
+    objectStorage: {
+      deleteConfigError: string | null
+      downloadConfigError: string | null
+      proofConfigError: string | null
+      providerError: string | null
+      uploadConfigError: string | null
+    }
+    transcription: {
+      configError: string | null
+      configured: boolean
+    }
+  }
+  transcription: {
+    configured: boolean
+    configError: string | null
+    maxAudioBytes: number | null
+    maxAudioMegabytes: number | null
+    requestTimeoutMs: number | null
+  }
+  workflow: {
+    inputModes: Array<{
+      enabled: boolean
+      kind: 'multipart-audio' | 'stored-audio-object' | 'transcript' | string
+    }>
+    kind: string
+    outputs: string[]
+  }
+}
+
+export interface AiQuotaStatus {
+  access: {
+    allowed: boolean
+    code: string | null
+    message: string | null
+    status: number | null
+  }
+  entitlement: {
+    cancelAtPeriodEnd: boolean
+    checkedAt: string
+    cloudAi: boolean
+    currentPeriodEnd: string | null
+    expiresAt: string
+    isPremium: boolean
+    subscriptionStatus: string
+    tier: string
+  }
+  generatedAt: string
+  monthly: {
+    limit: number
+    remaining: number
+    resetAt: string
+    used: number
+  }
+  today: {
+    limit: number
+    remaining: number
+    resetAt: string
+    used: number
+  }
+}
+
+export interface AiJobSnapshot {
+  clientRequestId: string | null
+  completedAt: string | null
+  costEstimateCents: number | null
+  createdAt: string
+  errorCode: string | null
+  errorMessage: string | null
+  fallbackModels: string[]
+  id: string
+  inputTokens: number | null
+  model: string | null
+  outputJson: unknown
+  outputTokens: number | null
+  provider: string
+  runAttempts: number
+  sessionClientId: string
+  startedAt: string | null
+  status: string
+  workflowKind: string
+}
+
 export type AiArtifactKind =
   | 'audio-extract'
   | 'transcript'

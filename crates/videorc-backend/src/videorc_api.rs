@@ -9,6 +9,9 @@
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
+use serde::de::DeserializeOwned;
+
+use crate::protocol::{AiCapabilities, AiJobSnapshot, AiQuotaStatus};
 
 const PRODUCTION_API_BASE_URL: &str = "https://videorc.com";
 const DEV_API_BASE_URL: &str = "http://localhost:3000";
@@ -78,6 +81,35 @@ impl VideorcApiClient {
 
     fn endpoint(&self, path: &str) -> String {
         format!("{}/{}", self.base_url, path.trim_start_matches('/'))
+    }
+
+    async fn get_bearer_json<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        bearer_token: &str,
+    ) -> Result<T> {
+        let response = self
+            .http
+            .get(self.endpoint(path))
+            .bearer_auth(bearer_token)
+            .send()
+            .await
+            .with_context(|| format!("Could not reach Videorc API path {path}."))?;
+
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            bail!("Sign in to use cloud AI.");
+        }
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let message = read_safe_error_message(response).await;
+            bail!("Videorc API request failed ({status}): {message}");
+        }
+
+        response
+            .json()
+            .await
+            .with_context(|| format!("Could not read Videorc API response for {path}."))
     }
 
     /// Exchange a single-use one-time token (delivered via the `videorc://`
@@ -154,6 +186,44 @@ impl VideorcApiClient {
             rotated_token,
         })
     }
+
+    /// Fetch safe client-facing AI capability metadata for the signed-in user.
+    pub async fn get_ai_capabilities(&self, bearer_token: &str) -> Result<AiCapabilities> {
+        self.get_bearer_json("/api/ai/capabilities", bearer_token)
+            .await
+    }
+
+    /// Fetch safe client-facing AI quota metadata for the signed-in user.
+    pub async fn get_ai_quota(&self, bearer_token: &str) -> Result<AiQuotaStatus> {
+        self.get_bearer_json("/api/ai/quota", bearer_token).await
+    }
+
+    /// Fetch a user-owned AI job snapshot by id.
+    pub async fn get_ai_job(&self, bearer_token: &str, job_id: &str) -> Result<AiJobSnapshot> {
+        self.get_bearer_json(&format!("/api/ai/jobs/{job_id}"), bearer_token)
+            .await
+    }
+}
+
+async fn read_safe_error_message(response: reqwest::Response) -> String {
+    #[derive(Deserialize)]
+    struct ErrorEnvelope {
+        error: Option<ErrorBody>,
+    }
+
+    #[derive(Deserialize)]
+    struct ErrorBody {
+        message: Option<String>,
+    }
+
+    match response.text().await {
+        Ok(text) => serde_json::from_str::<ErrorEnvelope>(&text)
+            .ok()
+            .and_then(|envelope| envelope.error.and_then(|error| error.message))
+            .filter(|message| !message.trim().is_empty())
+            .unwrap_or_else(|| "request failed".to_string()),
+        Err(_) => "request failed".to_string(),
+    }
 }
 
 #[derive(Deserialize)]
@@ -225,5 +295,42 @@ mod tests {
         assert_eq!(parsed.session.token, "sess_abc");
         assert_eq!(parsed.user.email, "orc@videorc.com");
         assert_eq!(parsed.user.name.as_deref(), Some("Orc Dev"));
+    }
+
+    #[test]
+    fn ai_capabilities_response_parses_safe_metadata() {
+        let json = r#"{
+            "entitlement":{"checkedAt":"2026-06-15T12:00:00.000Z","cloudAi":true,"expiresAt":"2026-06-15T12:05:00.000Z","isPremium":true,"subscriptionStatus":"active","tier":"premium"},
+            "features":{"cloudAiEnabled":true,"gatewayConfigured":true,"modelTestingEnabled":true,"multipartAudioJobsEnabled":true,"objectBackedJobsEnabled":false,"transcriptJobsEnabled":true,"uploadTicketsEnabled":false},
+            "generatedAt":"2026-06-15T12:30:00.000Z",
+            "limits":{"dailyJobs":25,"maxAudioBytes":13107200,"maxAudioMegabytes":12.5,"maxOutputTokens":1900,"maxTranscriptCharacters":90000,"monthlyJobs":600},
+            "models":{"allowedTextModelCount":2,"allowedTextModelsConfigured":true,"defaultTextModel":"openai/gpt-5.5","fallbackTextModels":["google/gemini"]},
+            "objectStorage":{"deleteConfigured":false,"downloadConfigured":false,"provider":null,"providerError":null,"proofConfigured":false,"proofTtlMs":null,"uploadConfigured":false},
+            "readiness":{"access":{"cloudAiEntitled":true,"globallyDisabled":false},"gateway":{"configError":null,"configured":true},"objectStorage":{"deleteConfigError":null,"downloadConfigError":null,"proofConfigError":null,"providerError":null,"uploadConfigError":null},"transcription":{"configError":null,"configured":true}},
+            "transcription":{"configured":true,"configError":null,"maxAudioBytes":13107200,"maxAudioMegabytes":12.5,"requestTimeoutMs":65000},
+            "workflow":{"inputModes":[{"enabled":true,"kind":"transcript"},{"enabled":true,"kind":"multipart-audio"}],"kind":"post-recording-publish-pack","outputs":["summary"]}
+        }"#;
+        let parsed: AiCapabilities = serde_json::from_str(json).unwrap();
+        assert!(parsed.features.cloud_ai_enabled);
+        assert_eq!(parsed.workflow.input_modes[1].kind, "multipart-audio");
+        assert_eq!(parsed.limits.max_audio_megabytes, Some(12.5));
+    }
+
+    #[test]
+    fn ai_quota_response_parses_blocked_access() {
+        let json = r#"{
+            "access":{"allowed":false,"code":"ai-daily-quota-exhausted","message":"Daily AI quota exhausted.","status":429},
+            "entitlement":{"cancelAtPeriodEnd":false,"checkedAt":"2026-06-15T12:00:00.000Z","cloudAi":true,"currentPeriodEnd":"2026-07-15T00:00:00.000Z","expiresAt":"2026-06-15T12:05:00.000Z","isPremium":true,"subscriptionStatus":"active","tier":"premium"},
+            "generatedAt":"2026-06-15T23:30:00.000Z",
+            "monthly":{"limit":50,"remaining":38,"resetAt":"2026-07-01T00:00:00.000Z","used":12},
+            "today":{"limit":2,"remaining":0,"resetAt":"2026-06-16T00:00:00.000Z","used":2}
+        }"#;
+        let parsed: AiQuotaStatus = serde_json::from_str(json).unwrap();
+        assert!(!parsed.access.allowed);
+        assert_eq!(
+            parsed.access.code.as_deref(),
+            Some("ai-daily-quota-exhausted")
+        );
+        assert_eq!(parsed.today.remaining, 0);
     }
 }
