@@ -3109,6 +3109,16 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       return
     }
 
+    // Start/stop the camera + screen capture the NEW layout needs before pushing
+    // the scene. The compositor only marks a scene revision "rendered" once it
+    // publishes a frame carrying that revision, which it can only do when the
+    // sources the scene references are live. If we push the scene first (e.g.
+    // camera-only -> screen-only) the screen capture is still racing to come up,
+    // the compositor never renders the revision, the rendered-revision wait times
+    // out, and the preview freezes instead of switching. Ensuring the sources here
+    // (rather than only via the debounced auto-preview effect) closes that race.
+    await Promise.all([ensureNativePreviewCamera(), ensureNativePreviewScreen()])
+
     const revision = nativePreviewSurfaceSceneRevisionRef.current + 1
     nativePreviewSurfaceSceneRevisionRef.current = revision
     const params: PreviewSurfaceSceneUpdateParams = {
@@ -3164,6 +3174,8 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     applyPreviewSurfaceStatus,
     captureConfig.layout,
     client,
+    ensureNativePreviewCamera,
+    ensureNativePreviewScreen,
     nativePreviewSurfaceEnabled,
     sceneWithBackground,
     wsStatus
