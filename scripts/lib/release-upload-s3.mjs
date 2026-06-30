@@ -1,5 +1,5 @@
 import { createHash, createHmac } from 'node:crypto'
-import { stat } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 
 const S3_ALGORITHM = 'AWS4-HMAC-SHA256'
@@ -9,7 +9,11 @@ const S3_SERVICE = 's3'
 const DEFAULT_CONTENT_TYPES = new Map([
   ['.dmg', 'application/x-apple-diskimage'],
   ['.json', 'application/json'],
-  ['.sha256', 'text/plain; charset=utf-8']
+  ['.sha256', 'text/plain; charset=utf-8'],
+  // electron-updater feed artifacts.
+  ['.yml', 'text/yaml; charset=utf-8'],
+  ['.zip', 'application/zip'],
+  ['.blockmap', 'application/octet-stream']
 ])
 
 export class ReleaseUploadConfigError extends Error {
@@ -56,30 +60,72 @@ export async function buildReleaseUploadPlan({
 }) {
   const releaseId = requireManifestString(manifest, 'releaseId')
   const filename = requireManifestString(manifest, 'filename')
+  // Versioned archive: the human dmg download (videorc-web 302s authenticated
+  // users to a presigned URL here).
   const prefix = normalizeObjectPrefix(
     nonEmpty(env.VIDEORC_RELEASE_UPLOAD_PREFIX) ?? `releases/macos/${releaseId}`
   )
-  const artifactPath = join(releaseDir, filename)
-  const shaPath = join(releaseDir, `${filename}.sha256`)
+  // electron-updater feed: a STABLE prefix, overwritten each release, so the
+  // videorc-web /api/updates/* route is a trivial 1:1 proxy — electron-updater
+  // GETs latest-mac.yml then the bare zip filename it references, both here.
+  const updatesPrefix = normalizeObjectPrefix(
+    nonEmpty(env.VIDEORC_RELEASE_UPDATES_PREFIX) ?? 'updates/macos'
+  )
+  const zipFilename = macUpdateZipName(filename)
+  const blockmapFilename = `${zipFilename}.blockmap`
+
+  // The feed must be internally consistent before we publish it, or
+  // electron-updater will 404 chasing a zip that isn't there.
+  const feedYmlPath = join(releaseDir, 'latest-mac.yml')
+  const feedYml = await readReleaseFile(
+    feedYmlPath,
+    'missing-update-feed-manifest',
+    'latest-mac.yml'
+  )
+  const referencedZip = updateFeedZipNameFromYml(feedYml)
+  if (referencedZip && referencedZip !== zipFilename) {
+    throw new ReleaseUploadConfigError(
+      'update-feed-zip-mismatch',
+      `latest-mac.yml references ${referencedZip} but the release dmg implies ${zipFilename}. Remove stale artifacts and rebuild.`
+    )
+  }
 
   const artifacts = [
     {
       contentType: contentTypeFor(filename),
       label: 'dmg',
       objectKey: `${prefix}/${filename}`,
-      path: artifactPath
+      path: join(releaseDir, filename)
     },
     {
       contentType: contentTypeFor(`${filename}.sha256`),
       label: 'sha256',
       objectKey: `${prefix}/${filename}.sha256`,
-      path: shaPath
+      path: join(releaseDir, `${filename}.sha256`)
     },
     {
       contentType: contentTypeFor('release.json'),
       label: 'manifest',
       objectKey: `${prefix}/release.json`,
       path: manifestPath
+    },
+    {
+      contentType: contentTypeFor('latest-mac.yml'),
+      label: 'feed-manifest',
+      objectKey: `${updatesPrefix}/latest-mac.yml`,
+      path: feedYmlPath
+    },
+    {
+      contentType: contentTypeFor(zipFilename),
+      label: 'feed-zip',
+      objectKey: `${updatesPrefix}/${zipFilename}`,
+      path: join(releaseDir, zipFilename)
+    },
+    {
+      contentType: contentTypeFor(blockmapFilename),
+      label: 'feed-blockmap',
+      objectKey: `${updatesPrefix}/${blockmapFilename}`,
+      path: join(releaseDir, blockmapFilename)
     }
   ]
 
@@ -87,12 +133,32 @@ export async function buildReleaseUploadPlan({
     artifacts: await Promise.all(
       artifacts.map(async (artifact) => ({
         ...artifact,
-        sizeBytes: (await stat(artifact.path)).size
+        sizeBytes: await releaseFileSize(artifact.path, artifact.label)
       }))
     ),
     prefix,
+    updatesPrefix,
     releaseId
   }
+}
+
+// electron-updater pulls the zip (not the dmg) for macOS updates; its name is the
+// dmg name with a .zip extension (electron-builder's artifactName template).
+export function macUpdateZipName(dmgFilename) {
+  if (!String(dmgFilename).endsWith('.dmg')) {
+    throw new ReleaseUploadConfigError(
+      'invalid-dmg-filename',
+      `Expected a .dmg release filename to derive the update zip, got ${dmgFilename}.`
+    )
+  }
+  return `${dmgFilename.slice(0, -'.dmg'.length)}.zip`
+}
+
+// The primary update artifact electron-updater fetches, read from latest-mac.yml's
+// top-level `path:` field. A tiny scan avoids pulling in a YAML dependency.
+export function updateFeedZipNameFromYml(ymlText) {
+  const match = String(ymlText).match(/^path:[^\S\r\n]*(.+?)[^\S\r\n]*$/m)
+  return match ? match[1].trim() : null
 }
 
 export function buildSignedS3Request({ config, method, objectKey }) {
@@ -222,6 +288,28 @@ function requireManifestString(manifest, field) {
     )
   }
   return value.trim()
+}
+
+async function readReleaseFile(path, code, label) {
+  try {
+    return await readFile(path, 'utf8')
+  } catch {
+    throw new ReleaseUploadConfigError(
+      code,
+      `Missing ${label} at ${path}. Run \`pnpm dist:release\` to build the dmg + update feed.`
+    )
+  }
+}
+
+async function releaseFileSize(path, label) {
+  try {
+    return (await stat(path)).size
+  } catch {
+    throw new ReleaseUploadConfigError(
+      `missing-artifact-${label}`,
+      `Missing release artifact "${label}" at ${path}. Run \`pnpm dist:release\` first.`
+    )
+  }
 }
 
 function normalizeObjectPrefix(prefix) {

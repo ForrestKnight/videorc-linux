@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
@@ -9,12 +9,40 @@ import {
   buildS3ObjectUrl,
   buildSignedS3Request,
   getReleaseUploadS3Config,
-  ReleaseUploadConfigError
+  macUpdateZipName,
+  ReleaseUploadConfigError,
+  updateFeedZipNameFromYml
 } from './release-upload-s3.mjs'
 
 const manifest = {
   filename: 'Videorc-0.9.0-mac-arm64.dmg',
   releaseId: '0.9.0-beta.1'
+}
+
+const latestMacYml = [
+  'version: 0.9.0',
+  'files:',
+  '  - url: Videorc-0.9.0-mac-arm64.zip',
+  '    sha512: deadbeef',
+  '    size: 9',
+  'path: Videorc-0.9.0-mac-arm64.zip',
+  'sha512: deadbeef',
+  ''
+].join('\n')
+
+// Seed a release dir with the dmg + checksum + manifest AND the electron-updater
+// feed trio (latest-mac.yml, zip, blockmap) the upload now requires.
+async function seedReleaseDir() {
+  const releaseDir = await mkdtemp(join(tmpdir(), 'videorc-release-upload-'))
+  await writeFile(join(releaseDir, manifest.filename), 'dmg')
+  await writeFile(join(releaseDir, `${manifest.filename}.sha256`), 'sha')
+  const manifestPath = join(releaseDir, 'release.json')
+  const manifestJson = JSON.stringify(manifest)
+  await writeFile(manifestPath, manifestJson)
+  await writeFile(join(releaseDir, 'latest-mac.yml'), latestMacYml)
+  await writeFile(join(releaseDir, 'Videorc-0.9.0-mac-arm64.zip'), 'zip-bytes')
+  await writeFile(join(releaseDir, 'Videorc-0.9.0-mac-arm64.zip.blockmap'), 'blockmap')
+  return { releaseDir, manifestPath, manifestJson }
 }
 
 const env = {
@@ -82,13 +110,8 @@ describe('release S3 upload config', () => {
 })
 
 describe('release S3 upload plan', () => {
-  it('uploads the DMG, checksum, and release manifest under the release id', async () => {
-    const releaseDir = await mkdtemp(join(tmpdir(), 'videorc-release-upload-'))
-    await writeFile(join(releaseDir, manifest.filename), 'dmg')
-    await writeFile(join(releaseDir, `${manifest.filename}.sha256`), 'sha')
-    const manifestPath = join(releaseDir, 'release.json')
-    const manifestJson = JSON.stringify(manifest)
-    await writeFile(manifestPath, manifestJson)
+  it('uploads the dmg archive plus the electron-updater feed trio', async () => {
+    const { releaseDir, manifestPath, manifestJson } = await seedReleaseDir()
 
     const plan = await buildReleaseUploadPlan({
       env: {},
@@ -99,6 +122,7 @@ describe('release S3 upload plan', () => {
 
     assert.equal(plan.releaseId, '0.9.0-beta.1')
     assert.equal(plan.prefix, 'releases/macos/0.9.0-beta.1')
+    assert.equal(plan.updatesPrefix, 'updates/macos')
     assert.deepEqual(
       plan.artifacts.map((artifact) => ({
         contentType: artifact.contentType,
@@ -124,27 +148,89 @@ describe('release S3 upload plan', () => {
           label: 'manifest',
           objectKey: 'releases/macos/0.9.0-beta.1/release.json',
           sizeBytes: Buffer.byteLength(manifestJson)
+        },
+        {
+          contentType: 'text/yaml; charset=utf-8',
+          label: 'feed-manifest',
+          objectKey: 'updates/macos/latest-mac.yml',
+          sizeBytes: Buffer.byteLength(latestMacYml)
+        },
+        {
+          contentType: 'application/zip',
+          label: 'feed-zip',
+          objectKey: 'updates/macos/Videorc-0.9.0-mac-arm64.zip',
+          sizeBytes: Buffer.byteLength('zip-bytes')
+        },
+        {
+          contentType: 'application/octet-stream',
+          label: 'feed-blockmap',
+          objectKey: 'updates/macos/Videorc-0.9.0-mac-arm64.zip.blockmap',
+          sizeBytes: Buffer.byteLength('blockmap')
         }
       ]
     )
   })
 
-  it('allows an explicit upload prefix', async () => {
-    const releaseDir = await mkdtemp(join(tmpdir(), 'videorc-release-upload-'))
-    await writeFile(join(releaseDir, manifest.filename), 'dmg')
-    await writeFile(join(releaseDir, `${manifest.filename}.sha256`), 'sha')
-    const manifestPath = join(releaseDir, 'release.json')
-    await writeFile(manifestPath, JSON.stringify(manifest))
+  it('allows explicit archive and feed prefixes', async () => {
+    const { releaseDir, manifestPath } = await seedReleaseDir()
 
     const plan = await buildReleaseUploadPlan({
-      env: { VIDEORC_RELEASE_UPLOAD_PREFIX: ' macos/beta/latest/ ' },
+      env: {
+        VIDEORC_RELEASE_UPLOAD_PREFIX: ' macos/beta/latest/ ',
+        VIDEORC_RELEASE_UPDATES_PREFIX: ' channels/stable/ '
+      },
       manifest,
       manifestPath,
       releaseDir
     })
 
     assert.equal(plan.prefix, 'macos/beta/latest')
+    assert.equal(plan.updatesPrefix, 'channels/stable')
     assert.equal(plan.artifacts.at(0)?.objectKey, 'macos/beta/latest/Videorc-0.9.0-mac-arm64.dmg')
+    assert.equal(plan.artifacts.at(3)?.objectKey, 'channels/stable/latest-mac.yml')
+  })
+
+  it('fails closed when the feed manifest is missing', async () => {
+    const { releaseDir, manifestPath } = await seedReleaseDir()
+    await rm(join(releaseDir, 'latest-mac.yml'))
+
+    await assert.rejects(
+      buildReleaseUploadPlan({ env: {}, manifest, manifestPath, releaseDir }),
+      (error) =>
+        error instanceof ReleaseUploadConfigError && error.code === 'missing-update-feed-manifest'
+    )
+  })
+
+  it('fails closed when latest-mac.yml points at a stale zip', async () => {
+    const { releaseDir, manifestPath } = await seedReleaseDir()
+    await writeFile(
+      join(releaseDir, 'latest-mac.yml'),
+      latestMacYml.replaceAll('Videorc-0.9.0-mac-arm64.zip', 'Videorc-0.8.0-mac-arm64.zip')
+    )
+
+    await assert.rejects(
+      buildReleaseUploadPlan({ env: {}, manifest, manifestPath, releaseDir }),
+      (error) =>
+        error instanceof ReleaseUploadConfigError && error.code === 'update-feed-zip-mismatch'
+    )
+  })
+})
+
+describe('update feed helpers', () => {
+  it('derives the update zip name from the dmg name', () => {
+    assert.equal(macUpdateZipName('Videorc-0.9.0-mac-arm64.dmg'), 'Videorc-0.9.0-mac-arm64.zip')
+  })
+
+  it('rejects a non-dmg filename', () => {
+    assert.throws(
+      () => macUpdateZipName('Videorc-0.9.0-mac-arm64.zip'),
+      (error) => error instanceof ReleaseUploadConfigError && error.code === 'invalid-dmg-filename'
+    )
+  })
+
+  it('reads the primary zip from latest-mac.yml', () => {
+    assert.equal(updateFeedZipNameFromYml(latestMacYml), 'Videorc-0.9.0-mac-arm64.zip')
+    assert.equal(updateFeedZipNameFromYml('version: 1.0.0\n'), null)
   })
 })
 

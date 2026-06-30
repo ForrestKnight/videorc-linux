@@ -12,7 +12,12 @@
 //   pnpm release:upload
 //
 // We refuse to upload an un-notarized dmg (a download Gatekeeper blocks is worse
-// than none). No zip/yml: auto-update is off for the download-only beta.
+// than none). We also publish the electron-updater feed (latest-mac.yml + the zip
+// + its blockmap) to a stable updates/macos/ prefix so the in-app Update button
+// works — videorc-web's /api/updates/* route proxies that prefix 1:1.
+//
+// NOTE: `pnpm release:upload:macos` (scripts/upload-macos-beta-release.mjs) is the
+// tested pipeline and does the same thing; keep the two in sync.
 
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -45,6 +50,22 @@ function architectureFromFileName(name) {
   if (/arm64/i.test(name)) return 'Apple Silicon (Apple M-series)'
   if (/x64|intel/i.test(name)) return 'Intel'
   return 'unknown'
+}
+
+async function readFeedArtifacts(dir, { zipName, blockmapName }) {
+  try {
+    const [latestYml, zip, blockmap] = await Promise.all([
+      readFile(join(dir, 'latest-mac.yml')),
+      readFile(join(dir, zipName)),
+      readFile(join(dir, blockmapName))
+    ])
+    return { latestYml, zip, blockmap }
+  } catch {
+    console.error(
+      `Missing electron-updater feed artifacts (latest-mac.yml, ${zipName}, ${blockmapName}) in release/. Run \`pnpm dist:release\` first.`
+    )
+    process.exit(1)
+  }
 }
 
 async function main() {
@@ -89,6 +110,16 @@ async function main() {
   const sha256 = createHash('sha256').update(dmg).digest('hex')
   const prefix = `releases/macos/${releaseId}`
 
+  // electron-updater feed: a STABLE prefix, overwritten each release, so the
+  // videorc-web /api/updates/* route is a trivial 1:1 proxy. electron-updater
+  // pulls the zip (not the dmg); its name is the dmg name with a .zip extension.
+  const updatesPrefix = (
+    process.env.VIDEORC_RELEASE_UPDATES_PREFIX?.trim() || 'updates/macos'
+  ).replace(/\/+$/, '')
+  const zipName = dmgName.replace(/\.dmg$/, '.zip')
+  const blockmapName = `${zipName}.blockmap`
+  const feed = await readFeedArtifacts(RELEASE_DIR, { zipName, blockmapName })
+
   // Field names must match lib/download.ts → downloadReleaseMetadataFromManifest.
   const manifest = {
     releaseId,
@@ -118,6 +149,26 @@ async function main() {
       body: Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`),
       contentType: 'application/json; charset=utf-8',
       cacheControl: 'no-cache, must-revalidate'
+    },
+    // electron-updater feed. The yml must not be cached hard or clients miss new
+    // releases; the zip + blockmap are content-addressed, so cache them forever.
+    {
+      key: `${updatesPrefix}/latest-mac.yml`,
+      body: feed.latestYml,
+      contentType: 'text/yaml; charset=utf-8',
+      cacheControl: 'no-cache, must-revalidate'
+    },
+    {
+      key: `${updatesPrefix}/${zipName}`,
+      body: feed.zip,
+      contentType: 'application/zip',
+      cacheControl: IMMUTABLE
+    },
+    {
+      key: `${updatesPrefix}/${blockmapName}`,
+      body: feed.blockmap,
+      contentType: 'application/octet-stream',
+      cacheControl: IMMUTABLE
     }
   ]
 
@@ -139,6 +190,9 @@ async function main() {
     [
       '',
       `Uploaded ${dmgName} + release.json to ${bucket}/${prefix}.`,
+      `Uploaded the update feed (latest-mac.yml, ${zipName}, ${blockmapName}) to ${bucket}/${updatesPrefix}.`,
+      '',
+      'The in-app Update button reads the feed via videorc-web /api/updates/*.',
       '',
       'Set these in videorc-web (Vercel → Production), then redeploy:',
       '  VIDEORC_DOWNLOAD_STORAGE_PROVIDER=s3',
