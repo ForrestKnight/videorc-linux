@@ -121,6 +121,8 @@ let backendConnection: BackendConnection | null = null
 let smokePreviewMotionServer: HttpServer | null = null
 let smokePreviewCompositorFrameId = 0
 let nativePreviewSurfaceScene: PreviewSurfaceSceneState | null = null
+let nativePreviewPendingSceneRevision: number | null = null
+let nativePreviewSurfaceSceneRevisionGuardUntilMs = 0
 let stdoutBuffer = ''
 let appIsQuitting = false
 let appIcon: NativeImage | null | undefined
@@ -1895,6 +1897,58 @@ function buildPreviewSurfaceSceneFromCompositorStatus(
   }
 }
 
+function sceneRevisionIsSafeInteger(revision: unknown): revision is number {
+  return typeof revision === 'number' && Number.isSafeInteger(revision)
+}
+
+function protectNativePreviewSceneRevision(revision: number): void {
+  nativePreviewPendingSceneRevision = revision
+  nativePreviewSurfaceSceneRevisionGuardUntilMs = Date.now() + 2000
+}
+
+function markNativePreviewSceneRevisionPresented(
+  status: PreviewSurfaceCompositorUpdateParams
+): void {
+  if (
+    nativePreviewPendingSceneRevision === null ||
+    !sceneRevisionIsSafeInteger(status.sceneRevision) ||
+    status.sceneRevision < nativePreviewPendingSceneRevision
+  ) {
+    return
+  }
+  if (
+    sceneRevisionIsSafeInteger(status.frameSceneRevision) &&
+    status.frameSceneRevision < nativePreviewPendingSceneRevision
+  ) {
+    return
+  }
+
+  nativePreviewPendingSceneRevision = null
+  nativePreviewSurfaceSceneRevisionGuardUntilMs = Date.now() + 500
+}
+
+function shouldRejectOlderPreviewSceneRevision(revision: unknown, sceneId?: string): boolean {
+  const currentScene = nativePreviewSurfaceScene
+  const currentRevision = currentScene?.revision
+  return (
+    sceneRevisionIsSafeInteger(currentRevision) &&
+    sceneRevisionIsSafeInteger(revision) &&
+    revision < currentRevision &&
+    ((Boolean(currentScene?.sceneId) && currentScene?.sceneId === sceneId) ||
+      Date.now() < nativePreviewSurfaceSceneRevisionGuardUntilMs)
+  )
+}
+
+function previewSurfaceSceneIsOlderThanCurrent(scene: PreviewSurfaceSceneState): boolean {
+  return shouldRejectOlderPreviewSceneRevision(scene.revision, scene.sceneId)
+}
+
+function compositorSceneRevisionBehindCurrent(
+  status: PreviewSurfaceCompositorUpdateParams
+): boolean {
+  return shouldRejectOlderPreviewSceneRevision(status.sceneRevision, status.sceneId)
+}
+
 function compositorLayerFrameUrl(
   source: CompositorStatus['sceneSources'][number]
 ): string | undefined {
@@ -2780,6 +2834,9 @@ async function updateNativePreviewSurfaceScene(
   params: PreviewSurfaceSceneUpdateParams
 ): Promise<PreviewSurfaceStatus> {
   await waitForNativePreviewSurfaceMutation()
+  if (sceneRevisionIsSafeInteger(params.revision)) {
+    protectNativePreviewSceneRevision(params.revision)
+  }
   nativePreviewSurfaceScene = buildPreviewSurfaceScene(params)
   await reconcileNativePreviewSurfaceForPreviewWindow({ force: true })
   const surfaceWindow = nativePreviewSurfaceWindow
@@ -2859,10 +2916,26 @@ async function presentNativePreviewSurfaceCompositor(
   }
   const effectiveStatus = await refreshNativePreviewCompositorStatus(status)
   const compositorScene = buildPreviewSurfaceSceneFromCompositorStatus(effectiveStatus)
-  if (compositorScene) {
+  const compositorSceneIsCurrent = compositorScene
+    ? !previewSurfaceSceneIsOlderThanCurrent(compositorScene)
+    : false
+  if (compositorScene && compositorSceneIsCurrent) {
     nativePreviewSurfaceScene = compositorScene
   }
   await reconcileNativePreviewSurfaceForPreviewWindow()
+  if (compositorSceneRevisionBehindCurrent(effectiveStatus)) {
+    nativePreviewSurfaceStatus = {
+      ...nativePreviewSurfaceStatus,
+      ...accountSkippedPreviewFrame(nativePreviewSurfaceStatus, effectiveStatus.framesRendered),
+      ...nativePreviewRendererTimingStatusFields(effectiveStatus),
+      ...nativePreviewMainStatusRefreshFields(effectiveStatus),
+      ...nativePreviewMainSceneMismatchFields(),
+      updatedAt: new Date().toISOString(),
+      message: `Preview waiting for compositor to render scene revision ${nativePreviewSurfaceScene?.revision ?? 'unknown'}.`
+    }
+    return nativePreviewSurfaceStatus
+  }
+  markNativePreviewSceneRevisionPresented(effectiveStatus)
   const realSurfaceAttempt = await tryPresentNativePreviewRealSurfaceCompositor(
     effectiveStatus,
     mainTiming
@@ -2881,6 +2954,27 @@ async function presentNativePreviewSurfaceCompositor(
     nativePreviewLastRealSurfaceFallbackLogKey = fallbackLogKey
     logBackend('warn', realSurfaceAttempt.reason)
   }
+  if (nativePreviewSurfaceStatusIsRealSurface(nativePreviewSurfaceStatus)) {
+    nativePreviewSurfaceStatus = {
+      ...nativePreviewSurfaceStatus,
+      ...accountSkippedPreviewFrame(nativePreviewSurfaceStatus, effectiveStatus.framesRendered),
+      ...nativePreviewRendererTimingStatusFields(effectiveStatus),
+      ...nativePreviewMainStatusRefreshFields(effectiveStatus),
+      ...nativePreviewMainSceneMismatchFields(),
+      framePollingSuppressed:
+        nativePreviewSurfaceFramePollingSuppressed || effectiveStatus.suppressFramePolling === true,
+      updatedAt: new Date().toISOString(),
+      message:
+        realSurfaceAttempt.reason ??
+        'Native preview skipped a compositor frame without downgrading the active CAMetalLayer surface.'
+    }
+    previewSupervisor.surfaceLive({
+      generation: previewWindowSurfaceGeneration(),
+      transport: nativePreviewSurfaceStatus.transport,
+      backing: nativePreviewSurfaceStatus.backing
+    })
+    return nativePreviewSurfaceStatus
+  }
   if (effectiveStatus.suppressFramePolling !== true) {
     await showNativePreviewProofSurfaceIfVisible()
   }
@@ -2888,9 +2982,10 @@ async function presentNativePreviewSurfaceCompositor(
   const surfaceWindow = nativePreviewSurfaceWindow
   if (surfaceWindow && !surfaceWindow.isDestroyed()) {
     await waitForNativePreviewSurfaceScript(surfaceWindow)
-    const sceneScript = compositorScene
-      ? `window.__videorcSetPreviewScene?.(${jsonForInlineScript(compositorScene)});`
-      : ''
+    const sceneScript =
+      compositorScene && compositorSceneIsCurrent
+        ? `window.__videorcSetPreviewScene?.(${jsonForInlineScript(compositorScene)});`
+        : ''
     const statusJson = jsonForInlineScript(effectiveStatus)
     if (nativePreviewSurfaceWindow === surfaceWindow && !surfaceWindow.isDestroyed()) {
       await surfaceWindow.webContents.executeJavaScript(
@@ -3463,6 +3558,19 @@ async function waitForNativePreviewSurfaceScript(
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, ms))
+}
+
+function sendWindowCenterClick(window: BrowserWindow | null): boolean {
+  if (!window || window.isDestroyed() || window.webContents.isDestroyed()) {
+    return false
+  }
+  const bounds = window.getContentBounds()
+  const x = Math.max(1, Math.floor(bounds.width / 2))
+  const y = Math.max(1, Math.floor(bounds.height / 2))
+  window.webContents.sendInputEvent({ type: 'mouseMove', x, y })
+  window.webContents.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 })
+  window.webContents.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 })
+  return true
 }
 
 function destroyNativePreviewSurface(
@@ -4743,6 +4851,103 @@ async function runSmokePreviewMotionCommand(
     return nativePreviewSurfaceStatus
   }
 
+  if (command === 'exercise-preview-click-focus') {
+    if (!previewWindowIsOpenForSurface() || !previewWindow || previewWindow.isDestroyed()) {
+      throw new Error('Preview window must be open before exercising click/focus.')
+    }
+    if (nativePreviewSurfaceStatus.state !== 'live') {
+      throw new Error('Native preview surface must be live before exercising click/focus.')
+    }
+
+    const steps: Array<Record<string, unknown>> = []
+    let lastFrames = nativePreviewSurfaceStatus.framesRendered
+    let revision = 9000
+    const forcePresent = async (label: string): Promise<void> => {
+      revision += 1
+      const beforeFrames = lastFrames
+      const compositorStatus = smokeCompositorStatusFromSceneParams(
+        smokePreviewSceneParams(revision, 0.18 + (revision % 5) * 0.12)
+      )
+      const status = await updateNativePreviewSurfaceCompositor({
+        ...compositorStatus,
+        framesRendered: Math.max(compositorStatus.framesRendered, beforeFrames + 1)
+      })
+      const step = {
+        label,
+        beforeFrames,
+        afterFrames: status.framesRendered,
+        state: status.state,
+        transport: status.transport,
+        backing: status.backing,
+        previewWindowOpen: previewWindowIsOpenForSurface(),
+        surfaceExists: Boolean(
+          nativePreviewSurfaceWindow && !nativePreviewSurfaceWindow.isDestroyed()
+        ),
+        surfaceVisible: Boolean(
+          nativePreviewSurfaceWindow &&
+          !nativePreviewSurfaceWindow.isDestroyed() &&
+          nativePreviewSurfaceWindow.isVisible()
+        )
+      }
+      steps.push(step)
+      if (!previewWindowIsOpenForSurface()) {
+        throw new Error(`Preview window closed during ${label}: ${JSON.stringify(step)}`)
+      }
+      if (status.state !== 'live') {
+        throw new Error(`Preview surface stopped during ${label}: ${JSON.stringify(step)}`)
+      }
+      if (status.framesRendered <= beforeFrames) {
+        throw new Error(`Preview frames did not advance during ${label}: ${JSON.stringify(step)}`)
+      }
+      lastFrames = status.framesRendered
+    }
+
+    await forcePresent('baseline')
+    mainWindow.focus()
+    await delay(80)
+    await forcePresent('main-window-focus')
+
+    previewWindow.focus()
+    await delay(80)
+    await forcePresent('preview-window-focus')
+
+    const previewClicked = sendWindowCenterClick(previewWindow)
+    await delay(80)
+    await forcePresent('preview-window-click')
+
+    const surfaceClicked = sendWindowCenterClick(nativePreviewSurfaceWindow)
+    await delay(80)
+    await forcePresent('surface-window-click')
+
+    const originalAlwaysOnTop = previewWindowAlwaysOnTop
+    setPreviewWindowAlwaysOnTop(!originalAlwaysOnTop)
+    await delay(80)
+    await forcePresent('always-on-top-toggle')
+    setPreviewWindowAlwaysOnTop(originalAlwaysOnTop)
+
+    const currentBounds = previewWindow.getBounds()
+    previewWindow.setBounds({
+      ...currentBounds,
+      x: currentBounds.x + 6,
+      y: currentBounds.y + 4
+    })
+    pushPreviewWindowPlacement()
+    await delay(120)
+    await forcePresent('preview-window-move')
+    previewWindow.setBounds(currentBounds)
+    pushPreviewWindowPlacement()
+
+    return {
+      previewWindowOpen: previewWindowIsOpenForSurface(),
+      previewClicked,
+      surfaceClicked,
+      nativeOwnsPlacement: nativeSurfaceOwnsPlacement(),
+      steps,
+      status: nativePreviewSurfaceStatus,
+      window: previewWindowState()
+    }
+  }
+
   if (command === 'preview-surface-scene-state') {
     return {
       sceneRevision: nativePreviewSurfaceScene?.revision ?? null,
@@ -5198,7 +5403,7 @@ function smokeRendererScript(command: string, params: Record<string, unknown>): 
         while (Date.now() < deadline) {
           button = Array.from(document.querySelectorAll('[data-videorc-layout-preset]'))
             .find((candidate) => candidate.getAttribute('data-videorc-layout-preset') === preset);
-          if (button) break;
+          if (button && !button.disabled) break;
           await sleep(50);
         }
         if (!button) {
