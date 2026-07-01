@@ -5,7 +5,8 @@ import {
   ImageSquare,
   Trash,
   UploadSimple,
-  Warning
+  Warning,
+  X
 } from '@phosphor-icons/react'
 import { useMemo, useState, type ComponentProps, type ReactElement } from 'react'
 import { toast } from 'sonner'
@@ -23,6 +24,7 @@ import {
   BACKGROUND_STYLE_FIELDS,
   applySlot,
   canApplySlot,
+  clearActiveSlot,
   createImportedAsset,
   defaultBackgroundStyle,
   importIntoSlot,
@@ -180,7 +182,11 @@ export function AssetsTab(): ReactElement {
             </Gallery>
           </PanelSection>
 
-          <CurrentSceneBackground registry={registry} onMissing={markMissing} />
+          <CurrentSceneBackground
+            registry={registry}
+            onMissing={markMissing}
+            onClear={() => setRegistry(clearActiveSlot)}
+          />
         </div>
 
         <BackgroundInspector
@@ -435,10 +441,12 @@ function BackgroundInspector({
 
 function CurrentSceneBackground({
   registry,
-  onMissing
+  onMissing,
+  onClear
 }: {
   registry: BackgroundAssetRegistry
   onMissing: (slotId: string) => void
+  onClear: () => void
 }): ReactElement {
   const activeSlot = registry.slots.find((slot) => slot.id === registry.activeSlotId) ?? null
   const asset = activeSlot ? slotAsset(activeSlot, registry) : null
@@ -446,7 +454,18 @@ function CurrentSceneBackground({
   const missing = activeSlot ? slotDisplayStatus(activeSlot, registry) === 'missing-file' : false
 
   return (
-    <PanelSection title="Current scene background" icon={ImageSquare}>
+    <PanelSection
+      title="Current scene background"
+      icon={ImageSquare}
+      action={
+        activeSlot ? (
+          <Button size="sm" variant="outline" onClick={onClear}>
+            <X data-icon="inline-start" />
+            Remove from scene
+          </Button>
+        ) : undefined
+      }
+    >
       <div className="flex items-center gap-3">
         <div className="grid aspect-[16/9] w-28 shrink-0 place-items-center overflow-hidden rounded-row border bg-muted/30">
           {activeSlot && sceneSrc && !missing ? (
@@ -464,7 +483,9 @@ function CurrentSceneBackground({
           {activeSlot && asset && !missing ? (
             <>
               <p className="truncate font-medium">{slotName(activeSlot, registry)}</p>
-              <p className="text-xs text-muted-foreground">Applied to the active scene.</p>
+              <p className="text-xs text-muted-foreground">
+                Applied to the active scene — the recording sits on an inset stage over it.
+              </p>
             </>
           ) : missing ? (
             <p className="text-xs text-warning">
@@ -473,7 +494,7 @@ function CurrentSceneBackground({
             </p>
           ) : (
             <p className="text-xs text-muted-foreground">
-              No digital background. Recording uses the neutral compositor background.
+              No digital background. The recording fills the full canvas.
             </p>
           )}
         </div>

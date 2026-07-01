@@ -8700,6 +8700,54 @@ mod tests {
     }
 
     #[test]
+    fn scene_filter_without_background_keeps_sources_full_canvas() {
+        // The user-facing contract for "Remove from scene": with no digital
+        // background there is no inset stage — the recording fills the full
+        // canvas (screen back to 100%, camera at its uncompressed transform).
+        let mut params = base_params(true, false);
+        params.output.video.width = 100;
+        params.output.video.height = 100;
+        let mut scene = scene_with_sources(vec![
+            scene_source(
+                "screen",
+                SceneSourceKind::Screen,
+                scene_transform(0.0, 0.0, 1.0, 1.0),
+                true,
+            ),
+            scene_source(
+                "camera",
+                SceneSourceKind::Camera,
+                scene_transform(0.75, 0.7, 0.2, 0.2),
+                true,
+            ),
+        ]);
+        scene.background = None;
+        params.scene = Some(scene);
+
+        let filter = recording_video_filter(
+            &CaptureInputs {
+                video: VideoInput::MacScreen { index: 3 },
+                camera_index: Some(0),
+                microphone: None,
+            },
+            &InputLayout {
+                video_input_index: 0,
+                camera_input_index: Some(1),
+                screen_overlay_input_index: None,
+                audio_inputs: Vec::new(),
+            },
+            &params,
+            false,
+        );
+
+        assert!(!filter.contains("movie=filename="));
+        assert!(filter.contains("scale=100:100"));
+        assert!(filter.contains("overlay=x=0:y=0"));
+        assert!(filter.contains("scale=20:20"));
+        assert!(filter.contains("overlay=x=75:y=70"));
+    }
+
+    #[test]
     fn stream_only_scene_filter_uses_committed_source_order() {
         let mut params = base_params(false, true);
         params.scene = Some(scene_with_sources(vec![
