@@ -71,6 +71,7 @@
     "smoke:sources": "node scripts/smoke-source-reconciliation.mjs",
     "smoke:start-labels": "node scripts/smoke-start-labels.mjs",
     "smoke:layout-source-loop": "node scripts/smoke-layout-source-loop-app.mjs",
+    "smoke:preview-real-launch": "node scripts/smoke-preview-real-launch-app.mjs",
     "smoke:preview-scene-commit": "node scripts/smoke-preview-scene-commit-app.mjs",
     "smoke:preview-pump-diagnostics": "node scripts/smoke-preview-pump-diagnostics-app.mjs",
     "smoke:preview-click-focus": "node scripts/smoke-preview-click-focus-app.mjs",
