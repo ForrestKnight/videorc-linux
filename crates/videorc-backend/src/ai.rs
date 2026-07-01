@@ -193,7 +193,15 @@ async fn run_web_ai_job(
         bail!("Videorc AI audio intake is not enabled for this account.");
     };
 
-    let completed_job = wait_for_ai_job(&client, &token, initial_job).await?;
+    let completed_job = wait_for_ai_job(
+        state,
+        session_id,
+        &client,
+        &token,
+        initial_job,
+        &capabilities,
+    )
+    .await?;
     save_completed_web_ai_artifacts(state, session_id, &completed_job)
 }
 
@@ -213,6 +221,17 @@ fn validate_cloud_ai_capabilities(capabilities: &AiCapabilities) -> Result<()> {
                 .config_error
                 .as_deref()
                 .unwrap_or("Videorc AI Gateway is not configured.")
+        );
+    }
+    if !capabilities.readiness.worker.configured {
+        bail!(
+            "{}",
+            capabilities
+                .readiness
+                .worker
+                .config_error
+                .as_deref()
+                .unwrap_or("Videorc AI worker is not configured.")
         );
     }
     if !capabilities.features.cloud_ai_enabled {
@@ -300,11 +319,18 @@ async fn create_transcript_backed_ai_job(
 }
 
 async fn wait_for_ai_job(
+    state: &AppState,
+    session_id: &str,
     client: &VideorcApiClient,
     token: &str,
     initial_job: AiJobSnapshot,
+    capabilities: &AiCapabilities,
 ) -> Result<AiJobSnapshot> {
     let started = tokio::time::Instant::now();
+    let queued_delay = Duration::from_millis(capabilities.readiness.worker.queued_job_delay_ms);
+    let running_delay = Duration::from_millis(capabilities.readiness.worker.running_job_timeout_ms);
+    let mut queued_delay_reported = false;
+    let mut running_delay_reported = false;
     let mut job = initial_job;
     loop {
         match job.status.as_str() {
@@ -320,7 +346,28 @@ async fn wait_for_ai_job(
             "cancelled" => bail!("Videorc AI job was cancelled."),
             _ => {}
         }
-        if started.elapsed() > AI_JOB_POLL_TIMEOUT {
+        let elapsed = started.elapsed();
+        if job.status == "queued" && !queued_delay_reported && elapsed >= queued_delay {
+            emit_health_event(
+                state,
+                Some(session_id),
+                HealthLevel::Info,
+                "cloud-ai-worker-delayed",
+                "Queued - Videorc AI worker is delayed.",
+            )?;
+            queued_delay_reported = true;
+        }
+        if job.status == "running" && !running_delay_reported && elapsed >= running_delay {
+            emit_health_event(
+                state,
+                Some(session_id),
+                HealthLevel::Warn,
+                "cloud-ai-worker-still-processing",
+                "Still processing - Videorc AI is taking longer than expected.",
+            )?;
+            running_delay_reported = true;
+        }
+        if elapsed > AI_JOB_POLL_TIMEOUT {
             bail!("Videorc AI job timed out before completion.");
         }
         sleep(AI_JOB_POLL_INTERVAL).await;

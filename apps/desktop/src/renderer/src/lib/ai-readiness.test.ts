@@ -31,6 +31,7 @@ type AiCapabilitiesOverrides = Partial<
     gateway?: Partial<AiCapabilities['readiness']['gateway']>
     objectStorage?: Partial<AiCapabilities['readiness']['objectStorage']>
     transcription?: Partial<AiCapabilities['readiness']['transcription']>
+    worker?: Partial<AiCapabilities['readiness']['worker']>
   }
   transcription?: Partial<AiCapabilities['transcription']>
   workflow?: Partial<AiCapabilities['workflow']>
@@ -98,6 +99,14 @@ function capabilities(overrides: AiCapabilitiesOverrides = {}): AiCapabilities {
       transcription: {
         configError: null,
         configured: true
+      },
+      worker: {
+        configError: null,
+        configured: true,
+        queuedJobDelayMs: 120_000,
+        recentlyRanAt: null,
+        runningJobTimeoutMs: 900_000,
+        status: 'unknown'
       }
     },
     transcription: {
@@ -138,6 +147,10 @@ function capabilities(overrides: AiCapabilitiesOverrides = {}): AiCapabilities {
       transcription: {
         ...base.readiness.transcription,
         ...overrides.readiness?.transcription
+      },
+      worker: {
+        ...base.readiness.worker,
+        ...overrides.readiness?.worker
       }
     },
     transcription: { ...base.transcription, ...overrides.transcription },
@@ -263,6 +276,68 @@ describe('cloudAiReadiness', () => {
 
     expect(readiness.state).toBe('server-unconfigured')
     expect(readiness.description).toBe('AI Gateway key is missing.')
+  })
+
+  it('surfaces missing server worker configuration', () => {
+    const readiness = cloudAiReadiness({
+      account: signedInAccount,
+      capabilities: capabilities({
+        readiness: {
+          worker: {
+            configured: false,
+            configError: 'AI worker secret is missing.',
+            queuedJobDelayMs: 120_000,
+            recentlyRanAt: null,
+            runningJobTimeoutMs: 900_000,
+            status: 'unconfigured'
+          }
+        }
+      }),
+      error: null,
+      loading: false,
+      quota: null
+    })
+
+    expect(readiness.state).toBe('server-unconfigured')
+    expect(readiness.description).toBe('AI worker secret is missing.')
+  })
+
+  it('allows transcript-only jobs when server transcription is not configured', () => {
+    const readiness = cloudAiReadiness({
+      account: signedInAccount,
+      capabilities: capabilities({
+        features: {
+          multipartAudioJobsEnabled: false,
+          objectBackedJobsEnabled: false,
+          transcriptJobsEnabled: true
+        },
+        readiness: {
+          transcription: {
+            configured: false,
+            configError: 'Transcription provider missing.'
+          }
+        },
+        transcription: {
+          configured: false,
+          configError: 'Transcription provider missing.'
+        },
+        workflow: {
+          inputModes: [
+            { enabled: true, kind: 'transcript' },
+            { enabled: false, kind: 'multipart-audio' },
+            { enabled: false, kind: 'stored-audio-object' }
+          ],
+          kind: 'post-recording-publish-pack',
+          outputs: ['summary']
+        }
+      }),
+      error: null,
+      loading: false,
+      quota: null
+    })
+
+    expect(readiness.ready).toBe(true)
+    expect(readiness.inputModeLabels).toEqual(['transcript'])
   })
 
   it('blocks exhausted quota even when capabilities are ready', () => {

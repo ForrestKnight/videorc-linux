@@ -2139,6 +2139,8 @@ pub struct AiCapabilitiesReadiness {
     pub gateway: AiCapabilitiesServiceReadiness,
     pub object_storage: AiCapabilitiesObjectStorageReadiness,
     pub transcription: AiCapabilitiesServiceReadiness,
+    #[serde(default)]
+    pub worker: AiCapabilitiesWorkerReadiness,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2163,6 +2165,30 @@ pub struct AiCapabilitiesObjectStorageReadiness {
     pub proof_config_error: Option<String>,
     pub provider_error: Option<String>,
     pub upload_config_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiCapabilitiesWorkerReadiness {
+    pub config_error: Option<String>,
+    pub configured: bool,
+    pub queued_job_delay_ms: u64,
+    pub recently_ran_at: Option<String>,
+    pub running_job_timeout_ms: u64,
+    pub status: String,
+}
+
+impl Default for AiCapabilitiesWorkerReadiness {
+    fn default() -> Self {
+        Self {
+            config_error: None,
+            configured: true,
+            queued_job_delay_ms: 2 * 60 * 1000,
+            recently_ran_at: None,
+            running_job_timeout_ms: 15 * 60 * 1000,
+            status: "unknown".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

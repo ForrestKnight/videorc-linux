@@ -84,7 +84,21 @@ export function cloudAiReadiness({
     )
   }
 
-  if (!capabilities.readiness.transcription.configured) {
+  if (!capabilities.readiness.worker.configured) {
+    return disabled(
+      'server-unconfigured',
+      'AI worker not configured',
+      capabilities.readiness.worker.configError ?? 'Videorc AI worker is not configured.',
+      inputModeLabels,
+      quotaLabel
+    )
+  }
+
+  const hasTranscriptMode = capabilities.workflow.inputModes.some(
+    (mode) => mode.enabled && mode.kind === 'transcript'
+  )
+
+  if (!capabilities.readiness.transcription.configured && !hasTranscriptMode) {
     return disabled(
       'server-unconfigured',
       'Transcription not configured',

@@ -1710,6 +1710,14 @@ export interface AiCapabilities {
       configError: string | null
       configured: boolean
     }
+    worker: {
+      configError: string | null
+      configured: boolean
+      queuedJobDelayMs: number
+      recentlyRanAt: string | null
+      runningJobTimeoutMs: number
+      status: 'unknown' | 'unconfigured' | string
+    }
   }
   transcription: {
     configured: boolean
