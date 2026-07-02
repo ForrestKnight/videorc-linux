@@ -1033,6 +1033,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   const [captureConfig, setCaptureConfig] = useState<CaptureConfig>(loadCaptureConfig)
   // Stable handle for callbacks that only need to READ the config (labels,
   // lookups) without re-creating themselves on every config change.
+  const lastRecordingStateRef = useRef<string | null>(null)
   const captureConfigRef = useRef(captureConfig)
   useEffect(() => {
     captureConfigRef.current = captureConfig
@@ -2084,10 +2085,26 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       nextClient.on('devices.changed', (payload) => setDeviceList(payload as DeviceList)),
       nextClient.on('recording.status', (payload) => {
         const status = payload as RecordingStatus
+        const previousState = lastRecordingStateRef.current
+        lastRecordingStateRef.current = status.state
         applyRecordingStatus(status)
         if (['idle', 'failed'].includes(status.state)) {
           setStreamTargets([])
           void refreshSessions(nextClient)
+        }
+        // D6: the moment a recording lands is the moment to publish it.
+        if (
+          status.state === 'idle' &&
+          ['recording', 'streaming', 'stopping'].includes(previousState ?? '')
+        ) {
+          toast.success('Recording saved', {
+            description: 'Turn it into a publishable upload?',
+            action: {
+              label: 'Make it publishable',
+              onClick: () => window.dispatchEvent(new CustomEvent('videorc:open-publish'))
+            },
+            duration: 12000
+          })
         }
       }),
       nextClient.on('health.event', (payload) => {

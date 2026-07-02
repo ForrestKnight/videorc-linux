@@ -84,6 +84,17 @@ export function AppShell(): ReactElement {
     setActive('ai')
   }, [])
 
+  // D6: the post-recording toast funnels here; clearing the selection lets
+  // Publish preselect the newest completed session (the one just saved).
+  useEffect(() => {
+    const onOpenPublish = (): void => {
+      setSelectedSessionId(null)
+      setActive('ai')
+    }
+    window.addEventListener('videorc:open-publish', onOpenPublish)
+    return () => window.removeEventListener('videorc:open-publish', onOpenPublish)
+  }, [])
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key.toLowerCase() === 'k' && (event.metaKey || event.ctrlKey)) {

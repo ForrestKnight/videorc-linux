@@ -227,7 +227,11 @@ export function AiTab({
 
         <PanelSection icon={Brain} title="Publish & intelligence">
           {selected ? (
-            <ArtifactView session={selected} />
+            <ArtifactView
+              running={aiRunningSessionId === selected.id}
+              session={selected}
+              onRun={() => runAiWorkflow(selected.id)}
+            />
           ) : (
             <Empty className="border-0 py-6">
               <EmptyTitle>No session selected</EmptyTitle>
@@ -320,7 +324,15 @@ function openExternalUrl(url: string): void {
   window.open(url, '_blank', 'noopener,noreferrer')
 }
 
-function ArtifactView({ session }: { session: SessionSummary }): ReactElement {
+function ArtifactView({
+  session,
+  running,
+  onRun
+}: {
+  session: SessionSummary
+  running: boolean
+  onRun: () => void
+}): ReactElement {
   const titleDescription = latestArtifact(session, 'title-description')
   const transcript = latestArtifact(session, 'transcript')
   const summary = latestArtifact(session, 'summary')
@@ -415,9 +427,20 @@ function ArtifactView({ session }: { session: SessionSummary }): ReactElement {
                 </Badge>
               </div>
               {content ?? (
-                <div className="flex flex-col gap-1">
+                <div className="flex flex-col gap-1.5">
                   <p className="text-xs text-muted-foreground">{step.valueProp}</p>
                   <p className="text-xs italic text-muted-foreground/60">{step.example}</p>
+                  <Button
+                    className="w-fit"
+                    disabled={running}
+                    size="xs"
+                    title="Artifacts are generated together in one workflow run"
+                    variant="outline"
+                    onClick={onRun}
+                  >
+                    <Lightning data-icon="inline-start" weight="fill" />
+                    {running ? 'Running…' : 'Run pipeline'}
+                  </Button>
                 </div>
               )}
               {content ? (
