@@ -259,9 +259,39 @@ export function SettingsTab({
                 }
               />
             </Field>
-            <div className="flex items-center gap-2 rounded-row border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-              <Database className="size-4 shrink-0" weight="duotone" />
-              <span className="truncate">{health?.databasePath ?? 'Waiting for SQLite path.'}</span>
+            <div className="flex items-center gap-2 rounded-row border bg-muted/40 px-3 py-2 text-xs">
+              <Database className="size-4 shrink-0 text-muted-foreground" weight="duotone" />
+              <span className="shrink-0 font-medium">Session database</span>
+              <span
+                className="min-w-0 flex-1 truncate text-muted-foreground"
+                title={health?.databasePath ?? undefined}
+              >
+                {health?.databasePath ?? 'Waiting for SQLite path.'}
+              </span>
+              <Button
+                disabled={!health?.databasePath}
+                size="xs"
+                variant="ghost"
+                onClick={() => {
+                  if (health?.databasePath) {
+                    void navigator.clipboard.writeText(health.databasePath)
+                  }
+                }}
+              >
+                Copy
+              </Button>
+              <Button
+                disabled={!health?.databasePath}
+                size="xs"
+                variant="ghost"
+                onClick={() => {
+                  if (health?.databasePath) {
+                    void window.videorc?.revealPath?.(health.databasePath)
+                  }
+                }}
+              >
+                Reveal
+              </Button>
             </div>
           </CollapsibleContent>
         </Collapsible>
