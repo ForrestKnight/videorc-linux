@@ -37,7 +37,11 @@ import { goLiveEntitlementGate } from '@/lib/entitlement-ui'
 import { entitlementDisabledReason } from '@/lib/entitlements'
 import { liveChatRailAvailable, shouldAutoOpenLiveChatRail } from '@/lib/live-chat-surface'
 import { studioHealth } from '@/lib/studio-health'
-import { sessionStatusLabel, sessionStatusTone } from '@/lib/studio-session-view'
+import {
+  isSessionTransportActive,
+  sessionStatusLabel,
+  sessionStatusTone
+} from '@/lib/studio-session-view'
 
 export function StudioTab(): ReactElement {
   const studio = useStudio()
@@ -74,7 +78,7 @@ export function StudioTab(): ReactElement {
     resolveGoLiveBlocker
   } = studio
 
-  const active = recording.state === 'recording' || recording.state === 'streaming'
+  const active = isSessionTransportActive(recording.state)
   const previewHealth = studioHealth(diagnosticStats, active)
   const banner = studioBlocker(studio)
   const liveStreamCompatibility = videoProfileCompatibility({

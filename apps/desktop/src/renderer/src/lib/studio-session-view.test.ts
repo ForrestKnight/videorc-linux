@@ -5,6 +5,7 @@ import {
   qualityName,
   recordingQuality,
   sessionMode,
+  isSessionTransportActive,
   sessionStatusLabel,
   sessionStatusTone,
   streamingSummary
@@ -80,5 +81,18 @@ describe('sessionStatusLabel / sessionStatusTone', () => {
     // Boot-time connecting is calm, not alarming.
     expect(sessionStatusLabel('idle', 'waiting')).toBe('Connecting…')
     expect(sessionStatusTone('idle', 'connecting')).toBe('warn')
+  })
+})
+
+describe('isSessionTransportActive', () => {
+  // F-020: the Stop/Force-stop control must stay reachable through EVERY
+  // in-flight state — starting/stopping used to flip the transport to idle.
+  it('keeps the transport owned across all in-flight states', () => {
+    for (const state of ['recording', 'streaming', 'starting', 'stopping']) {
+      expect(isSessionTransportActive(state)).toBe(true)
+    }
+    for (const state of ['idle', 'failed', 'unknown']) {
+      expect(isSessionTransportActive(state)).toBe(false)
+    }
   })
 })

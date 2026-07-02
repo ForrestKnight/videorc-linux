@@ -75,7 +75,7 @@ use crate::scene::{scene_from_capture_config, validate_scene_background};
 use crate::screen_capture::{parse_screencapturekit_display_id, parse_screencapturekit_window_id};
 use crate::secrets;
 use crate::state::{AppState, PreviewFrame};
-use crate::storage::{NewSession, PlatformAccountCredentials, default_preview_dir};
+use crate::storage::{Database, NewSession, PlatformAccountCredentials, default_preview_dir};
 use crate::streaming::{
     StreamAuthMode, StreamPlatform, StreamTargetRuntime, StreamTargetSettings, StreamTargetState,
     StreamTargetsSnapshot, StreamUrlMode, StreamingSettings, stream_platform_from_preset,
@@ -366,6 +366,11 @@ pub async fn start_session(
     let mode = output_mode(params.output.record_enabled, params.output.stream_enabled);
     let container =
         container_for_outputs(params.output.record_enabled, params.output.stream_enabled);
+
+    // F-017: every early error below this point used to leave a permanent
+    // 'running' Library row pointing at a file that never existed. The guard
+    // marks the row failed on ANY exit path that doesn't reach the pipeline.
+    let mut session_row_guard = SessionStartRowGuard::new(state.database.clone(), &session_id);
 
     state.database.create_session(&NewSession {
         id: session_id.clone(),
@@ -1056,7 +1061,53 @@ pub async fn start_session(
             expect_audio: gate_expect_audio,
         },
     ));
+    // The pipeline owns the row from here; monitor_session finishes it.
+    session_row_guard.disarm();
     Ok(running_status)
+}
+
+/// Marks a freshly-created session row failed if session startup bails before
+/// the pipeline takes ownership (F-017 — phantom "running" Library rows).
+struct SessionStartRowGuard {
+    database: Database,
+    session_id: String,
+    armed: bool,
+}
+
+impl SessionStartRowGuard {
+    fn new(database: Database, session_id: &str) -> Self {
+        Self {
+            database,
+            session_id: session_id.to_string(),
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for SessionStartRowGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let _ = self.database.finish_session(
+            &self.session_id,
+            "failed",
+            Some(Utc::now().to_rfc3339()),
+            None,
+            None,
+        );
+        let _ = self.database.add_session_log(
+            &self.session_id,
+            HealthLevel::Error,
+            "session-start-failed",
+            "Session start did not reach a running pipeline; the session was marked failed.",
+            None,
+        );
+    }
 }
 
 fn hydrate_stream_key_secret_refs(state: &AppState, params: &mut StartSessionParams) -> Result<()> {

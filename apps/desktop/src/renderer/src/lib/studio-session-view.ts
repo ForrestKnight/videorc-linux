@@ -63,6 +63,17 @@ export function streamingSummary(streamEnabled: boolean, targets: SessionTarget[
 }
 
 /** Idle reads as "Ready" (the mockup's resting state); transitions get an ellipsis. */
+/**
+ * True while a session owns the transport — the Stop/Force-stop control must
+ * stay reachable through EVERY in-flight state (F-020: excluding starting/
+ * stopping flipped the transport back to idle Record/Go Live mid-session).
+ */
+export function isSessionTransportActive(state: string): boolean {
+  return (
+    state === 'recording' || state === 'streaming' || state === 'starting' || state === 'stopping'
+  )
+}
+
 export function sessionStatusLabel(state: string, wsStatus?: string): string {
   // F-014: never report Ready over a dead backend socket — the app used to
   // zombie with a green Ready badge after a backend crash. Boot-time

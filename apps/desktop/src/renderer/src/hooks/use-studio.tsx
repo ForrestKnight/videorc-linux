@@ -855,10 +855,18 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   const [captionsStatus, setCaptionsStatus] = useState<CaptionsStatus>({ state: 'idle' })
   const [captionLines, setCaptionLines] = useState<CaptionsUpdate[]>([])
   const startCaptions = useCallback(async () => {
-    if (!client) return
+    // F-022: both failure shapes must THROW so the toggle's error handler can
+    // toast — a missing client and a non-live status used to revert the switch
+    // silently.
+    if (!client) {
+      throw new Error('Backend is not connected — try again in a moment.')
+    }
     setCaptionLines([])
     const status = await client.request<CaptionsStatus>('captions.start')
     setCaptionsStatus(status)
+    if (status.state !== 'live' && status.state !== 'degraded') {
+      throw new Error(status.message ?? `Live captions did not start (status: ${status.state}).`)
+    }
   }, [client])
   const stopCaptions = useCallback(async () => {
     if (!client) return
@@ -3672,6 +3680,10 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
 
   const sampleAudioMeter = useCallback(async () => {
     if (!client) {
+      // F-011: this used to be a silent no-op — the button appeared dead.
+      toast.error('Microphone check', {
+        description: 'Backend is not connected — try again in a moment.'
+      })
       return
     }
 
