@@ -3,7 +3,6 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUp,
-  FrameCorners,
   ImageSquare,
   Layout,
   Selection,
@@ -12,6 +11,7 @@ import {
 import type { ReactElement } from 'react'
 
 import { PanelSection } from '@/components/panel-section'
+import { SceneStage } from '@/components/scene/scene-stage'
 import { PowerSlider } from '@/components/power-slider'
 import { ScreensTab } from '@/components/tabs/screens-tab'
 import { Badge } from '@/components/ui/badge'
@@ -141,12 +141,22 @@ export function LayoutTab(): ReactElement {
             ) : null}
           </PanelSection>
 
-          {/* The preview is its own detached window — Scenes just opens it
-              (the same control Studio and the footer use), no embedded pane. */}
-          <Button className="w-fit" variant="outline" onClick={() => void togglePreviewWindow()}>
-            <FrameCorners data-icon="inline-start" weight="duotone" />
-            {previewWindow.open ? 'Close preview' : 'Open preview'}
-          </Button>
+          {/* SC1: schematic stage — the committed composition rendered from the
+              real normalized transforms (pure SVG, zero idle IPC). Live pixels
+              stay in the detached preview window. */}
+          <SceneStage
+            hasBackground={Boolean(scene?.background)}
+            previewOpen={previewWindow.open}
+            scene={scene}
+            selectedSourceId={selectedSceneSourceId}
+            onSelectSource={(sourceId) => {
+              setSelectedSceneSourceId(sourceId)
+              if (!sceneEditMode) {
+                setSceneEditMode(true)
+              }
+            }}
+            onTogglePreview={() => void togglePreviewWindow()}
+          />
 
           <PanelSection icon={Selection} title="Scene sources">
             <Field orientation="horizontal">
