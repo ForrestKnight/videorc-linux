@@ -367,6 +367,64 @@ impl VideorcApiClient {
         Err(failure)
     }
 
+    /// Mint a short-lived gateway realtime client secret for streaming
+    /// captions. `Terminal` failures end the caption session (auth/premium/
+    /// quota); `Transient` ones mean "fall back to chunked transcription".
+    pub async fn mint_caption_realtime_token(
+        &self,
+        bearer_token: &str,
+        session_client_id: &str,
+    ) -> std::result::Result<CaptionRealtimeToken, CaptionChunkFailure> {
+        let response = self
+            .http
+            .post(self.endpoint("/api/ai/captions/realtime-token"))
+            .bearer_auth(bearer_token)
+            .json(&serde_json::json!({ "sessionClientId": session_client_id }))
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await
+            .map_err(|error| CaptionChunkFailure::Transient {
+                message: format!("Could not reach the caption service: {error}"),
+            })?;
+
+        let status = response.status();
+        if status.is_success() {
+            return response.json().await.map_err(|error| {
+                CaptionChunkFailure::Transient {
+                    message: format!("Could not read the streaming token: {error}"),
+                }
+            });
+        }
+        let (code, message) = read_error_code_and_message(response).await;
+        Err(classify_caption_failure(status.as_u16(), code, message))
+    }
+
+    /// Report streamed caption seconds against the monthly allowance.
+    /// Best-effort — accounting failures never interrupt captions.
+    pub async fn report_caption_usage(
+        &self,
+        bearer_token: &str,
+        session_client_id: &str,
+        seconds: u64,
+    ) -> Result<()> {
+        let response = self
+            .http
+            .post(self.endpoint("/api/ai/captions/usage"))
+            .bearer_auth(bearer_token)
+            .json(&serde_json::json!({
+                "sessionClientId": session_client_id,
+                "seconds": seconds,
+            }))
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await
+            .context("Could not reach the caption usage service.")?;
+        if !response.status().is_success() {
+            bail!("Caption usage report failed ({}).", response.status());
+        }
+        Ok(())
+    }
+
     pub async fn request_ai_object_upload(
         &self,
         bearer_token: &str,
@@ -430,6 +488,18 @@ pub struct CaptionChunkResponse {
     /// Word timing within this chunk (empty on older web deploys).
     #[serde(default)]
     pub segments: Vec<crate::captions::CaptionSegment>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptionRealtimeToken {
+    pub token: String,
+    pub url: String,
+    #[serde(default)]
+    pub expires_at: Option<u64>,
+    pub model: String,
+    #[serde(default)]
+    pub remaining_seconds: u64,
 }
 
 #[derive(Debug, Clone)]

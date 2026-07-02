@@ -775,11 +775,22 @@ impl CaptionsStatus {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CaptionUpdateKind {
+    /// Streaming hypothesis for an utterance still in flight — REPLACES the
+    /// previous partial with the same seq.
+    Partial,
+    /// Settled text (chunked transcription is always final).
+    Final,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CaptionsUpdate {
     pub session_client_id: String,
     pub seq: u64,
+    pub kind: CaptionUpdateKind,
     pub text: String,
     pub chunk_seconds: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -930,7 +941,406 @@ struct CaptionSession {
     stop: Arc<AtomicBool>,
 }
 
+/// Streaming-first: try the gateway realtime transport (S2) and fall back to
+/// chunked transcription whenever streaming is unavailable — the caption
+/// session always works, streaming just makes it ~1s instead of ~4s.
 async fn run_caption_session(mut session: CaptionSession) {
+    let ended_normally = match run_realtime_caption_session(&mut session).await {
+        RealtimeOutcome::Ended => true,
+        RealtimeOutcome::Fallback(reason) => {
+            tracing::info!(
+                "Streaming captions unavailable ({reason}); using chunked transcription."
+            );
+            run_chunked_caption_session(&mut session).await
+        }
+        RealtimeOutcome::Terminal => false,
+    };
+    if ended_normally {
+        remove_tap();
+        publish_status(&session.state, CaptionsStatus::idle()).await;
+    }
+}
+
+enum RealtimeOutcome {
+    /// Session stopped normally (stop flag / tap removed).
+    Ended,
+    /// Streaming can't run (no key, mint failed, socket rejected) — chunk instead.
+    Fallback(String),
+    /// Auth/premium/quota failure already published; end the session.
+    Terminal,
+}
+
+/// Streaming caption transport (S2): gateway realtime WebSocket against the
+/// voice model, using its input-audio transcription events (grok-stt itself
+/// is not WS-enabled on the gateway — spike 2026-07-02). Mic PCM streams up
+/// as pcm16 append events; `…transcription.updated` events become PARTIAL
+/// captions (~1s behind speech) and `…transcription.completed` become FINAL
+/// captions + chunk records for the SRT/burned copy. Tokens are short-lived
+/// (≤300s): the loop reminting + reconnects transparently, reports streamed
+/// seconds to the usage route, and degrades per R0 on socket loss.
+async fn run_realtime_caption_session(session: &mut CaptionSession) -> RealtimeOutcome {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    use tokio_tungstenite::tungstenite::protocol::Message;
+
+    let mut first_attempt = true;
+    let mut backoff: Option<std::time::Duration> = None;
+    // Utterance bookkeeping: item id → (caption seq, audio offset seconds).
+    let mut items: std::collections::HashMap<String, (u64, f64)> = std::collections::HashMap::new();
+    let mut seq = 0_u64;
+    // Recording-epoch anchoring (same idea as chunked): mono ms sent since the
+    // capture pipeline (re)started. speech_started's audio_start_ms is
+    // relative to the WS stream, so remember the stream ms at each anchor.
+    let mut ms_sent: f64 = 0.0;
+    let mut ms_at_anchor: f64 = 0.0;
+    let mut last_frame_timestamp: Option<u64> = None;
+    let mut unreported_ms: f64 = 0.0;
+    let mut degraded = false;
+
+    'reconnect: loop {
+        if session.stop.load(Ordering::Relaxed) {
+            return RealtimeOutcome::Ended;
+        }
+
+        let token = match session
+            .client
+            .mint_caption_realtime_token(&session.bearer, &session.session_client_id)
+            .await
+        {
+            Ok(token) => token,
+            Err(CaptionChunkFailure::Terminal { code, message }) => {
+                tracing::warn!("Live captions stopped ({code}): {message}");
+                remove_tap();
+                publish_status(
+                    &session.state,
+                    CaptionsStatus {
+                        state: CaptionsState::Error,
+                        message: Some(message),
+                        remaining_seconds: None,
+                        session_client_id: Some(session.session_client_id.clone()),
+                    },
+                )
+                .await;
+                return RealtimeOutcome::Terminal;
+            }
+            Err(CaptionChunkFailure::Transient { message }) => {
+                if first_attempt {
+                    return RealtimeOutcome::Fallback(message);
+                }
+                // Streaming worked before — treat as an outage and retry.
+                let wait = next_caption_backoff(backoff);
+                backoff = Some(wait);
+                signal_degraded(session, &mut degraded, &message).await;
+                tokio::time::sleep(wait).await;
+                continue 'reconnect;
+            }
+        };
+
+        let mut request = match token.url.as_str().into_client_request() {
+            Ok(request) => request,
+            Err(error) => return RealtimeOutcome::Fallback(format!("bad realtime url: {error}")),
+        };
+        let protocols = format!("ai-gateway-realtime.v1, ai-gateway-auth.{}", token.token);
+        match protocols.parse() {
+            Ok(value) => {
+                request
+                    .headers_mut()
+                    .insert("Sec-WebSocket-Protocol", value);
+            }
+            Err(_) => return RealtimeOutcome::Fallback("bad realtime token".to_string()),
+        }
+
+        let (mut ws, _) = match tokio_tungstenite::connect_async(request).await {
+            Ok(connected) => connected,
+            Err(error) => {
+                let message = format!("realtime connect failed: {error}");
+                if first_attempt {
+                    return RealtimeOutcome::Fallback(message);
+                }
+                let wait = next_caption_backoff(backoff);
+                backoff = Some(wait);
+                signal_degraded(session, &mut degraded, &message).await;
+                tokio::time::sleep(wait).await;
+                continue 'reconnect;
+            }
+        };
+        first_attempt = false;
+        backoff = None;
+
+        let configure = serde_json::json!({
+            "type": "session.update",
+            "session": {
+                "input_audio_format": "pcm16",
+                "input_audio_transcription": { "enabled": true },
+                "turn_detection": { "type": "server_vad" }
+            }
+        });
+        if ws.send(Message::Text(configure.to_string().into())).await.is_err() {
+            continue 'reconnect;
+        }
+
+        if degraded {
+            degraded = false;
+            let _ = crate::recording::emit_health_event(
+                &session.state,
+                None,
+                crate::protocol::HealthLevel::Info,
+                "captions-upload-recovered",
+                "Streaming captions reconnected.",
+            );
+        }
+        publish_status(
+            &session.state,
+            CaptionsStatus {
+                state: CaptionsState::Live,
+                message: None,
+                remaining_seconds: Some(token.remaining_seconds),
+                session_client_id: Some(session.session_client_id.clone()),
+            },
+        )
+        .await;
+
+        // Refresh well before the ≤300s token expires; report usage each minute.
+        let refresh_at = tokio::time::Instant::now() + std::time::Duration::from_secs(240);
+        let mut report_tick = tokio::time::interval(std::time::Duration::from_secs(60));
+        report_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        report_tick.reset();
+
+        loop {
+            if session.stop.load(Ordering::Relaxed) {
+                let _ = ws.send(Message::Close(None)).await;
+                report_usage(session, &mut unreported_ms).await;
+                return RealtimeOutcome::Ended;
+            }
+            tokio::select! {
+                maybe_frame = session.receiver.recv() => {
+                    let Some(frame) = maybe_frame else {
+                        let _ = ws.send(Message::Close(None)).await;
+                        report_usage(session, &mut unreported_ms).await;
+                        return RealtimeOutcome::Ended;
+                    };
+                    if caption_anchor_should_reset(last_frame_timestamp, frame.timestamp_micros) {
+                        ms_at_anchor = ms_sent;
+                        items.clear();
+                    }
+                    last_frame_timestamp = Some(frame.timestamp_micros);
+                    let mono = downmix_resample_to_16k_mono(
+                        &frame.samples,
+                        frame.channels,
+                        frame.sample_rate,
+                    );
+                    if mono.is_empty() {
+                        continue;
+                    }
+                    ms_sent += mono.len() as f64 * 1000.0 / f64::from(CAPTION_SAMPLE_RATE);
+                    unreported_ms += mono.len() as f64 * 1000.0 / f64::from(CAPTION_SAMPLE_RATE);
+                    let mut bytes = Vec::with_capacity(mono.len() * 2);
+                    for sample in &mono {
+                        bytes.extend_from_slice(&sample.to_le_bytes());
+                    }
+                    use base64::Engine as _;
+                    let event = serde_json::json!({
+                        "type": "input_audio_buffer.append",
+                        "audio": base64::engine::general_purpose::STANDARD.encode(&bytes),
+                    });
+                    if ws.send(Message::Text(event.to_string().into())).await.is_err() {
+                        signal_degraded(session, &mut degraded, "realtime socket dropped").await;
+                        continue 'reconnect;
+                    }
+                }
+                maybe_message = ws.next() => {
+                    let Some(Ok(message)) = maybe_message else {
+                        signal_degraded(session, &mut degraded, "realtime socket closed").await;
+                        continue 'reconnect;
+                    };
+                    let Message::Text(text) = message else { continue };
+                    let Ok(event) = serde_json::from_str::<serde_json::Value>(&text) else {
+                        continue;
+                    };
+                    handle_realtime_event(
+                        session,
+                        &event,
+                        &mut items,
+                        &mut seq,
+                        ms_at_anchor,
+                        ms_sent,
+                    )
+                    .await;
+                }
+                _ = tokio::time::sleep_until(refresh_at) => {
+                    // Token expiring: reconnect with a fresh one (audio pauses
+                    // for the handshake, ~100-300ms).
+                    let _ = ws.send(Message::Close(None)).await;
+                    continue 'reconnect;
+                }
+                _ = report_tick.tick() => {
+                    report_usage(session, &mut unreported_ms).await;
+                }
+            }
+        }
+    }
+}
+
+async fn signal_degraded(session: &CaptionSession, degraded: &mut bool, message: &str) {
+    if *degraded {
+        return;
+    }
+    *degraded = true;
+    tracing::warn!("Streaming captions degraded: {message}");
+    let _ = crate::recording::emit_health_event(
+        &session.state,
+        None,
+        crate::protocol::HealthLevel::Warn,
+        "captions-upload-failed",
+        &format!("Streaming captions interrupted; reconnecting. {message}"),
+    );
+    publish_status(
+        &session.state,
+        CaptionsStatus {
+            state: CaptionsState::Degraded,
+            message: Some(format!("Captions reconnecting — {message}")),
+            remaining_seconds: None,
+            session_client_id: Some(session.session_client_id.clone()),
+        },
+    )
+    .await;
+}
+
+async fn report_usage(session: &CaptionSession, unreported_ms: &mut f64) {
+    let seconds = (*unreported_ms / 1000.0).floor() as u64;
+    if seconds == 0 {
+        return;
+    }
+    *unreported_ms -= seconds as f64 * 1000.0;
+    let client = session.client.clone();
+    let bearer = session.bearer.clone();
+    let session_client_id = session.session_client_id.clone();
+    tokio::spawn(async move {
+        if let Err(error) = client
+            .report_caption_usage(&bearer, &session_client_id, seconds)
+            .await
+        {
+            tracing::warn!("Caption usage report failed: {error}");
+        }
+    });
+}
+
+/// Route one gateway realtime event into caption updates + chunk records.
+async fn handle_realtime_event(
+    session: &CaptionSession,
+    event: &serde_json::Value,
+    items: &mut std::collections::HashMap<String, (u64, f64)>,
+    seq: &mut u64,
+    ms_at_anchor: f64,
+    ms_sent: f64,
+) {
+    let event_type = event.get("type").and_then(|value| value.as_str()).unwrap_or("");
+    let raw_type = event
+        .get("rawType")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+
+    let item_entry = |items: &mut std::collections::HashMap<String, (u64, f64)>,
+                      seq: &mut u64,
+                      item_id: &str,
+                      offset: f64| {
+        *items.entry(item_id.to_string()).or_insert_with(|| {
+            *seq += 1;
+            (*seq, offset)
+        })
+    };
+
+    match (event_type, raw_type) {
+        ("speech-started", _) => {
+            let item_id = event
+                .get("itemId")
+                .or_else(|| event.pointer("/raw/item_id"))
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+            let start_ms = event
+                .pointer("/raw/audio_start_ms")
+                .and_then(|value| value.as_f64())
+                .unwrap_or(ms_sent);
+            if !item_id.is_empty() {
+                let offset = ((start_ms - ms_at_anchor) / 1000.0).max(0.0);
+                item_entry(items, seq, item_id, offset);
+            }
+        }
+        ("custom", "conversation.item.input_audio_transcription.updated") => {
+            let item_id = event
+                .pointer("/raw/item_id")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+            let transcript = event
+                .pointer("/raw/transcript")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default()
+                .trim();
+            if item_id.is_empty() || transcript.is_empty() {
+                return;
+            }
+            let offset = ((ms_sent - ms_at_anchor) / 1000.0).max(0.0);
+            let (item_seq, _) = item_entry(items, seq, item_id, offset);
+            session.state.emit_event(
+                "captions.update",
+                CaptionsUpdate {
+                    session_client_id: session.session_client_id.clone(),
+                    seq: item_seq,
+                    kind: CaptionUpdateKind::Partial,
+                    text: transcript.to_string(),
+                    chunk_seconds: 0,
+                    remaining_seconds: None,
+                },
+            );
+        }
+        ("input-transcription-completed", _) => {
+            let item_id = event
+                .get("itemId")
+                .or_else(|| event.pointer("/raw/item_id"))
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+            let transcript = event
+                .get("transcript")
+                .or_else(|| event.pointer("/raw/transcript"))
+                .and_then(|value| value.as_str())
+                .unwrap_or_default()
+                .trim();
+            if item_id.is_empty() || transcript.is_empty() {
+                return;
+            }
+            let fallback_offset = ((ms_sent - ms_at_anchor) / 1000.0).max(0.0);
+            let (item_seq, offset) = item_entry(items, seq, item_id, fallback_offset);
+            let end = ((ms_sent - ms_at_anchor) / 1000.0).max(offset + 0.5);
+            session
+                .state
+                .captions
+                .lock()
+                .await
+                .chunks
+                .push(CaptionChunkRecord {
+                    seq: item_seq,
+                    offset_seconds: offset,
+                    duration_seconds: (end - offset).clamp(0.5, 30.0),
+                    text: transcript.to_string(),
+                    segments: Vec::new(),
+                });
+            session.state.emit_event(
+                "captions.update",
+                CaptionsUpdate {
+                    session_client_id: session.session_client_id.clone(),
+                    seq: item_seq,
+                    kind: CaptionUpdateKind::Final,
+                    text: transcript.to_string(),
+                    chunk_seconds: (end - offset).ceil() as u64,
+                    remaining_seconds: None,
+                },
+            );
+        }
+        _ => {}
+    }
+}
+
+async fn run_chunked_caption_session(session: &mut CaptionSession) -> bool {
     let chunk_samples = (f64::from(CAPTION_SAMPLE_RATE) * CAPTION_CHUNK_SECONDS) as usize;
     let mut pcm: Vec<i16> = Vec::with_capacity(chunk_samples * 2);
     let mut seq = 0_u64;
@@ -1031,6 +1441,7 @@ async fn run_caption_session(mut session: CaptionSession) {
                         CaptionsUpdate {
                             session_client_id: session.session_client_id.clone(),
                             seq,
+                            kind: CaptionUpdateKind::Final,
                             text: response.text.trim().to_string(),
                             chunk_seconds: response.chunk_seconds,
                             remaining_seconds: Some(response.remaining_seconds),
@@ -1052,7 +1463,7 @@ async fn run_caption_session(mut session: CaptionSession) {
                     },
                 )
                 .await;
-                return;
+                return false;
             }
             Err(CaptionChunkFailure::Transient { message }) => {
                 let next_backoff = next_caption_backoff(backoff);
@@ -1089,8 +1500,7 @@ async fn run_caption_session(mut session: CaptionSession) {
         }
     }
 
-    remove_tap();
-    publish_status(&session.state, CaptionsStatus::idle()).await;
+    true
 }
 
 /// Exponential backoff for transient upload failures: 2s doubling to a 30s
