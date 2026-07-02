@@ -1589,6 +1589,18 @@ mod macos {
                         config.source_id
                     ))
                 })?;
+                // F-013: a foreign-session window (the macOS login window)
+                // ABORTS the process inside SkyLight when wrapped in an
+                // SCContentFilter — reject it as source-missing instead, so a
+                // stale persisted scene can never crash the backend on restore.
+                let owning_app = unsafe { window.owningApplication() }
+                    .map(|app| unsafe { app.applicationName() }.to_string());
+                if crate::screen_capture::is_foreign_session_window_app(owning_app.as_deref()) {
+                    return Err(NativeScreenStartup::SourceMissing(format!(
+                        "ScreenCaptureKit window {} belongs to another login session and cannot be captured",
+                        config.source_id
+                    )));
+                }
                 let frame = unsafe { window.frame() };
                 let filter = unsafe {
                     SCContentFilter::initWithDesktopIndependentWindow(

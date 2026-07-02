@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 
 import type {
   BackendConnection,
+  BackendLifecycleEvent,
   BackendLogEvent,
   CaptionsUpdate,
   CaptionsWindowState,
@@ -153,6 +154,13 @@ const api: VideorcApi = {
     }
     ipcRenderer.on('backend:connection', listener)
     return () => ipcRenderer.removeListener('backend:connection', listener)
+  },
+  onBackendLifecycle: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, event: BackendLifecycleEvent): void => {
+      callback(event)
+    }
+    ipcRenderer.on('backend:lifecycle', listener)
+    return () => ipcRenderer.removeListener('backend:lifecycle', listener)
   },
   onBackendLog: (callback) => {
     const listener = (_event: Electron.IpcRendererEvent, log: BackendLogEvent): void => {

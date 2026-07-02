@@ -4545,6 +4545,58 @@ function startBackend(): void {
   }
 }
 
+// F-014 supervisor: a dead backend used to leave the app a zombie that still
+// reported Ready with a clickable Record button. Restart with backoff; after
+// too many crashes inside the window, stop and say so — never lie.
+const BACKEND_RESTART_BACKOFF_MS = [500, 1000, 2000, 4000, 8000]
+const BACKEND_RESTART_WINDOW_MS = 5 * 60_000
+const BACKEND_STABLE_UPTIME_MS = 60_000
+let backendCrashTimestamps: number[] = []
+let backendRestartTimer: ReturnType<typeof setTimeout> | null = null
+let backendLastStartAt = 0
+
+function scheduleBackendRestart(code: number | null, signal: NodeJS.Signals | null): void {
+  if (appIsQuitting || backendQuitInProgress || backendQuitComplete) {
+    return
+  }
+  const now = Date.now()
+  // A long stable run forgives earlier crashes (sleep/wake storms must not
+  // permanently exhaust the budget).
+  if (backendLastStartAt > 0 && now - backendLastStartAt >= BACKEND_STABLE_UPTIME_MS) {
+    backendCrashTimestamps = []
+  }
+  backendCrashTimestamps = backendCrashTimestamps.filter(
+    (at) => now - at < BACKEND_RESTART_WINDOW_MS
+  )
+  backendCrashTimestamps.push(now)
+  const attempt = backendCrashTimestamps.length
+  if (attempt > BACKEND_RESTART_BACKOFF_MS.length) {
+    logBackend(
+      'error',
+      'Backend crashed repeatedly; automatic restarts stopped. Restart Videorc to recover.'
+    )
+    sendToWindows('backend:lifecycle', { state: 'failed', code, signal, attempt })
+    return
+  }
+  const delayMs = BACKEND_RESTART_BACKOFF_MS[attempt - 1]
+  logBackend(
+    'warn',
+    `Restarting backend in ${delayMs}ms (attempt ${attempt}/${BACKEND_RESTART_BACKOFF_MS.length}).`
+  )
+  sendToWindows('backend:lifecycle', { state: 'restarting', code, signal, attempt, delayMs })
+  backendRestartTimer = setTimeout(() => {
+    backendRestartTimer = null
+    startBackend()
+  }, delayMs)
+}
+
+function cancelBackendRestart(): void {
+  if (backendRestartTimer) {
+    clearTimeout(backendRestartTimer)
+    backendRestartTimer = null
+  }
+}
+
 function startBackendWithRegistryLock(): void {
   if (backendProcess) {
     return
@@ -4567,6 +4619,7 @@ function startBackendWithRegistryLock(): void {
   if (ffmpegBinDir) {
     logBackend('info', `Using bundled FFmpeg from ${ffmpegBinDir}`)
   }
+  backendLastStartAt = Date.now()
   backendProcess = spawn(command, args, {
     cwd: root,
     env: {
@@ -4608,6 +4661,7 @@ function startBackendWithRegistryLock(): void {
     backendProcess = null
     backendConnection = null
     disconnectBackendEventSocket()
+    scheduleBackendRestart(code, signal)
   })
 }
 
@@ -4812,6 +4866,7 @@ function handleBackendStdout(text: string): void {
           safeConsole.log(`[smoke] backend-ready ${JSON.stringify(backendConnection)}`)
         }
         sendToWindows('backend:connection', backendConnection)
+        sendToWindows('backend:lifecycle', { state: 'running' })
         connectBackendEventSocket(backendConnection)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
@@ -6658,6 +6713,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', (event) => {
   appIsQuitting = true
+  cancelBackendRestart()
   if (backendQuitComplete || backendQuitInProgress) {
     return
   }

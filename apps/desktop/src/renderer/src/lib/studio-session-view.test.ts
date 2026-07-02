@@ -67,4 +67,18 @@ describe('sessionStatusLabel / sessionStatusTone', () => {
     expect(sessionStatusLabel('paused')).toBe('Paused')
     expect(sessionStatusTone('paused')).toBe('neutral')
   })
+  // F-014: a dead backend socket must override every session state — the app
+  // used to zombie with a green Ready badge after a backend crash.
+  it('reports Backend offline over any state when the socket is down', () => {
+    for (const state of ['idle', 'recording', 'streaming', 'failed']) {
+      expect(sessionStatusLabel(state, 'failed')).toBe('Backend offline')
+      expect(sessionStatusTone(state, 'failed')).toBe('error')
+      expect(sessionStatusLabel(state, 'closed')).toBe('Backend offline')
+    }
+    expect(sessionStatusLabel('idle', 'connected')).toBe('Ready')
+    expect(sessionStatusTone('idle', 'connected')).toBe('good')
+    // Boot-time connecting is calm, not alarming.
+    expect(sessionStatusLabel('idle', 'waiting')).toBe('Connecting…')
+    expect(sessionStatusTone('idle', 'connecting')).toBe('warn')
+  })
 })

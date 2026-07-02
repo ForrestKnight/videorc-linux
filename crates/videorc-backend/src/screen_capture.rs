@@ -53,10 +53,22 @@ fn should_include_window_metadata(
     title: Option<&str>,
     app_name: Option<&str>,
 ) -> bool {
+    // The macOS login window belongs to another GUI session: building an
+    // SCContentFilter for it aborts the whole process inside SkyLight
+    // (SLSGetDisplaysWithRect assert — F-013). It is also the only "window"
+    // ScreenCaptureKit reports while Screen Recording permission is missing,
+    // which made it the accidental first-run default. Never offer it.
+    if is_foreign_session_window_app(app_name) {
+        return false;
+    }
     is_on_screen
         && layer >= 0
         && (title.is_some_and(|value| !value.is_empty())
             || app_name.is_some_and(|value| !value.is_empty()))
+}
+
+pub(crate) fn is_foreign_session_window_app(app_name: Option<&str>) -> bool {
+    app_name.is_some_and(|value| value.eq_ignore_ascii_case("loginwindow"))
 }
 
 #[cfg(target_os = "macos")]
@@ -473,5 +485,26 @@ mod tests {
             Some("Desktop"),
             Some("Window Server")
         ));
+    }
+
+    #[test]
+    fn source_picker_never_offers_foreign_session_windows() {
+        // F-013: capturing the login window aborts the process inside SkyLight;
+        // it must never be enumerable regardless of on-screen state or layer.
+        assert!(!should_include_window_metadata(
+            true,
+            0,
+            Some(""),
+            Some("loginwindow")
+        ));
+        assert!(!should_include_window_metadata(
+            true,
+            7,
+            Some("Login"),
+            Some("LoginWindow")
+        ));
+        assert!(is_foreign_session_window_app(Some("loginwindow")));
+        assert!(!is_foreign_session_window_app(Some("Code")));
+        assert!(!is_foreign_session_window_app(None));
     }
 }

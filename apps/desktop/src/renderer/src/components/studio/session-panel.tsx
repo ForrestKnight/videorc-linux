@@ -55,7 +55,7 @@ export function SessionPanel({
   onLiveStream: () => void
   onStop: () => void
 }): ReactElement {
-  const { captureConfig } = useStudio()
+  const { captureConfig, wsStatus } = useStudio()
   const { openStudioPanel } = useWorkspaceNav()
   const video = captureConfig.video
 
@@ -67,8 +67,8 @@ export function SessionPanel({
           label="Status"
           value={
             <StatusBadge
-              tone={sessionStatusTone(recordingState)}
-              value={sessionStatusLabel(recordingState)}
+              tone={sessionStatusTone(recordingState, wsStatus)}
+              value={sessionStatusLabel(recordingState, wsStatus)}
             />
           }
         />

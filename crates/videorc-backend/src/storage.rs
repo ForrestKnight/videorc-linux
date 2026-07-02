@@ -126,6 +126,22 @@ impl Database {
         Ok(())
     }
 
+    /// A freshly-started backend cannot have running sessions: any 'running'
+    /// rows are orphans from a crash or a start that never reached a live
+    /// pipeline (F-014/F-017). Flip them to failed so the Library stops
+    /// claiming a recording is in flight.
+    pub fn reconcile_orphaned_sessions(&self) -> Result<usize> {
+        let conn = self.lock()?;
+        let updated = conn.execute(
+            "UPDATE sessions
+             SET status = 'failed',
+                 ended_at = COALESCE(ended_at, ?1)
+             WHERE status = 'running'",
+            params![Utc::now().to_rfc3339()],
+        )?;
+        Ok(updated)
+    }
+
     pub fn session_recording_path(&self, session_id: &str) -> Result<Option<String>> {
         let conn = self.lock()?;
         let path = conn
@@ -1698,6 +1714,35 @@ mod tests {
             is_deleted: false,
             raw_provider_type: Some("textMessageEvent".to_string()),
         }
+    }
+
+    #[test]
+    fn boot_reconcile_fails_orphaned_running_sessions_and_leaves_finished_ones() {
+        let database = Database::open_in_memory_for_tests();
+        database.create_session(&sample_session("orphan")).unwrap();
+        database.create_session(&sample_session("done")).unwrap();
+        database
+            .finish_session(
+                "done",
+                "completed",
+                Some("2026-05-31T00:01:00Z".to_string()),
+                None,
+                Some(60_000),
+            )
+            .unwrap();
+
+        let reconciled = database.reconcile_orphaned_sessions().unwrap();
+        assert_eq!(reconciled, 1);
+
+        let sessions = database.list_sessions(10).unwrap();
+        let orphan = sessions.iter().find(|s| s.id == "orphan").unwrap();
+        let done = sessions.iter().find(|s| s.id == "done").unwrap();
+        assert_eq!(orphan.status, "failed");
+        assert!(orphan.ended_at.is_some());
+        assert_eq!(done.status, "completed");
+
+        // Second boot is a no-op.
+        assert_eq!(database.reconcile_orphaned_sessions().unwrap(), 0);
     }
 
     #[test]

@@ -173,6 +173,16 @@ export interface BackendLogEvent {
   timestamp: string
 }
 
+// F-014 supervisor lifecycle: emitted by main when the backend process dies
+// and the supervisor restarts it (or gives up).
+export interface BackendLifecycleEvent {
+  state: 'running' | 'restarting' | 'failed'
+  code?: number | null
+  signal?: string | null
+  attempt?: number
+  delayMs?: number
+}
+
 export interface ClientCommand<TParams = unknown> {
   id: string
   method: string
@@ -2171,6 +2181,7 @@ export interface VideorcApi {
    */
   onShortcutNavigate: (callback: (key: string) => void) => () => void
   onBackendConnection: (callback: (connection: BackendConnection) => void) => () => void
+  onBackendLifecycle: (callback: (event: BackendLifecycleEvent) => void) => () => void
   onBackendLog: (callback: (log: BackendLogEvent) => void) => () => void
   getGlassWallpaper: () => Promise<GlassWallpaperState | null>
   onGlassWallpaper: (callback: (state: GlassWallpaperState) => void) => () => void

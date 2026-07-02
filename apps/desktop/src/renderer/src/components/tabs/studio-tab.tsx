@@ -250,8 +250,8 @@ export function StudioTab(): ReactElement {
               action={
                 <div className="flex items-center gap-1.5">
                   <StatusBadge
-                    tone={sessionStatusTone(recording.state)}
-                    value={sessionStatusLabel(recording.state)}
+                    tone={sessionStatusTone(recording.state, wsStatus)}
+                    value={sessionStatusLabel(recording.state, wsStatus)}
                   />
                   <Button
                     aria-label="Open preview window"

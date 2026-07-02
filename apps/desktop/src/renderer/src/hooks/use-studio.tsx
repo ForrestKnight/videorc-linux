@@ -2009,11 +2009,29 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
 
     const offConnection = window.videorc.onBackendConnection(setConnection)
     const offLog = window.videorc.onBackendLog(appendLog)
+    // F-014: surface backend crashes instead of zombie-ing with a Ready badge.
+    const offLifecycle = window.videorc.onBackendLifecycle?.((event) => {
+      if (event.state === 'restarting') {
+        toast.warning('Backend crashed', {
+          id: 'backend-lifecycle',
+          description: `Restarting automatically (attempt ${event.attempt ?? 1})…`
+        })
+      } else if (event.state === 'failed') {
+        toast.error('Backend crashed repeatedly', {
+          id: 'backend-lifecycle',
+          description: 'Automatic restarts stopped. Restart Videorc to recover.',
+          duration: Infinity
+        })
+      } else if (event.state === 'running') {
+        toast.dismiss('backend-lifecycle')
+      }
+    })
 
     return () => {
       disposed = true
       offConnection()
       offLog()
+      offLifecycle?.()
     }
   }, [appendLog])
 

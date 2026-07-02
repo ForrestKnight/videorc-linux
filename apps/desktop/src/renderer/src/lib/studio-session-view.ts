@@ -63,7 +63,16 @@ export function streamingSummary(streamEnabled: boolean, targets: SessionTarget[
 }
 
 /** Idle reads as "Ready" (the mockup's resting state); transitions get an ellipsis. */
-export function sessionStatusLabel(state: string): string {
+export function sessionStatusLabel(state: string, wsStatus?: string): string {
+  // F-014: never report Ready over a dead backend socket — the app used to
+  // zombie with a green Ready badge after a backend crash. Boot-time
+  // waiting/connecting reads as "Connecting…", real drops as offline.
+  if (wsStatus === 'waiting' || wsStatus === 'connecting') {
+    return 'Connecting…'
+  }
+  if (wsStatus && wsStatus !== 'connected') {
+    return 'Backend offline'
+  }
   switch (state) {
     case 'idle':
       return 'Ready'
@@ -82,7 +91,13 @@ export function sessionStatusLabel(state: string): string {
   }
 }
 
-export function sessionStatusTone(state: string): SessionStatusTone {
+export function sessionStatusTone(state: string, wsStatus?: string): SessionStatusTone {
+  if (wsStatus === 'waiting' || wsStatus === 'connecting') {
+    return 'warn'
+  }
+  if (wsStatus && wsStatus !== 'connected') {
+    return 'error'
+  }
   switch (state) {
     case 'idle':
     case 'streaming':

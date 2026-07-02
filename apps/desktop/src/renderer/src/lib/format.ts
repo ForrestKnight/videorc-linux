@@ -144,7 +144,12 @@ export function setupChecklist({
   return [
     {
       label: 'Backend',
-      detail: wsStatus === 'connected' ? 'Local backend is connected.' : `Socket is ${wsStatus}.`,
+      detail:
+        wsStatus === 'connected'
+          ? 'Local backend is connected.'
+          : wsStatus === 'waiting' || wsStatus === 'connecting'
+            ? 'Connecting to the local backend…'
+            : 'Backend not connected — it restarts automatically; give it a moment.',
       tone: wsStatus === 'connected' ? 'good' : 'warn'
     },
     {

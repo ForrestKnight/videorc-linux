@@ -156,6 +156,13 @@ async fn main() -> Result<()> {
     let token = Uuid::new_v4().to_string();
     let (events, _) = broadcast::channel(256);
     let database = Database::open_default()?;
+    match database.reconcile_orphaned_sessions() {
+        Ok(0) => {}
+        Ok(reconciled) => tracing::warn!(
+            "Marked {reconciled} orphaned 'running' session(s) as failed (previous backend did not shut down cleanly)."
+        ),
+        Err(error) => tracing::warn!("Could not reconcile orphaned sessions: {error:#}"),
+    }
     let mut state = AppState::new(token.clone(), port, events, database);
     state.oauth_callback_port = oauth_callback_port;
     let app = Router::new()
