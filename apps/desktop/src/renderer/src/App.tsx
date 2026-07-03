@@ -33,6 +33,9 @@ export function App(): ReactElement {
     >
       <NativeThemeSync />
       <GlassWallpaperUnderlay />
+      {/* The window's glass reflection: a specular sweep + top rim light over
+          the whole pane (pointer-transparent), like light catching the orb. */}
+      <div aria-hidden className="glass-shine pointer-events-none fixed inset-0 z-50" />
       <TooltipProvider>
         <BackgroundAssetsProvider>
           <StudioProvider>
