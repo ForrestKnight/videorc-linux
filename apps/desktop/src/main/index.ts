@@ -2036,6 +2036,14 @@ const PREVIEW_WINDOW_HTML = `<!doctype html><html><head><meta charset="utf-8"><s
 async function openPreviewWindow(): Promise<PreviewWindowState> {
   const existingWindow = previewWindow
   if (previewWindowIsOpenForSurface() && existingWindow) {
+    // A docked window's visibility belongs to the dock predicate (it may be
+    // deliberately hidden behind a dialog or a scrolled-away slot); force-show
+    // + focus would tear it out of the slot's state.
+    if (currentPreviewWindowMode() === 'docked') {
+      queueDockedPreviewPlacement()
+      emitPreviewWindowState()
+      return previewWindowState()
+    }
     previewSupervisor.setWindowVisible(true)
     if (existingWindow.isMinimized()) {
       existingWindow.restore()
@@ -5575,6 +5583,62 @@ async function runSmokePreviewMotionCommand(
     pushPreviewWindowPlacement()
     emitPreviewWindowState()
     return previewWindowState()
+  }
+
+  if (command === 'preview-window-set-mode') {
+    return setPreviewWindowMode(params.mode)
+  }
+
+  // Probe-injected slot report: exercises the exact IPC path the renderer's
+  // reporter uses, so the docked placement composition is assertable headless.
+  if (command === 'preview-window-report-dock-slot') {
+    return reportPreviewDockSlot(params)
+  }
+
+  if (command === 'preview-window-set-dock-overlay') {
+    return setPreviewDockOverlayOpen(params.open === true)
+  }
+
+  if (command === 'main-window-set-bounds') {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      throw new Error('Main window is not open.')
+    }
+    const current = mainWindow.getBounds()
+    mainWindow.setBounds({
+      x: typeof params.x === 'number' ? params.x : current.x,
+      y: typeof params.y === 'number' ? params.y : current.y,
+      width: typeof params.width === 'number' ? params.width : current.width,
+      height: typeof params.height === 'number' ? params.height : current.height
+    })
+    // Position-only programmatic setBounds does not reliably emit 'move' on
+    // macOS; kick the docked follower directly like preview-window-set-bounds.
+    if (currentPreviewWindowMode() === 'docked') {
+      queueDockedPreviewPlacement()
+    }
+    return { bounds: mainWindow.getBounds(), contentBounds: mainWindow.getContentBounds() }
+  }
+
+  if (command === 'main-window-focus') {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      throw new Error('Main window is not open.')
+    }
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore()
+    }
+    mainWindow.show()
+    mainWindow.focus()
+    return { focused: mainWindow.isFocused() }
+  }
+
+  if (command === 'main-window-state') {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return { open: false, bounds: null, contentBounds: null }
+    }
+    return {
+      open: true,
+      bounds: mainWindow.getBounds(),
+      contentBounds: mainWindow.getContentBounds()
+    }
   }
 
   if (command === 'preview-window-state') {

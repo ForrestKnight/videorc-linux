@@ -65,7 +65,9 @@ async function main() {
   // Deterministic starting frame: persisted/relative frames drifted off-screen
   // across runs and macOS clamping broke the geometry asserts.
   await smokeCommand('preview-window-set-bounds', { x: 240, y: 160, width: 960, height: 568 })
-  let state = await waitForSurfaceAtContentRect('open: surface covers the preview window content rect')
+  let state = await waitForSurfaceAtContentRect(
+    'open: surface covers the preview window content rect'
+  )
 
   // --- Move: surface follows -----------------------------------------------------
   await smokeCommand('preview-window-set-bounds', { x: 364, y: 246 })
@@ -94,13 +96,21 @@ async function main() {
     (s) => s.open === false && s.surface.exists === false && s.framePollingSuppressedFlag === true,
     8000
   )
-  assertProbe(closedState.ok, 'close: surface session destroyed and frame polling suppressed', JSON.stringify(closedState.last))
+  assertProbe(
+    closedState.ok,
+    'close: surface session destroyed and frame polling suppressed',
+    JSON.stringify(closedState.last)
+  )
   const decayed = await waitFor(
     async () => smokeCommand('preview-window-state'),
     (s) => s.nativeOwnsPlacement === false,
     4000
   )
-  assertProbe(decayed.ok, 'close: native presents stop (placement authority decays)', JSON.stringify(decayed.last))
+  assertProbe(
+    decayed.ok,
+    'close: native presents stop (placement authority decays)',
+    JSON.stringify(decayed.last)
+  )
 
   // --- Reopen: surface returns and polling resumes ---------------------------------
   const toggledOpen = await smokeCommand('preview-window-toggle')
@@ -117,13 +127,200 @@ async function main() {
   )
   assertProbe(reopened.ok, 'reopen: frame polling resumes', JSON.stringify(reopened.last))
 
+  // --- Docked ("stick") mode -------------------------------------------------------
+  // The REAL renderer reporter runs in this app, so the probe cooperates with
+  // it: the Studio tab's actual slot rect is the expectation, and main-window
+  // moves must keep the surface glued to it with no new slot report — the core
+  // anti-drift contract (the renderer is never in the movement path).
+  await smokeCommand('main-window-set-bounds', { x: 120, y: 120, width: 1180, height: 780 })
+  await smokeCommand('main-window-focus')
+  await smokeCommand('open-tab', { tab: 'studio', waitFor: '[data-videorc-preview-card]' })
+  // First-launch dialogs (What's New) legitimately occlude the docked slot;
+  // dismiss them so the baseline asserts a VISIBLE docked surface.
+  const dismissed = await smokeCommand('eval-js', {
+    code: `
+      for (let i = 0; i < 25; i++) {
+        const scrim = document.querySelector('[data-slot="dialog-overlay"][data-state="open"]')
+        if (!scrim) return { dismissed: true }
+        document.querySelectorAll('[data-slot="dialog-close"]').forEach((button) => button.click())
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+        await sleep(200)
+      }
+      return { dismissed: false }
+    `
+  })
+  assertProbe(
+    dismissed.result?.dismissed === true,
+    'dock-setup: launch dialogs dismissed',
+    JSON.stringify(dismissed)
+  )
+
+  let docked = await smokeCommand('preview-window-set-mode', { mode: 'docked' })
+  assertProbe(
+    docked.mode === 'docked',
+    'dock: preview window reports docked mode',
+    JSON.stringify(docked)
+  )
+  await waitForDockedSurfaceAtSlot('dock: surface covers the Studio slot rect')
+
+  // Stale-epoch reports must be dropped, not applied.
+  await smokeCommand('preview-window-report-dock-slot', {
+    epoch: docked.dockEpoch - 1,
+    x: 0,
+    y: 0,
+    width: 100,
+    height: 100,
+    visibleFraction: 1,
+    mounted: true
+  })
+  await waitForDockedSurfaceAtSlot('dock-stale-report: placement unchanged by a stale epoch')
+
+  // Move the MAIN window: the docked surface follows from main-process state only.
+  await smokeCommand('main-window-set-bounds', { x: 244, y: 208 })
+  await waitForDockedSurfaceAtSlot('dock-move: surface follows the main window')
+
+  // Storm tolerance: several immediate main-window mutations settle correctly.
+  await smokeCommand('main-window-set-bounds', { x: 180, y: 160 })
+  await smokeCommand('main-window-set-bounds', { x: 200, y: 180 })
+  await waitForDockedSurfaceAtSlot('dock-storm: surface settles after rapid main-window changes')
+
+  // Overlay occlusion: the docked surface yields while an in-app overlay is up.
+  // (Injected via the same IPC path the renderer's overlay watcher uses; the
+  // watcher only re-sends on change, so the injection is not raced.)
+  await smokeCommand('preview-window-set-dock-overlay', { open: true })
+  const overlayHidden = await waitFor(
+    async () => smokeCommand('preview-window-state'),
+    (s) => s.visible === false && s.dockHiddenReason === 'overlay-open',
+    8000
+  )
+  assertProbe(
+    overlayHidden.ok,
+    'dock-overlay: surface hides behind an open overlay with a stated reason',
+    JSON.stringify(overlayHidden.last)
+  )
+  await smokeCommand('preview-window-set-dock-overlay', { open: false })
+  await waitForDockedSurfaceAtSlot('dock-overlay-close: surface returns when the overlay closes')
+
+  // Scrolled-away slots hide with a stated reason instead of clipping. The
+  // injected report reuses the renderer's real rect so only the fraction lies.
+  const realSlot = await dockSlotRect()
+  docked = await smokeCommand('preview-window-state')
+  await smokeCommand('preview-window-report-dock-slot', {
+    epoch: docked.dockEpoch,
+    ...realSlot,
+    visibleFraction: 0.4,
+    mounted: true
+  })
+  const scrolledHidden = await waitFor(
+    async () => smokeCommand('preview-window-state'),
+    (s) => s.visible === false && s.dockHiddenReason === 'scrolled-away',
+    8000
+  )
+  assertProbe(
+    scrolledHidden.ok,
+    'dock-scroll: surface hides when the slot scrolls mostly away',
+    JSON.stringify(scrolledHidden.last)
+  )
+  await smokeCommand('preview-window-report-dock-slot', {
+    epoch: docked.dockEpoch,
+    ...realSlot,
+    visibleFraction: 1,
+    mounted: true
+  })
+  await waitForDockedSurfaceAtSlot(
+    'dock-scroll-back: surface returns when the slot is visible again'
+  )
+
+  // Undock: floating chrome and the remembered floating frame come back.
+  const floated = await smokeCommand('preview-window-set-mode', { mode: 'floating' })
+  assertProbe(
+    floated.mode === 'floating',
+    'undock: preview window reports floating mode',
+    JSON.stringify(floated)
+  )
+  await waitForSurfaceAtContentRect('undock: surface returns to the floating window rect')
+
   console.log('\n=== Preview window probe summary ===')
   if (failures.length === 0) {
-    console.log('PASS — open, move, resize, toggle-close, and toggle-reopen keep the surface aligned to the preview window.')
+    console.log(
+      'PASS — open, move, resize, toggle-close, toggle-reopen, dock-follow, dock-occlusion, and undock keep the surface aligned.'
+    )
     return 0
   }
   for (const failure of failures) console.log(`FAIL: ${failure}`)
   return 1
+}
+
+/** The Studio slot's live rect (window-relative CSS px) straight from the DOM. */
+async function dockSlotRect() {
+  const response = await smokeCommand('eval-js', {
+    code: `
+      const element = document.querySelector('[data-videorc-dock-slot]')
+      if (!element) return null
+      const rect = element.getBoundingClientRect()
+      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+    `
+  })
+  if (!response.result) {
+    throw new Error('Docked slot element is not mounted.')
+  }
+  return response.result
+}
+
+/**
+ * Poll until the surface sits at (main window content origin + the LIVE Studio
+ * slot rect). Both are re-fetched each poll, so main-window moves change the
+ * expectation without any new slot report — exactly the docked-mode contract.
+ */
+async function waitForDockedSurfaceAtSlot(label, tolerance = 6, timeoutMsLocal = 15000) {
+  await smokeCommand('main-window-focus')
+  const deadline = Date.now() + timeoutMsLocal
+  let state = null
+  let expected = null
+  do {
+    const slot = await dockSlotRect()
+    const main = await smokeCommand('main-window-state')
+    state = await smokeCommand('preview-window-state')
+    if (main.open && main.contentBounds) {
+      expected = {
+        x: main.contentBounds.x + slot.x,
+        y: main.contentBounds.y + slot.y,
+        width: slot.width,
+        height: slot.height
+      }
+      const match = (bounds) =>
+        bounds &&
+        Math.abs(bounds.x - expected.x) <= tolerance &&
+        Math.abs(bounds.y - expected.y) <= tolerance &&
+        Math.abs(bounds.width - expected.width) <= tolerance &&
+        Math.abs(bounds.height - expected.height) <= tolerance
+      const windowAtSlot = state.open && state.visible && match(state.contentBounds)
+      if (windowAtSlot && state.surface.visible && match(state.surface.bounds)) {
+        assertProbe(true, `${label} [proof-window]`, '')
+        return state
+      }
+      if (windowAtSlot && state.nativeOwnsPlacement) {
+        const native = windowList().find(
+          (w) => w.owner === 'native_preview_host_helper' && match(w)
+        )
+        if (native) {
+          assertProbe(
+            native.layer === 0,
+            `${label} [native-window at normal level]`,
+            `helper window layer ${native.layer} — docked surfaces must never float over other apps`
+          )
+          return state
+        }
+      }
+    }
+    await sleep(250)
+  } while (Date.now() < deadline)
+  assertProbe(
+    false,
+    label,
+    `expected: ${JSON.stringify(expected)}, state: ${JSON.stringify(state)}`
+  )
+  return state
 }
 
 /**
@@ -154,7 +351,9 @@ async function waitForSurfaceAtContentRect(label, tolerance = 6, timeoutMsLocal 
       if (state.nativeOwnsPlacement) {
         // Detached mode runs the helper window at NORMAL level (it stacks with
         // the preview window as one app), so match by owner, not layer.
-        const native = windowList().find((w) => w.owner === 'native_preview_host_helper' && match(w))
+        const native = windowList().find(
+          (w) => w.owner === 'native_preview_host_helper' && match(w)
+        )
         if (native) {
           assertProbe(
             native.layer === 0,
@@ -193,7 +392,11 @@ async function assertSurfaceHidden(label, sizeHint, timeoutMsLocal = 8000) {
     }
     await sleep(250)
   } while (Date.now() < deadline)
-  assertProbe(false, label, `state: ${JSON.stringify(state)}, floating: ${JSON.stringify(floating)}`)
+  assertProbe(
+    false,
+    label,
+    `state: ${JSON.stringify(state)}, floating: ${JSON.stringify(floating)}`
+  )
 }
 
 async function waitFor(fetchState, predicate, timeoutMsLocal) {
