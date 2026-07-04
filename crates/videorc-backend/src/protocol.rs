@@ -1465,6 +1465,13 @@ pub struct DiagnosticStats {
     /// Below ~0.95 signals a mic capture gap. `None` until past the coverage warmup.
     #[serde(default)]
     pub mic_capture_coverage: Option<f64>,
+    /// Live mic meter level (0-1, dB-scaled) from the frames the active session
+    /// already captures - no extra device open. `None` when no session is live
+    /// (post-0.9.4 fix batch F7: the Studio mixer shows a moving meter).
+    #[serde(default)]
+    pub mic_live_level: Option<f64>,
+    #[serde(default)]
+    pub mic_live_peak_db: Option<f64>,
     pub device_disconnected: bool,
     pub backend_rss_bytes: Option<u64>,
     pub active_ffmpeg_processes: u64,

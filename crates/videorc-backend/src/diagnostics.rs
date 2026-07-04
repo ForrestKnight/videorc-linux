@@ -301,6 +301,8 @@ pub fn idle_diagnostics() -> DiagnosticStats {
         mic_captured_frames: None,
         mic_dropped_frames: 0,
         mic_capture_coverage: None,
+        mic_live_level: None,
+        mic_live_peak_db: None,
         device_disconnected: false,
         backend_rss_bytes: None,
         active_ffmpeg_processes: 0,
@@ -1216,9 +1218,23 @@ pub fn apply_audio_stats(
     captured_frames: u64,
     dropped_frames: u64,
     capture_coverage: Option<f64>,
+    live_peak: Option<f32>,
 ) -> DiagnosticStats {
     stats.mic_captured_frames = Some(captured_frames);
     stats.mic_dropped_frames = dropped_frames;
+    // Live meter reading for the Studio mixer: derived from frames the session
+    // already captures (no extra device open). None clears the meter at stop.
+    match live_peak {
+        Some(peak) => {
+            let peak_db = crate::audio::amplitude_to_db(peak);
+            stats.mic_live_peak_db = Some(f64::from(peak_db));
+            stats.mic_live_level = Some(crate::audio::db_to_level(peak_db));
+        }
+        None => {
+            stats.mic_live_peak_db = None;
+            stats.mic_live_level = None;
+        }
+    }
     // Only overwrite coverage when the sampler has a meaningful value (post-warmup), so a
     // final at-stop snapshot (None) preserves the last live reading.
     if capture_coverage.is_some() {
@@ -1383,7 +1399,7 @@ mod tests {
 
     #[test]
     fn audio_drops_take_priority_over_video_stats() {
-        let stats = apply_audio_stats(idle_diagnostics(), 48_000, 128, None);
+        let stats = apply_audio_stats(idle_diagnostics(), 48_000, 128, None, None);
 
         assert_eq!(stats.mic_captured_frames, Some(48_000));
         assert_eq!(stats.mic_dropped_frames, 128);
@@ -1392,11 +1408,15 @@ mod tests {
 
     #[test]
     fn low_audio_capture_coverage_is_an_audio_bottleneck_even_without_drops() {
-        let healthy = apply_audio_stats(idle_diagnostics(), 48_000, 0, Some(1.0));
+        let healthy = apply_audio_stats(idle_diagnostics(), 48_000, 0, Some(1.0), Some(0.5));
+        assert!(healthy.mic_live_level.is_some_and(|level| level > 0.0));
+        assert!(healthy.mic_live_peak_db.is_some());
+        let stopped = apply_audio_stats(healthy.clone(), 48_000, 0, None, None);
+        assert!(stopped.mic_live_level.is_none(), "stop clears the meter");
         assert_eq!(healthy.mic_capture_coverage, Some(1.0));
         assert_ne!(healthy.bottleneck, DiagnosticBottleneck::Audio);
 
-        let gap = apply_audio_stats(idle_diagnostics(), 24_000, 0, Some(0.5));
+        let gap = apply_audio_stats(idle_diagnostics(), 24_000, 0, Some(0.5), None);
         assert_eq!(gap.mic_capture_coverage, Some(0.5));
         assert_eq!(gap.bottleneck, DiagnosticBottleneck::Audio);
     }

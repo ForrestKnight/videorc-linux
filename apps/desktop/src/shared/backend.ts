@@ -1684,6 +1684,10 @@ export interface DiagnosticStats {
   micDroppedFrames: number
   /** Fraction of expected audio sample-frames actually captured during the run (live); below ~0.95 signals a mic capture gap. */
   micCaptureCoverage?: number
+  /** Live mic meter (0-1, dB-scaled) from the active session's own capture
+   * frames; absent when no session is live. Drives the Studio mixer. */
+  micLiveLevel?: number
+  micLivePeakDb?: number
   deviceDisconnected: boolean
   backendRssBytes?: number
   activeFfmpegProcesses: number

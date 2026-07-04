@@ -10,11 +10,13 @@ import { formatDb } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 /**
- * Audio mixer (SD4). The microphone meter is sampled on demand (Check level) —
- * the same model Sources uses — rather than a continuous loop, so the always-on
- * Studio tab keeps the idle-perf baseline (no meter loop on the default tab; the
- * full live meter + calibration live on Sources). System audio shows its honest
- * "unavailable — pending native adapter" state; real capture is Phase-2 (F3).
+ * Audio mixer (SD4 + post-0.9.4 fix F7). During a LIVE session the meter moves
+ * on its own: the backend derives a live level from the mic frames the session
+ * already captures (diagnostics.stats stream — no extra device open, no idle
+ * loop, the idle-perf baseline holds). While idle, the meter stays on-demand
+ * (Check level, one 700ms device sample) — the same model Sources uses.
+ * System audio shows its honest "unavailable — pending native adapter" state;
+ * real capture is Phase-2 (F3).
  */
 export function AudioMixer(): ReactElement {
   const {
@@ -24,17 +26,22 @@ export function AudioMixer(): ReactElement {
     audioMeter,
     audioMeterLoading,
     sampleAudioMeter,
-    deviceList
+    deviceList,
+    diagnosticStats
   } = useStudio()
   const { openStudioPanel } = useWorkspaceNav()
 
   const muted = captureConfig.audio.microphoneMuted
+  const liveLevel =
+    typeof diagnosticStats?.micLiveLevel === 'number' ? diagnosticStats.micLiveLevel : null
   const hasReading = audioMeter !== null && typeof audioMeter.level === 'number'
-  const level = hasReading ? (audioMeter?.level ?? 0) : 0
+  const level = liveLevel ?? (hasReading ? (audioMeter?.level ?? 0) : 0)
   const dbLabel =
-    audioMeter && typeof audioMeter.peakDb === 'number'
-      ? formatDb(audioMeter.peakDb)
-      : formatDb(captureConfig.audio.microphoneGainDb)
+    liveLevel !== null && typeof diagnosticStats?.micLivePeakDb === 'number'
+      ? formatDb(diagnosticStats.micLivePeakDb)
+      : audioMeter && typeof audioMeter.peakDb === 'number'
+        ? formatDb(audioMeter.peakDb)
+        : formatDb(captureConfig.audio.microphoneGainDb)
   const systemAudio = deviceList.devices.find((device) => device.kind === 'system-audio')
 
   return (
@@ -81,16 +88,24 @@ export function AudioMixer(): ReactElement {
           </span>
         </div>
         <div className="flex items-center gap-2">
-          <MeterBar level={level} muted={muted} status={audioMeter?.status} />
-          <Button
-            className="shrink-0"
-            disabled={!selectedMicrophone || audioMeterLoading}
-            size="xs"
-            variant="outline"
-            onClick={() => void sampleAudioMeter()}
-          >
-            {audioMeterLoading ? 'Checking…' : 'Check level'}
-          </Button>
+          <MeterBar
+            level={level}
+            muted={muted}
+            status={liveLevel !== null ? 'ready' : audioMeter?.status}
+          />
+          {liveLevel !== null ? (
+            <span className="shrink-0 text-xs text-muted-foreground">Live</span>
+          ) : (
+            <Button
+              className="shrink-0"
+              disabled={!selectedMicrophone || audioMeterLoading}
+              size="xs"
+              variant="outline"
+              onClick={() => void sampleAudioMeter()}
+            >
+              {audioMeterLoading ? 'Checking…' : 'Check level'}
+            </Button>
+          )}
         </div>
       </div>
 

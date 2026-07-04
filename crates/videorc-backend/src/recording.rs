@@ -2266,14 +2266,19 @@ async fn sample_native_audio_during_recording(state: AppState, session_id: Strin
         let counters = {
             let recording = state.recording.lock().await;
             match recording.as_ref() {
-                Some(active) if active.session_id == session_id => active
-                    .native_audio
-                    .as_ref()
-                    .map(|audio| (audio.captured_frames(), audio.dropped_frames())),
+                Some(active) if active.session_id == session_id => {
+                    active.native_audio.as_ref().map(|audio| {
+                        (
+                            audio.captured_frames(),
+                            audio.dropped_frames(),
+                            audio.live_peak(),
+                        )
+                    })
+                }
                 _ => return,
             }
         };
-        let Some((captured_frames, dropped_frames)) = counters else {
+        let Some((captured_frames, dropped_frames, live_peak)) = counters else {
             return;
         };
         let coverage = audio_capture_coverage(
@@ -2288,6 +2293,7 @@ async fn sample_native_audio_during_recording(state: AppState, session_id: Strin
                 captured_frames,
                 dropped_frames,
                 coverage,
+                Some(live_peak),
             );
             *diagnostics = next.clone();
             next
@@ -2356,6 +2362,8 @@ async fn monitor_session(
                 diagnostics.clone(),
                 native_audio_stats.captured_frames,
                 native_audio_stats.dropped_frames,
+                None,
+                // Session over: the live meter must fall silent, not freeze.
                 None,
             );
             *diagnostics = next.clone();

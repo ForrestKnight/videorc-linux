@@ -90,6 +90,10 @@ pub struct AudioCaptureStats {
     dropped_frames: AtomicU64,
     fifo_write_errors: AtomicU64,
     recording_window_finished: AtomicBool,
+    // Peak amplitude of the most recent frame window (milli-units, 0..=1000):
+    // the Studio mixer's live meter reads this via the diagnostics sampler —
+    // no extra device open (post-0.9.4 fix batch F7).
+    live_peak_milli: AtomicU64,
 }
 
 impl AudioCaptureStats {
@@ -99,6 +103,15 @@ impl AudioCaptureStats {
 
     pub fn dropped_frames(&self) -> u64 {
         self.dropped_frames.load(Ordering::Relaxed)
+    }
+
+    pub fn live_peak(&self) -> f32 {
+        self.live_peak_milli.load(Ordering::Relaxed) as f32 / 1000.0
+    }
+
+    fn record_live_peak(&self, peak: f32) {
+        let clamped = (peak.clamp(0.0, 1.0) * 1000.0) as u64;
+        self.live_peak_milli.store(clamped, Ordering::Relaxed);
     }
 
     fn reset_recording_window(&self) {
@@ -207,6 +220,10 @@ impl NativeAudioCaptureSession {
 
     pub fn dropped_frames(&self) -> u64 {
         self.stats.dropped_frames()
+    }
+
+    pub fn live_peak(&self) -> f32 {
+        self.stats.live_peak()
     }
 
     pub fn finish_recording_window(&self) {
@@ -485,6 +502,11 @@ pub fn attach_fifo_writer(
                     // a relaxed-atomic no-op unless a caption session is active
                     // and never blocks this writer.
                     crate::captions::offer_caption_frame(&frame);
+                    let frame_peak = frame
+                        .samples
+                        .iter()
+                        .fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
+                    writer_stats.record_live_peak(frame_peak);
                     if let Err(error) = write_frame_f32le(&mut file, &frame) {
                         writer_stats
                             .fifo_write_errors
@@ -714,7 +736,7 @@ fn db_to_gain(db: f32) -> f32 {
     10.0_f32.powf(db / 20.0)
 }
 
-fn amplitude_to_db(amplitude: f32) -> f32 {
+pub(crate) fn amplitude_to_db(amplitude: f32) -> f32 {
     if amplitude <= f32::EPSILON {
         -90.0
     } else {
@@ -722,7 +744,7 @@ fn amplitude_to_db(amplitude: f32) -> f32 {
     }
 }
 
-fn db_to_level(db: f32) -> f64 {
+pub(crate) fn db_to_level(db: f32) -> f64 {
     f64::from(((db + 60.0) / 60.0).clamp(0.0, 1.0))
 }
 
