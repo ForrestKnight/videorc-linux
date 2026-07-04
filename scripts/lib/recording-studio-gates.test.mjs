@@ -26,6 +26,7 @@ describe('buildRecordingStudioGateSteps', () => {
       'preview main pump diagnostics smoke',
       'preview click/focus continuity smoke',
       'detached preview lifecycle probe',
+      'preview window placement + docked stick probe',
       'detached native preview surface reattach smoke',
       'real ScreenCaptureKit screen recording smoke',
       'Notes window recording invisibility smoke'
@@ -43,14 +44,15 @@ describe('buildRecordingStudioGateSteps', () => {
       'backend-isolation.test.ts'
     ])
     assert.deepEqual(steps[1].args, ['test:scripts'])
-    assert.deepEqual(steps.at(-11).args, ['smoke:dev'])
-    assert.deepEqual(steps.at(-10).args, ['smoke:screens'])
-    assert.deepEqual(steps.at(-9).args, ['smoke:preview-real-launch'])
-    assert.deepEqual(steps.at(-8).args, ['smoke:layout-source-loop'])
-    assert.deepEqual(steps.at(-7).args, ['smoke:preview-scene-commit'])
-    assert.deepEqual(steps.at(-6).args, ['smoke:preview-pump-diagnostics'])
-    assert.deepEqual(steps.at(-5).args, ['smoke:preview-click-focus'])
-    assert.deepEqual(steps.at(-4).args, ['probe:preview-lifecycle'])
+    assert.deepEqual(steps.at(-12).args, ['smoke:dev'])
+    assert.deepEqual(steps.at(-11).args, ['smoke:screens'])
+    assert.deepEqual(steps.at(-10).args, ['smoke:preview-real-launch'])
+    assert.deepEqual(steps.at(-9).args, ['smoke:layout-source-loop'])
+    assert.deepEqual(steps.at(-8).args, ['smoke:preview-scene-commit'])
+    assert.deepEqual(steps.at(-7).args, ['smoke:preview-pump-diagnostics'])
+    assert.deepEqual(steps.at(-6).args, ['smoke:preview-click-focus'])
+    assert.deepEqual(steps.at(-5).args, ['probe:preview-lifecycle'])
+    assert.deepEqual(steps.at(-4).args, ['probe:preview-window'])
     assert.deepEqual(steps.at(-3).args, ['smoke:preview-surface'])
     assert.equal(steps.at(-3).env.VIDEORC_PREVIEW_SURFACE_MIN_FPS, '30')
     assert.equal(steps.at(-3).env.VIDEORC_PREVIEW_SURFACE_MAX_INTERVAL_P95_MS, '120')
@@ -87,6 +89,7 @@ describe('buildRecordingStudioGateSteps', () => {
     assert.match(report, /smoke:preview-pump-diagnostics/)
     assert.match(report, /smoke:preview-click-focus/)
     assert.match(report, /probe:preview-lifecycle/)
+    assert.match(report, /probe:preview-window/)
     assert.match(report, /smoke:preview-surface/)
     assert.match(report, /smoke:screen-recording-real/)
     assert.match(report, /VIDEORC_BASELINE_SOURCE_READINESS_MS=60000/)
