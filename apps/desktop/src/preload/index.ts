@@ -22,6 +22,7 @@ const api: VideorcApi = {
   getRuntimeInfo: () => ipcRenderer.invoke('app:get-runtime-info'),
   pickScreenImage: () => ipcRenderer.invoke('screens:pick-image'),
   importBackgroundImage: () => ipcRenderer.invoke('backgrounds:import-image'),
+  backgroundAssetExists: (assetPath) => ipcRenderer.invoke('backgrounds:asset-exists', assetPath),
   getBundledBackgroundAssets: () => ipcRenderer.invoke('backgrounds:bundled-assets'),
   openOAuthUrl: (authUrl) => ipcRenderer.invoke('oauth:open-url', authUrl),
   getOAuthCallbackRedirectUri: (platform) =>

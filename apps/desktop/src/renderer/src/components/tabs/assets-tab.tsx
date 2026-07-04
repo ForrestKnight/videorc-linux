@@ -33,6 +33,7 @@ import {
   createImportedAsset,
   defaultBackgroundStyle,
   importIntoSlot,
+  backgroundAssetDisplayUrl,
   markSlotStatus,
   removeSlotAsset,
   renameAsset,
@@ -65,21 +66,7 @@ const FIT_OPTIONS: { value: BackgroundFit; label: string }[] = [
   { value: 'stretch', label: 'Stretch' }
 ]
 
-function imageUrl(path: string): string {
-  if (
-    /^(blob|data|file|https?):/.test(path) ||
-    path.startsWith('/assets/') ||
-    path.startsWith('/src/') ||
-    path.startsWith('./') ||
-    path.startsWith('../') ||
-    (!path.startsWith('/') && !/^[A-Za-z]:/.test(path))
-  ) {
-    return path
-  }
-  const normalized = path.replace(/\\/g, '/')
-  const prefix = /^[A-Za-z]:/.test(normalized) ? 'file:///' : 'file://'
-  return `${prefix}${encodeURI(normalized)}`
-}
+const imageUrl = backgroundAssetDisplayUrl
 
 // assetPath/thumbnailPath are optional on the model (placeholders have neither);
 // imported assets always carry both, so prefer the thumbnail and fall back.
@@ -102,7 +89,23 @@ export function AssetsTab(): ReactElement {
   const [importing, setImporting] = useState(false)
   const [renamingSlotId, setRenamingSlotId] = useState<string | null>(null)
 
+  // An <img> load failure is only allowed to brand a slot "Missing" when the
+  // file is genuinely gone — decode hiccups and transient read errors must
+  // not (F4 honesty rule). Bundled/relative assets have no checkable path;
+  // for those a load failure still marks missing (the bundle itself broke).
   const markMissing = (slotId: string): void => {
+    const slot = registry.slots.find((entry) => entry.id === slotId)
+    const asset = slot ? slotAsset(slot, registry) : null
+    const checkablePath =
+      asset?.kind === 'imported' && asset.assetPath?.startsWith('/') ? asset.assetPath : null
+    if (checkablePath && window.videorc?.backgroundAssetExists) {
+      void window.videorc.backgroundAssetExists(checkablePath).then((exists) => {
+        if (!exists) {
+          setRegistry((current) => markSlotStatus(current, slotId, 'missing-file'))
+        }
+      })
+      return
+    }
     setRegistry((current) => markSlotStatus(current, slotId, 'missing-file'))
   }
 
@@ -198,7 +201,9 @@ export function AssetsTab(): ReactElement {
         registry={registry}
         onMissing={markMissing}
         onClear={() => setRegistry(clearActiveSlot)}
-        onStyle={(assetId, patch) => setRegistry((current) => setAssetStyle(current, assetId, patch))}
+        onStyle={(assetId, patch) =>
+          setRegistry((current) => setAssetStyle(current, assetId, patch))
+        }
       />
     </div>
   )
@@ -242,7 +247,9 @@ function PresetTile({
     <div
       className={cn(
         'group relative flex aspect-[16/9] items-end overflow-hidden rounded-row border transition-colors',
-        active ? 'border-success ring-1 ring-success/60' : 'border-border hover:border-foreground/30'
+        active
+          ? 'border-success ring-1 ring-success/60'
+          : 'border-border hover:border-foreground/30'
       )}
     >
       <button

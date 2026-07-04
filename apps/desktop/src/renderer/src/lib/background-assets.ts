@@ -425,6 +425,30 @@ export function removeSlotAsset(
   }
 }
 
+/**
+ * Display URL for a background asset path. Bundler URLs, data/blob/http and
+ * relative paths pass through untouched; ABSOLUTE filesystem paths (imported
+ * assets in app storage) are served through the scoped `videorc-asset://`
+ * protocol — raw file:// subresources are blocked from the dev server's http
+ * origin, which made fresh imports fail onError and get branded "Missing"
+ * while the file sat safely on disk (post-0.9.4 fix batch F4).
+ */
+export function backgroundAssetDisplayUrl(path: string): string {
+  if (
+    /^(blob|data|file|https?|videorc-asset):/.test(path) ||
+    path.startsWith('/assets/') ||
+    path.startsWith('/src/') ||
+    path.startsWith('./') ||
+    path.startsWith('../') ||
+    (!path.startsWith('/') && !/^[A-Za-z]:/.test(path))
+  ) {
+    return path
+  }
+  const normalized = path.replace(/\\/g, '/')
+  const baseName = normalized.slice(normalized.lastIndexOf('/') + 1)
+  return `videorc-asset://background/${encodeURIComponent(baseName)}`
+}
+
 // Set a slot's intrinsic status — used when an <img> fails to load to surface
 // 'missing-file' without dropping the active selection (A6 records without a
 // background and warns; A4 just shows the state).

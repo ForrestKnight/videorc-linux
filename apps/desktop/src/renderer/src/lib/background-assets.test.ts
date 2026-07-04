@@ -4,6 +4,7 @@ import {
   BACKGROUND_SLOT_COUNT,
   applyBundledBackgroundAssets,
   applySlot,
+  backgroundAssetDisplayUrl,
   canApplySlot,
   clearActiveSlot,
   createDefaultRegistry,
@@ -447,5 +448,41 @@ describe('effective scene background and overrides', () => {
       sceneOverrides: { blurPx: 9, scale: 'nope', fit: 'fit', bogus: 1 }
     })
     expect(restored.sceneOverrides).toEqual({ blurPx: 9, fit: 'fit' })
+  })
+})
+
+describe('backgroundAssetDisplayUrl', () => {
+  it('serves imported absolute paths through the scoped asset protocol', () => {
+    expect(
+      backgroundAssetDisplayUrl(
+        '/Users/me/Library/Application Support/videorc/background-assets/abc-photo.png'
+      )
+    ).toBe('videorc-asset://background/abc-photo.png')
+    expect(backgroundAssetDisplayUrl('C:\\Users\\me\\videorc\\background-assets\\abc.png')).toBe(
+      'videorc-asset://background/abc.png'
+    )
+  })
+
+  it('encodes basenames safely', () => {
+    expect(backgroundAssetDisplayUrl('/managed/dir/my photo #1.png')).toBe(
+      'videorc-asset://background/my%20photo%20%231.png'
+    )
+  })
+
+  it('passes bundler URLs, data/blob/http/file and relative paths through', () => {
+    for (const passthrough of [
+      '/assets/backgrounds/one.png',
+      '/src/assets/backgrounds/two.jpg',
+      './three.png',
+      '../four.png',
+      'data:image/png;base64,AAAA',
+      'blob:http://localhost/xyz',
+      'https://example.com/img.png',
+      'file:///already/url.png',
+      'videorc-asset://background/five.png',
+      'plain-name.png'
+    ]) {
+      expect(backgroundAssetDisplayUrl(passthrough)).toBe(passthrough)
+    }
   })
 })

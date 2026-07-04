@@ -7,6 +7,8 @@ import {
   ipcMain,
   nativeImage,
   nativeTheme,
+  net,
+  protocol,
   screen,
   shell,
   systemPreferences,
@@ -6867,6 +6869,66 @@ async function pickFilePath(): Promise<string | null> {
   return result.filePaths[0] ?? null
 }
 
+// --- Managed asset serving (videorc-asset://) ---------------------------------
+// The renderer cannot load raw file:// paths for imported assets: subresource
+// file loads are blocked from the dev server's http origin, which made every
+// fresh background import flash onError and get branded "Missing" while the
+// file sat safely in app storage. This scoped protocol serves ONLY the two
+// managed background directories, addressed by bare basename — no arbitrary
+// filesystem reach.
+const MANAGED_ASSET_SCHEME = 'videorc-asset'
+
+function managedBackgroundRoots(): string[] {
+  return [join(app.getPath('userData'), 'background-assets'), bundledBackgroundDirectory()]
+}
+
+function resolveManagedBackgroundFile(fileName: string): string | null {
+  if (!fileName || fileName.includes('/') || fileName.includes('\\') || fileName.includes('..')) {
+    return null
+  }
+  for (const root of managedBackgroundRoots()) {
+    const candidate = join(root, fileName)
+    if (existsSync(candidate)) {
+      return candidate
+    }
+  }
+  return null
+}
+
+function registerManagedAssetProtocol(): void {
+  protocol.handle(MANAGED_ASSET_SCHEME, (request) => {
+    try {
+      const url = new URL(request.url)
+      if (url.host !== 'background') {
+        return new Response('Not found', { status: 404 })
+      }
+      const resolved = resolveManagedBackgroundFile(
+        decodeURIComponent(url.pathname.replace(/^\//, ''))
+      )
+      if (!resolved) {
+        return new Response('Not found', { status: 404 })
+      }
+      return net.fetch(pathToFileURL(resolved).toString())
+    } catch {
+      return new Response('Bad request', { status: 400 })
+    }
+  })
+}
+
+// Existence oracle for the honest "Missing" badge: an image LOAD failure is
+// not proof the file is gone (decode errors, transient reads) — only a real
+// filesystem miss inside the managed roots may brand a slot missing-file.
+function backgroundAssetFileExists(assetPath: unknown): boolean {
+  if (typeof assetPath !== 'string' || assetPath.length === 0) {
+    return false
+  }
+  const normalized = resolve(assetPath)
+  const inManagedRoot = managedBackgroundRoots().some((root) =>
+    normalized.startsWith(`${resolve(root)}/`)
+  )
+  return inManagedRoot && existsSync(normalized)
+}
+
 async function importBackgroundImage(): Promise<BackgroundImportResult | null> {
   const options: Electron.OpenDialogOptions = {
     title: 'Import background image',
@@ -6936,6 +6998,14 @@ async function openOAuthUrl(authUrl: string): Promise<void> {
   await shell.openExternal(parsed.toString())
 }
 
+// Privileged registration must happen before app ready.
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: MANAGED_ASSET_SCHEME,
+    privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true }
+  }
+])
+
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
 if (!hasSingleInstanceLock) {
@@ -6971,6 +7041,7 @@ app.whenReady().then(async () => {
   }
 
   registerOAuthCallbackProtocol()
+  registerManagedAssetProtocol()
   initAutoUpdater()
   registerUpdaterIpc(() => mainWindow)
   ipcMain.handle('backend:get-connection', () => backendConnection)
@@ -7000,6 +7071,9 @@ app.whenReady().then(async () => {
   ipcMain.handle('system:create-directory', (_event, path: string) => createDirectoryAt(path))
   ipcMain.handle('backgrounds:import-image', () => importBackgroundImage())
   ipcMain.handle('backgrounds:bundled-assets', () => bundledBackgroundAssets())
+  ipcMain.handle('backgrounds:asset-exists', (_event, assetPath: unknown) =>
+    backgroundAssetFileExists(assetPath)
+  )
   ipcMain.handle('oauth:open-url', (_event, authUrl: string) => openOAuthUrl(authUrl))
   ipcMain.handle('oauth:callback-redirect-uri', (_event, platform?: string) =>
     oauthCallbackRedirectUri(platform)
