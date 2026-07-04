@@ -67,6 +67,7 @@ export function PreviewStage({
   return (
     <DetachedPreviewCard
       alwaysOnTop={previewWindow.alwaysOnTop}
+      aspect={{ width: captureConfig.video.width, height: captureConfig.video.height }}
       className={className}
       nativePreviewSurfaceEnabled={nativePreviewSurfaceEnabled}
       previewLiveStatus={previewLiveStatus}
@@ -81,6 +82,12 @@ export function PreviewStage({
       onStick={() => void setPreviewWindowMode('docked')}
     />
   )
+}
+
+/** All three preview states occupy the same output-aspect rect so the Studio
+ * layout never jumps when the preview opens, docks, or closes. */
+function previewAspectRatio(aspect: { width: number; height: number }): string {
+  return aspect.width > 0 && aspect.height > 0 ? `${aspect.width} / ${aspect.height}` : '16 / 9'
 }
 
 // Docked ("stick") mode: the native preview surface floats glued over the slot
@@ -113,8 +120,7 @@ function DockedPreviewFrame({
   }
   const transportLabel = previewTransportLabel(supervisor.transport, supervisor.backing)
   const showPermissionAction = supervisor.lifecycleState === 'permission-required'
-  const aspectRatio =
-    aspect.width > 0 && aspect.height > 0 ? `${aspect.width} / ${aspect.height}` : '16 / 9'
+  const aspectRatio = previewAspectRatio(aspect)
 
   return (
     <div
@@ -203,6 +209,7 @@ function DetachedPreviewCard({
   previewLiveStatus,
   nativePreviewSurfaceEnabled,
   alwaysOnTop,
+  aspect,
   onAlwaysOnTopChange,
   onOpen,
   onClose,
@@ -217,6 +224,7 @@ function DetachedPreviewCard({
   previewLiveStatus?: PreviewLiveStatus
   nativePreviewSurfaceEnabled: boolean
   alwaysOnTop: boolean
+  aspect: { width: number; height: number }
   onAlwaysOnTopChange: (alwaysOnTop: boolean) => void
   onOpen: () => void
   onClose: () => void
@@ -248,10 +256,13 @@ function DetachedPreviewCard({
   return (
     <div
       className={cn(
-        'flex w-full flex-col items-center justify-center gap-3 rounded-panel border border-dashed bg-muted/20 px-6 py-10 text-center',
+        // Output-aspect rect (same as the open/docked preview) so the layout
+        // never jumps when the preview opens, docks, or closes.
+        'flex w-full flex-col items-center justify-center gap-3 rounded-panel border border-dashed bg-muted/20 px-6 text-center',
         className
       )}
       data-videorc-preview-card
+      style={{ aspectRatio: previewAspectRatio(aspect) }}
     >
       {nativePreviewSurfaceEnabled && supervisorStatus.tone !== 'warn' ? (
         <VideoCamera className="size-8 text-muted-foreground" weight="duotone" />

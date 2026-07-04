@@ -255,6 +255,43 @@ async function main() {
     assertProbe(true, 'dock-scroll: skipped — Studio page did not overflow', '')
   }
 
+  // Tab switch: the docked preview must FULLY leave the screen — including
+  // the native helper NSWindow, which is a separate window from the Electron
+  // frame. Asserting only state flags missed the 0.9.4 leak where the helper
+  // surface stayed painted over the next tab; CGWindowList is the oracle
+  // that sees that layer.
+  const dockedSlotBeforeSwitch = await dockSlotRect()
+  await smokeCommand('open-tab', { tab: 'sources' })
+  const tabHidden = await waitFor(
+    async () => smokeCommand('preview-window-state'),
+    (s) => s.visible === false && s.dockHiddenReason === 'slot-unmounted',
+    8000
+  )
+  assertProbe(
+    tabHidden.ok,
+    'dock-tab-switch: state hides with slot-unmounted when leaving Studio',
+    JSON.stringify(tabHidden.last)
+  )
+  const helperGone = await waitFor(
+    async () => ({
+      helpers: windowList().filter(
+        (w) =>
+          w.owner === 'native_preview_host_helper' &&
+          Math.abs(w.width - dockedSlotBeforeSwitch.width) <= 12 &&
+          Math.abs(w.height - dockedSlotBeforeSwitch.height) <= 12
+      )
+    }),
+    (s) => s.helpers.length === 0,
+    8000
+  )
+  assertProbe(
+    helperGone.ok,
+    'dock-tab-switch: the NATIVE helper window leaves the screen too',
+    JSON.stringify(helperGone.last)
+  )
+  await smokeCommand('open-tab', { tab: 'studio', waitFor: '[data-videorc-dock-slot]' })
+  await waitForDockedSurfaceAtSlot('dock-tab-return: surface returns when Studio remounts')
+
   // Undock: floating chrome and the remembered floating frame come back.
   const floated = await smokeCommand('preview-window-set-mode', { mode: 'floating' })
   assertProbe(

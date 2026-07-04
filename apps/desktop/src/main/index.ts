@@ -1876,12 +1876,16 @@ function applyDockedPreviewPlacement(): void {
   const decision = dockVisibilityDecision()
   if (!decision.visible) {
     if (window.isVisible()) {
-      // hide() fires the window's own 'hide' handler, which pushes visible:false
-      // through the normal placement pipeline to both surface hosts.
       window.hide()
-    } else {
-      emitPreviewWindowState()
     }
+    // Push visible:false EXPLICITLY — never rely on the child window's 'hide'
+    // event: macOS child-window events are unreliable, and when the event was
+    // missed the Electron window hid while the NATIVE helper surface stayed
+    // painted over the next tab (0.9.4 field bug — docked preview leaking
+    // onto other tabs). The push is idempotent; a duplicate from the event
+    // handler is harmless.
+    pushPreviewWindowPlacement()
+    emitPreviewWindowState()
     return
   }
   const slot = previewDockSlot!
