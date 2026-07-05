@@ -108,7 +108,7 @@ export function SessionPanel({
         />
       </div>
 
-      <div className="flex flex-col gap-2 rounded-row border bg-muted/20 p-3">
+      <div className="flex flex-col gap-2 border-t border-border pt-4">
         <span className="text-xs font-medium text-muted-foreground">Session controls</span>
         <div className="flex gap-2">
           {active ? (
