@@ -2253,10 +2253,26 @@ async fn handle_text_message(state: &AppState, text: &str) -> ServerResponse {
                 }
             }
         }
-        "sessions.list" => match state.database.list_sessions(20) {
-            Ok(sessions) => ServerResponse::ok(command.id, sessions),
+        "sessions.list" => {
+            // Library rewrite L1: the manager wants the whole library, not the
+            // dashboard's last-20 slice; the limit is caller-chosen, bounded.
+            let limit = command
+                .params
+                .get("limit")
+                .and_then(|value| value.as_u64())
+                .unwrap_or(20)
+                .clamp(1, 500) as usize;
+            match state.database.list_sessions(limit) {
+                Ok(sessions) => ServerResponse::ok(command.id, sessions),
+                Err(error) => {
+                    ServerResponse::error(command.id, "sessions-list-failed", error.to_string())
+                }
+            }
+        }
+        "sessions.storage" => match state.database.session_storage_totals() {
+            Ok(totals) => ServerResponse::ok(command.id, totals),
             Err(error) => {
-                ServerResponse::error(command.id, "sessions-list-failed", error.to_string())
+                ServerResponse::error(command.id, "sessions-storage-failed", error.to_string())
             }
         },
         "sessions.comments.list" => {

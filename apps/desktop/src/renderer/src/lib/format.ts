@@ -287,3 +287,25 @@ export function objectField(item: Record<string, unknown>, field: string): strin
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
+
+/** "742 MB" / "1.2 GB" — the Library's size column and storage footer. */
+export function formatBytes(bytes?: number | null): string {
+  if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) {
+    return '—'
+  }
+  if (bytes < 1024) {
+    return `${Math.round(bytes)} B`
+  }
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let value = bytes
+  let unit = 'B'
+  for (const candidate of units) {
+    value /= 1024
+    unit = candidate
+    if (value < 1024) {
+      break
+    }
+  }
+  const rounded = value >= 100 ? Math.round(value) : Math.round(value * 10) / 10
+  return `${rounded} ${unit}`
+}

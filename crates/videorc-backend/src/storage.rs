@@ -12,8 +12,8 @@ use crate::diagnostics::permission_pane_for_log;
 use crate::live_chat::{LiveChatEventType, LiveChatMessage, LiveChatMessageFragment};
 use crate::protocol::{
     AiArtifact, AiArtifactKind, AiArtifactStatus, DiagnosticStats, HealthEvent, HealthLevel,
-    LayoutSettings, OutputSettings, SessionLogEntry, SessionSummary, SourceSelection, StreamScreen,
-    StreamScreenStatus,
+    LayoutSettings, OutputSettings, SessionLogEntry, SessionStorageTotals, SessionSummary,
+    SourceSelection, StreamScreen, StreamScreenStatus,
 };
 use crate::repair::{GateStatus, RepairJob, RepairJobStatus};
 use crate::streaming::{
@@ -389,7 +389,7 @@ impl Database {
         let mut stmt = conn.prepare(
             "SELECT id, title, started_at, ended_at, status, mode, output_path, mp4_path,
                     stream_preset, container, duration_ms, sources_json, layout_json,
-                    diagnostics_json
+                    diagnostics_json, file_size_bytes
              FROM sessions
              ORDER BY started_at DESC
              LIMIT ?1",
@@ -414,6 +414,7 @@ impl Database {
                 sources_json,
                 layout_json,
                 diagnostics_json,
+                row.get::<_, Option<i64>>(14)?,
             ))
         })?;
 
@@ -434,9 +435,31 @@ impl Database {
                 sources_json,
                 layout_json,
                 diagnostics_json,
+                stored_file_size,
             ) = row?;
 
+            // Size truth (Library rewrite L1): stat the VISIBLE file live while
+            // it exists (repairs and MP4 exports change it), fall back to the
+            // last-known size when it has gone missing, and write changes back
+            // so missing-file rows keep a truthful number. A stat is microseconds;
+            // 200 rows cost less than a frame.
+            let visible_path = mp4_path.as_deref().or(output_path.as_deref());
+            let live_size = visible_path
+                .and_then(|path| std::fs::metadata(path).ok())
+                .map(|metadata| metadata.len() as i64);
+            let file_size_bytes = live_size.or(stored_file_size);
+            if live_size.is_some() && live_size != stored_file_size {
+                let _ = conn.execute(
+                    "UPDATE sessions SET file_size_bytes = ?2 WHERE id = ?1",
+                    params![id, live_size],
+                );
+            }
+            let layout: LayoutSettings = serde_json::from_str(&layout_json)?;
+            let scene_label = session_scene_label(&layout, stream_preset.as_deref(), &mode);
+
             sessions.push(SessionSummary {
+                file_size_bytes,
+                scene_label,
                 health_events: self.health_events_for_session_locked(&conn, &id)?,
                 session_logs: self.session_logs_for_session_locked(&conn, &id)?,
                 ai_artifacts: self.ai_artifacts_for_session_locked(&conn, &id)?,
@@ -461,11 +484,24 @@ impl Database {
                     .as_deref()
                     .and_then(|value| serde_json::from_str(value).ok()),
                 sources: serde_json::from_str(&sources_json)?,
-                layout: serde_json::from_str(&layout_json)?,
+                layout,
             });
         }
 
         Ok(sessions)
+    }
+
+    /// Library footer facts (L1): total sessions + the sum of last-known file
+    /// sizes. Free disk space comes from the Electron-side directory facts —
+    /// the renderer combines the two.
+    pub fn session_storage_totals(&self) -> Result<SessionStorageTotals> {
+        let conn = self.lock()?;
+        let (count, total_bytes) = conn.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(file_size_bytes), 0) FROM sessions",
+            [],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )?;
+        Ok(SessionStorageTotals { count, total_bytes })
     }
 
     pub fn save_setting<T: serde::Serialize>(&self, key: &str, value: &T) -> Result<()> {
@@ -1126,6 +1162,12 @@ impl Database {
         ensure_column(
             &conn,
             "sessions",
+            "file_size_bytes",
+            "file_size_bytes INTEGER",
+        )?;
+        ensure_column(
+            &conn,
+            "sessions",
             "diagnostics_json",
             "diagnostics_json TEXT",
         )?;
@@ -1432,6 +1474,31 @@ fn latest_quality_status_for_path_locked(
     Ok(None)
 }
 
+/// Human label for a session's composition (Library rewrite L1): the layout
+/// preset name, or the stream preset for stream-only sessions. Pure + tested.
+pub fn session_scene_label(
+    layout: &LayoutSettings,
+    stream_preset: Option<&str>,
+    mode: &str,
+) -> Option<String> {
+    if mode == "streaming"
+        && let Some(preset) = stream_preset
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    {
+        return Some(preset.to_string());
+    }
+    Some(
+        match layout.layout_preset {
+            crate::protocol::LayoutPreset::ScreenCamera => "Screen + Camera",
+            crate::protocol::LayoutPreset::ScreenOnly => "Screen only",
+            crate::protocol::LayoutPreset::CameraOnly => "Camera only",
+            crate::protocol::LayoutPreset::SideBySide => "Side by side",
+        }
+        .to_string(),
+    )
+}
+
 fn ensure_column(conn: &Connection, table: &str, column: &str, definition: &str) -> Result<()> {
     let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
     let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
@@ -1606,6 +1673,33 @@ fn title_case_word(word: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::session_scene_label;
+
+    #[test]
+    fn scene_labels_map_presets_and_stream_presets() {
+        let mut layout = crate::protocol::default_layout_settings();
+        layout.layout_preset = crate::protocol::LayoutPreset::ScreenCamera;
+        assert_eq!(
+            session_scene_label(&layout, None, "recording").as_deref(),
+            Some("Screen + Camera")
+        );
+        layout.layout_preset = crate::protocol::LayoutPreset::SideBySide;
+        assert_eq!(
+            session_scene_label(&layout, None, "recording").as_deref(),
+            Some("Side by side")
+        );
+        // Stream-only sessions prefer the stream preset name.
+        assert_eq!(
+            session_scene_label(&layout, Some("1080p60"), "streaming").as_deref(),
+            Some("1080p60")
+        );
+        // Blank stream presets fall through to the layout label.
+        assert_eq!(
+            session_scene_label(&layout, Some("  "), "streaming").as_deref(),
+            Some("Side by side")
+        );
+    }
+
     use super::*;
     use crate::live_chat::{
         LiveChatEventType, LiveChatMessage, LiveChatMessageFragment, live_chat_message_id,

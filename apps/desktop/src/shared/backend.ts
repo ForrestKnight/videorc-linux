@@ -1926,6 +1926,10 @@ export interface SessionSummary {
   streamPreset?: string
   container?: RecordingContainer
   durationMs?: number
+  /** Size of the visible file — live while it exists, last-known when missing. */
+  fileSizeBytes?: number
+  /** "Screen + Camera" etc. (derived layout preset; stream preset when stream-only). */
+  sceneLabel?: string
   qualityStatus?: GateStatus | null
   finalDiagnostics?: DiagnosticStats | null
   layout: LayoutSettings
@@ -1934,6 +1938,11 @@ export interface SessionSummary {
   sessionLogs: SessionLogEntry[]
   aiArtifacts: AiArtifact[]
   commentCount: number
+}
+
+export interface SessionStorageTotals {
+  count: number
+  totalBytes: number
 }
 
 export interface SessionCommentsListParams {

@@ -2053,6 +2053,16 @@ pub struct SessionSummary {
     pub stream_preset: Option<String>,
     pub container: Option<String>,
     pub duration_ms: Option<i64>,
+    /// Size of the visible recording file (mp4 export when present, else the
+    /// original container). Statted live at list time while the file exists;
+    /// last-known when it has gone missing (Library rewrite L1).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_size_bytes: Option<i64>,
+    /// Human label for the session's layout preset ("Screen + Camera"); the
+    /// stream preset for stream-only sessions. Upgrades to real scene names
+    /// when named scenes ship (F2).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scene_label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quality_status: Option<GateStatus>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2063,6 +2073,13 @@ pub struct SessionSummary {
     pub session_logs: Vec<SessionLogEntry>,
     pub ai_artifacts: Vec<AiArtifact>,
     pub comment_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionStorageTotals {
+    pub count: i64,
+    pub total_bytes: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

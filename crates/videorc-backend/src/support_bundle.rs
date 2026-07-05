@@ -543,6 +543,8 @@ mod tests {
     #[test]
     fn support_bundle_sessions_drop_ai_content_and_keep_media_basenames_only() {
         let session = SessionSummary {
+            file_size_bytes: None,
+            scene_label: None,
             id: "session-1".to_string(),
             title: "Test".to_string(),
             started_at: "2026-06-13T00:00:00Z".to_string(),
