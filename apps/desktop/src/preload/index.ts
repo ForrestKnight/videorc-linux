@@ -8,6 +8,7 @@ import type {
   CaptionsWindowState,
   CommentsWindowState,
   GlassWallpaperState,
+  LiveChatMessage,
   LiveChatSnapshot,
   NotesDocument,
   NotesWindowState,
@@ -24,6 +25,24 @@ const api: VideorcApi = {
   importBackgroundImage: () => ipcRenderer.invoke('backgrounds:import-image'),
   backgroundAssetExists: (assetPath) => ipcRenderer.invoke('backgrounds:asset-exists', assetPath),
   cacheChatAvatar: (url) => ipcRenderer.invoke('avatars:cache', url),
+  sendCommentHighlight: (message) => ipcRenderer.invoke('comments-window:highlight', message),
+  onCommentHighlightRequest: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, message: LiveChatMessage): void =>
+      callback(message)
+    ipcRenderer.on('comments-window:highlight-request', listener)
+    return () => ipcRenderer.removeListener('comments-window:highlight-request', listener)
+  },
+  pushCommentHighlightState: (state) =>
+    ipcRenderer.invoke('comments-window:highlight-state-push', state),
+  getCommentHighlightState: () => ipcRenderer.invoke('comments-window:highlight-state-get'),
+  onCommentHighlightState: (callback) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      state: { messageId: string | null }
+    ): void => callback(state)
+    ipcRenderer.on('comments-window:highlight-state', listener)
+    return () => ipcRenderer.removeListener('comments-window:highlight-state', listener)
+  },
   getBundledBackgroundAssets: () => ipcRenderer.invoke('backgrounds:bundled-assets'),
   openOAuthUrl: (authUrl) => ipcRenderer.invoke('oauth:open-url', authUrl),
   getOAuthCallbackRedirectUri: (platform) =>

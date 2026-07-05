@@ -25,12 +25,18 @@ export function CommentsReader({
   snapshot,
   onClear,
   alwaysOnTop = false,
-  onToggleAlwaysOnTop
+  onToggleAlwaysOnTop,
+  highlightedId = null,
+  onHighlight
 }: {
   snapshot: LiveChatSnapshot
   onClear?: () => void
   alwaysOnTop?: boolean
   onToggleAlwaysOnTop?: () => void
+  /** The comment currently shown ON the stream (relayed from the main renderer). */
+  highlightedId?: string | null
+  /** Click-to-highlight: show/replace/unpin this comment on the stream. */
+  onHighlight?: (message: LiveChatMessage) => void
 }): ReactElement {
   const messages = sortMessagesChronological(snapshot.messages)
   const savedTranscript = messages.length > 0 && snapshot.providers.length === 0
@@ -108,7 +114,12 @@ export function CommentsReader({
         ) : (
           <ol className="flex flex-col gap-2">
             {messages.map((message) => (
-              <MessageRow key={message.id} message={message} />
+              <MessageRow
+                key={message.id}
+                highlighted={message.id === highlightedId}
+                message={message}
+                onHighlight={onHighlight}
+              />
             ))}
           </ol>
         )}
@@ -163,20 +174,53 @@ function ProviderPill({ provider }: { provider: LiveChatProviderState }): ReactE
   )
 }
 
-function MessageRow({ message }: { message: LiveChatMessage }): ReactElement {
+function MessageRow({
+  message,
+  highlighted = false,
+  onHighlight
+}: {
+  message: LiveChatMessage
+  highlighted?: boolean
+  onHighlight?: (message: LiveChatMessage) => void
+}): ReactElement {
   const isPaid = message.eventType === 'paid'
   const isSystem =
     message.eventType === 'system' ||
     message.eventType === 'moderation' ||
     message.eventType === 'membership'
+  // Only real viewer messages can go on stream.
+  const highlightable = Boolean(onHighlight) && !isSystem && !message.isDeleted
   return (
     <li
+      aria-pressed={highlightable ? highlighted : undefined}
+      role={highlightable ? 'button' : undefined}
+      tabIndex={highlightable ? 0 : undefined}
+      title={
+        highlightable
+          ? highlighted
+            ? 'Remove from stream'
+            : 'Show this comment on the stream'
+          : undefined
+      }
       className={cn(
         'flex items-start gap-2 rounded-row px-2 py-1.5 text-[15px] leading-snug',
         isPaid && 'bg-warning/10 ring-1 ring-warning/30',
         isSystem && 'text-muted-foreground italic',
-        message.isDeleted && 'text-muted-foreground line-through'
+        message.isDeleted && 'text-muted-foreground line-through',
+        highlightable && 'cursor-pointer transition-colors hover:bg-accent',
+        highlighted && 'bg-accent ring-1 ring-ring'
       )}
+      onClick={highlightable ? () => onHighlight?.(message) : undefined}
+      onKeyDown={
+        highlightable
+          ? (event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                onHighlight?.(message)
+              }
+            }
+          : undefined
+      }
     >
       <AvatarCircle
         avatarUrl={message.authorAvatarUrl}
@@ -198,6 +242,11 @@ function MessageRow({ message }: { message: LiveChatMessage }): ReactElement {
         <span className="ml-1.5 align-baseline text-[10px] text-muted-foreground/60 tabular-nums">
           {formatTime(message.receivedAt)}
         </span>
+        {highlighted ? (
+          <span className="ml-1.5 rounded-chip bg-success/15 px-1.5 py-0.5 align-baseline text-[10px] font-medium text-success">
+            On stream
+          </span>
+        ) : null}
       </span>
     </li>
   )

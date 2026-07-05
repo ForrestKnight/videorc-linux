@@ -140,6 +140,12 @@ import type {
 import { createEmptyLiveChatSnapshot } from '@/lib/backend'
 import { renderCaptionCueFramePng, renderCaptionOverlayPng } from '@/lib/caption-overlay'
 import {
+  HIGHLIGHT_AUTO_DISMISS_MS,
+  nextHighlightState,
+  type HighlightState
+} from '@/lib/comment-highlight'
+import { renderCommentHighlightPng } from '@/lib/caption-overlay'
+import {
   appendCaptionLine,
   captionLineAboveFloor,
   captionSessionFloor,
@@ -359,6 +365,8 @@ export type StudioContextValue = {
   toggleCommentsWindow: () => Promise<void>
   setCommentsWindowAlwaysOnTop: (alwaysOnTop: boolean) => Promise<void>
   openSessionCommentsWindow: (sessionId: string) => Promise<void>
+  highlightedCommentId: string | null
+  toggleCommentHighlight: (message: LiveChatMessage) => void
   streamMetadataDraft: StreamMetadataDraft | null
   streamMetadataValidation: StreamMetadataValidation | null
   goLivePreflight: GoLivePreflight | null
@@ -957,6 +965,80 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   useEffect(() => {
     void window.videorc?.pushCommentsSnapshot?.(liveChatSnapshot)
   }, [liveChatSnapshot])
+
+  // --- Click-to-highlight (Comments upgrade S3) --------------------------------
+  // One comment at a time burns onto the stream via the compositor's dedicated
+  // highlight slot. The reducer is pure (comment-highlight.ts); this effect
+  // owns the rasterize→RPC round trip, the auto-dismiss timer, and clears on
+  // session end. Clicks arrive locally (rail) or relayed from the Comments
+  // window through main.
+  const [commentHighlight, setCommentHighlight] = useState<HighlightState | null>(null)
+  const toggleCommentHighlight = useCallback((message: LiveChatMessage) => {
+    setCommentHighlight((current) =>
+      nextHighlightState(current, { type: 'toggle', message, nowMs: Date.now() })
+    )
+  }, [])
+  const highlightedCommentId = commentHighlight?.message.id ?? null
+  useEffect(() => {
+    const off = window.videorc?.onCommentHighlightRequest?.((message) => {
+      toggleCommentHighlight(message)
+    })
+    return off
+  }, [toggleCommentHighlight])
+  useEffect(() => {
+    void window.videorc?.pushCommentHighlightState?.({ messageId: highlightedCommentId })
+  }, [highlightedCommentId])
+  const commentHighlightSessionActive = isActiveRecordingState(recording.state)
+  useEffect(() => {
+    if (!commentHighlightSessionActive && commentHighlight) {
+      setCommentHighlight(null)
+    }
+  }, [commentHighlightSessionActive, commentHighlight])
+  useEffect(() => {
+    if (!client) {
+      return
+    }
+    if (!commentHighlight) {
+      void client.request('comments.highlight.clear').catch(() => {})
+      return
+    }
+    const { message } = commentHighlight
+    let cancelled = false
+    const streamVideo = streamOutputVideoSettings(
+      captureConfig.video,
+      captureConfig.streamEnabled ? captureConfig.streaming : undefined
+    )
+    void (async () => {
+      const avatarUrl = message.authorAvatarUrl
+        ? await window.videorc?.cacheChatAvatar?.(message.authorAvatarUrl).catch(() => null)
+        : null
+      const pngBase64 = await renderCommentHighlightPng({
+        authorName: message.authorName,
+        text: message.messageText,
+        avatarUrl: avatarUrl ?? null,
+        canvasWidth: streamVideo.width
+      })
+      if (cancelled || !pngBase64) {
+        return
+      }
+      await client.request('comments.highlight.set', { pngBase64, position: 'top' })
+    })().catch(() => {
+      // Best-effort: the next click retries; the reader still shows state.
+    })
+    const timer = window.setTimeout(() => {
+      setCommentHighlight((current) =>
+        nextHighlightState(current, { type: 'expire', messageId: message.id })
+      )
+    }, HIGHLIGHT_AUTO_DISMISS_MS)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+    // Rasterize once per highlighted message; config changes mid-highlight
+    // keep the current card (it dismisses within seconds anyway).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [client, commentHighlight])
+
   const refreshLiveChatSnapshotForComments = useCallback(async (): Promise<void> => {
     if (!client) {
       return
@@ -5359,6 +5441,8 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       toggleCommentsWindow,
       setCommentsWindowAlwaysOnTop,
       openSessionCommentsWindow,
+      highlightedCommentId,
+      toggleCommentHighlight,
       streamMetadataDraft,
       streamMetadataValidation,
       goLivePreflight,
@@ -5523,6 +5607,8 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       toggleCommentsWindow,
       setCommentsWindowAlwaysOnTop,
       openSessionCommentsWindow,
+      highlightedCommentId,
+      toggleCommentHighlight,
       streamMetadataDraft,
       streamMetadataValidation,
       goLivePreflight,

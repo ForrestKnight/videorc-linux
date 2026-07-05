@@ -16,13 +16,17 @@ export function LiveChatRail({
   onClearLocal,
   onClose,
   windowOpen,
-  onPopOut
+  onPopOut,
+  highlightedId = null,
+  onHighlight
 }: {
   snapshot: LiveChatSnapshot
   onClearLocal: () => void
   onClose: () => void
   windowOpen: boolean
   onPopOut: () => void | Promise<void>
+  highlightedId?: string | null
+  onHighlight?: (message: import('../../../shared/backend').LiveChatMessage) => void
 }): ReactElement {
   return (
     <aside className="flex w-80 shrink-0 flex-col gap-3 rounded-panel border bg-muted/20 p-4">
@@ -59,7 +63,12 @@ export function LiveChatRail({
           </Button>
         </div>
       ) : (
-        <LiveChatPanel snapshot={snapshot} onClearLocal={onClearLocal} />
+        <LiveChatPanel
+          highlightedId={highlightedId}
+          snapshot={snapshot}
+          onClearLocal={onClearLocal}
+          onHighlight={onHighlight}
+        />
       )}
     </aside>
   )

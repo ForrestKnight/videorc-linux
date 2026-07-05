@@ -142,6 +142,7 @@ let commentsWindowLastFrame: Electron.Rectangle | null = null
 let commentsWindowAlwaysOnTop = false
 let commentsWindowClosing = false
 let commentsWindowContentProtected = false
+let latestCommentHighlightState: { messageId: string | null } = { messageId: null }
 let latestCommentsSnapshot: LiveChatSnapshot | null = null
 let captionsWindow: BrowserWindow | null = null
 let captionsWindowLastFrame: Electron.Rectangle | null = null
@@ -7250,6 +7251,27 @@ app.whenReady().then(async () => {
     }
   })
   ipcMain.handle('comments-window:get-snapshot', () => latestCommentsSnapshot)
+  // Click-to-highlight relay (Comments upgrade S3): the window clicks, the
+  // MAIN renderer owns the lifecycle + rasterization (it has the backend
+  // client), and the resulting on-stream state relays back to the window.
+  ipcMain.handle('comments-window:highlight', (_event, message: unknown) => {
+    if (mainWindow && !mainWindow.webContents.isDestroyed()) {
+      mainWindow.webContents.send('comments-window:highlight-request', message)
+    }
+  })
+  ipcMain.handle('comments-window:highlight-state-push', (_event, state: unknown) => {
+    latestCommentHighlightState =
+      typeof state === 'object' && state !== null && 'messageId' in state
+        ? (state as { messageId: string | null })
+        : { messageId: null }
+    if (commentsWindow && !commentsWindow.webContents.isDestroyed()) {
+      commentsWindow.webContents.send(
+        'comments-window:highlight-state',
+        latestCommentHighlightState
+      )
+    }
+  })
+  ipcMain.handle('comments-window:highlight-state-get', () => latestCommentHighlightState)
   ipcMain.handle('comments-window:clear', () => {
     if (mainWindow && !mainWindow.webContents.isDestroyed()) {
       mainWindow.webContents.send('comments-window:clear-request')

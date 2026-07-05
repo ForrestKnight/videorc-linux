@@ -65,19 +65,51 @@ function ProviderPill({ provider }: { provider: LiveChatProviderState }): ReactE
   )
 }
 
-function MessageRow({ message }: { message: LiveChatMessage }): ReactElement {
+function MessageRow({
+  message,
+  highlighted = false,
+  onHighlight
+}: {
+  message: LiveChatMessage
+  highlighted?: boolean
+  onHighlight?: (message: LiveChatMessage) => void
+}): ReactElement {
   const isPaid = message.eventType === 'paid'
   const isSystem =
     message.eventType === 'system' ||
     message.eventType === 'moderation' ||
     message.eventType === 'membership'
+  const highlightable = Boolean(onHighlight) && !isSystem && !message.isDeleted
   return (
     <div
+      aria-pressed={highlightable ? highlighted : undefined}
+      role={highlightable ? 'button' : undefined}
+      tabIndex={highlightable ? 0 : undefined}
+      title={
+        highlightable
+          ? highlighted
+            ? 'Remove from stream'
+            : 'Show this comment on the stream'
+          : undefined
+      }
+      onClick={highlightable ? () => onHighlight?.(message) : undefined}
+      onKeyDown={
+        highlightable
+          ? (event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                onHighlight?.(message)
+              }
+            }
+          : undefined
+      }
       className={cn(
         'rounded-row px-2 py-1 text-sm leading-snug',
         isPaid && 'bg-warning/10 ring-1 ring-warning/30',
         isSystem && 'text-muted-foreground italic',
-        message.isDeleted && 'text-muted-foreground line-through'
+        message.isDeleted && 'text-muted-foreground line-through',
+        highlightable && 'cursor-pointer transition-colors hover:bg-accent',
+        highlighted && 'bg-accent ring-1 ring-ring'
       )}
     >
       <span className="text-[10px] text-muted-foreground tabular-nums">
@@ -101,10 +133,14 @@ function MessageRow({ message }: { message: LiveChatMessage }): ReactElement {
 
 export function LiveChatPanel({
   snapshot,
-  onClearLocal
+  onClearLocal,
+  highlightedId = null,
+  onHighlight
 }: {
   snapshot: LiveChatSnapshot
   onClearLocal: () => Promise<void> | void
+  highlightedId?: string | null
+  onHighlight?: (message: LiveChatMessage) => void
 }): ReactElement {
   const [activePlatforms, setActivePlatforms] = useState<StreamPlatform[]>([])
   const [paused, setPaused] = useState(false)
@@ -210,7 +246,12 @@ export function LiveChatPanel({
         >
           {hasMessages ? (
             visibleMessages(messages, MAX_RENDERED_LIVE_CHAT_MESSAGES).map((message) => (
-              <MessageRow key={message.id} message={message} />
+              <MessageRow
+                key={message.id}
+                highlighted={message.id === highlightedId}
+                message={message}
+                onHighlight={onHighlight}
+              />
             ))
           ) : (
             <div className="flex h-full items-center justify-center px-4 text-center text-xs text-muted-foreground">

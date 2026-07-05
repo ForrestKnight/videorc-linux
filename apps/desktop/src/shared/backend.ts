@@ -2154,6 +2154,13 @@ export interface VideorcApi {
   /** Fetch-and-cache a chat avatar from an allowlisted platform CDN; returns a
    * local videorc-asset:// URL or null (disallowed host / fetch failure). */
   cacheChatAvatar: (url: string) => Promise<string | null>
+  /** Comments window -> main renderer: relay a click-to-highlight request. */
+  sendCommentHighlight: (message: LiveChatMessage) => Promise<void>
+  onCommentHighlightRequest: (callback: (message: LiveChatMessage) => void) => () => void
+  /** Main renderer -> comments window: which comment is on stream (or null). */
+  pushCommentHighlightState: (state: { messageId: string | null }) => Promise<void>
+  getCommentHighlightState: () => Promise<{ messageId: string | null }>
+  onCommentHighlightState: (callback: (state: { messageId: string | null }) => void) => () => void
   getBundledBackgroundAssets: () => Promise<BackgroundImportResult[]>
   openOAuthUrl: (authUrl: string) => Promise<void>
   getOAuthCallbackRedirectUri: (platform?: string) => Promise<string | null>

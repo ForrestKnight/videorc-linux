@@ -298,3 +298,129 @@ export async function renderCaptionCueFramePng(params: {
   }
   return canvasToBase64Png(canvas)
 }
+
+/**
+ * Render a comment-highlight card (Comments upgrade S3) to a PNG (base64, no
+ * data: prefix): the same glass treatment as the caption bar, with an avatar
+ * circle (monogram fallback), the author name, and up to three text lines.
+ * Best-effort: a failed avatar load still renders the card.
+ */
+export async function renderCommentHighlightPng(params: {
+  authorName: string
+  text: string
+  avatarUrl: string | null
+  canvasWidth: number
+}): Promise<string | null> {
+  const { layoutCommentHighlight } = await import('@/lib/comment-highlight')
+  const { monogramInitials } = await import('@/lib/chat-avatar')
+  const measurer = canvasMeasurer()
+  if (!measurer) {
+    return null
+  }
+  const layout = layoutCommentHighlight({ ...params, measure: measurer.measure })
+  if (!layout) {
+    return null
+  }
+  const { metrics } = layout
+  const pad = Math.round(metrics.textFontPx * 0.6)
+  const canvas = new OffscreenCanvas(layout.cardWidthPx + pad * 2, layout.cardHeightPx + pad * 2)
+  const context = canvas.getContext('2d')
+  if (!context) {
+    return null
+  }
+  const originX = pad
+  const originY = pad
+
+  // Card: identical glass recipe to paintCaptionBar (shadow, sheen, hairline).
+  context.save()
+  context.shadowColor = 'rgba(0, 0, 0, 0.4)'
+  context.shadowBlur = metrics.textFontPx * 0.45
+  context.shadowOffsetY = metrics.textFontPx * 0.1
+  context.beginPath()
+  context.roundRect(originX, originY, layout.cardWidthPx, layout.cardHeightPx, metrics.radiusPx)
+  context.fillStyle = 'rgba(16, 16, 18, 0.78)'
+  context.fill()
+  context.restore()
+  const sheen = context.createLinearGradient(0, originY, 0, originY + layout.cardHeightPx)
+  sheen.addColorStop(0, 'rgba(255, 255, 255, 0.07)')
+  sheen.addColorStop(0.35, 'rgba(255, 255, 255, 0.015)')
+  sheen.addColorStop(1, 'rgba(255, 255, 255, 0)')
+  context.beginPath()
+  context.roundRect(originX, originY, layout.cardWidthPx, layout.cardHeightPx, metrics.radiusPx)
+  context.fillStyle = sheen
+  context.fill()
+  context.beginPath()
+  context.roundRect(
+    originX + 0.5,
+    originY + 0.5,
+    layout.cardWidthPx - 1,
+    layout.cardHeightPx - 1,
+    metrics.radiusPx
+  )
+  context.strokeStyle = 'rgba(255, 255, 255, 0.1)'
+  context.lineWidth = 1
+  context.stroke()
+
+  // Avatar circle (image when the local cache resolves, monogram otherwise).
+  const avatarX = originX + metrics.paddingPx
+  const avatarY = originY + metrics.paddingPx
+  context.save()
+  context.beginPath()
+  context.arc(
+    avatarX + metrics.avatarPx / 2,
+    avatarY + metrics.avatarPx / 2,
+    metrics.avatarPx / 2,
+    0,
+    Math.PI * 2
+  )
+  context.clip()
+  let avatarDrawn = false
+  if (params.avatarUrl) {
+    try {
+      const response = await fetch(params.avatarUrl)
+      if (response.ok) {
+        const bitmap = await createImageBitmap(await response.blob())
+        context.drawImage(bitmap, avatarX, avatarY, metrics.avatarPx, metrics.avatarPx)
+        avatarDrawn = true
+      }
+    } catch {
+      // Monogram fallback below.
+    }
+  }
+  if (!avatarDrawn) {
+    context.fillStyle = 'rgba(255, 255, 255, 0.12)'
+    context.fillRect(avatarX, avatarY, metrics.avatarPx, metrics.avatarPx)
+    context.font = canvasFont(Math.round(metrics.avatarPx * 0.42))
+    context.fillStyle = '#A1A1AA'
+    context.textAlign = 'center'
+    context.textBaseline = 'middle'
+    context.fillText(
+      monogramInitials(layout.name),
+      avatarX + metrics.avatarPx / 2,
+      avatarY + metrics.avatarPx / 2 + 1
+    )
+  }
+  context.restore()
+
+  // Name + comment text.
+  const textX = avatarX + metrics.avatarPx + metrics.paddingPx
+  context.save()
+  context.shadowColor = 'rgba(0, 0, 0, 0.45)'
+  context.shadowBlur = metrics.textFontPx * 0.08
+  context.shadowOffsetY = Math.max(1, Math.round(metrics.textFontPx * 0.03))
+  context.textAlign = 'left'
+  context.textBaseline = 'top'
+  context.font = canvasFont(metrics.nameFontPx)
+  context.fillStyle = '#F5F5F7'
+  context.fillText(layout.name, textX, originY + metrics.paddingPx)
+  context.font = `400 ${metrics.textFontPx}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`
+  context.fillStyle = 'rgba(244, 244, 245, 0.92)'
+  const textTop =
+    originY + metrics.paddingPx + metrics.nameFontPx + Math.round(metrics.textFontPx * 0.35)
+  layout.textLines.forEach((line, index) => {
+    context.fillText(line, textX, textTop + metrics.lineHeightPx * index, metrics.maxTextWidthPx)
+  })
+  context.restore()
+
+  return canvasToBase64Png(canvas)
+}
