@@ -2965,25 +2965,22 @@ async fn handle_text_message(state: &AppState, text: &str) -> ServerResponse {
             match serde_json::from_value::<protocol::ScreenIdParams>(command.params) {
                 Ok(params) => match state.database.activate_stream_screen(&params.screen_id) {
                     Ok(screen) => {
-                        let should_update_compositor = {
-                            if let Some(recording) = state.recording.lock().await.as_ref() {
-                                if let Err(error) =
-                                    recording.set_active_screen_path(Some(&screen.image_path))
-                                {
-                                    return ServerResponse::error(
-                                        command.id,
-                                        "screen-activate-failed",
-                                        error.to_string(),
-                                    );
-                                }
-                                recording.encoder_bridge.is_some()
-                            } else {
-                                false
-                            }
-                        };
-                        if should_update_compositor {
-                            update_compositor_active_screen(state, Some(screen.clone())).await;
+                        if let Some(recording) = state.recording.lock().await.as_ref()
+                            && let Err(error) =
+                                recording.set_active_screen_path(Some(&screen.image_path))
+                        {
+                            return ServerResponse::error(
+                                command.id,
+                                "screen-activate-failed",
+                                error.to_string(),
+                            );
                         }
+                        // Always re-push the compositor scene: the STANDBY
+                        // preview uses the same compositor, so activation must
+                        // change what the user sees immediately, not only once
+                        // a recording's encoder bridge is running (no-op when
+                        // no scene exists yet).
+                        update_compositor_active_screen(state, Some(screen.clone())).await;
                         state.emit_event("screens.active.changed", Some(screen.clone()));
                         ServerResponse::ok(command.id, screen)
                     }
@@ -3000,23 +2997,18 @@ async fn handle_text_message(state: &AppState, text: &str) -> ServerResponse {
         }
         "screens.clear" => match state.database.clear_active_stream_screen() {
             Ok(()) => {
-                let should_update_compositor = {
-                    if let Some(recording) = state.recording.lock().await.as_ref() {
-                        if let Err(error) = recording.set_active_screen_path(None) {
-                            return ServerResponse::error(
-                                command.id,
-                                "screen-clear-failed",
-                                error.to_string(),
-                            );
-                        }
-                        recording.encoder_bridge.is_some()
-                    } else {
-                        false
-                    }
-                };
-                if should_update_compositor {
-                    update_compositor_active_screen(state, None).await;
+                if let Some(recording) = state.recording.lock().await.as_ref()
+                    && let Err(error) = recording.set_active_screen_path(None)
+                {
+                    return ServerResponse::error(
+                        command.id,
+                        "screen-clear-failed",
+                        error.to_string(),
+                    );
                 }
+                // Mirror screens.activate: the standby preview must drop the
+                // takeover the moment it is deactivated.
+                update_compositor_active_screen(state, None).await;
                 state.emit_event(
                     "screens.active.changed",
                     Option::<protocol::StreamScreen>::None,
