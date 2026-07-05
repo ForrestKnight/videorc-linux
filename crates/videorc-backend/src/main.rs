@@ -142,6 +142,16 @@ async fn main() -> Result<()> {
         )
         .with_writer(std::io::stderr)
         .init();
+    // F-021 root cause: SkyLight ASSERTS (SIGABRT, "CGS_REQUIRE_INIT
+    // did_initialize") if a window-server call runs before this process's
+    // CoreGraphics connection initializes — SCContentFilter's window init
+    // calls SLSGetDisplaysWithRect, and a renderer re-requesting a window
+    // capture right after a backend (re)start raced that lazy init and
+    // crash-looped. Touch CG once, deterministically, before any command.
+    #[cfg(target_os = "macos")]
+    {
+        let _ = objc2_core_graphics::CGMainDisplayID();
+    }
     spawn_orphan_watchdog_thread();
     secrets::init_native_secret_store();
 
