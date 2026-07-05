@@ -175,12 +175,6 @@ export interface BackendLogEvent {
 
 // F-014 supervisor lifecycle: emitted by main when the backend process dies
 // and the supervisor restarts it (or gives up).
-// Launch-at-login state (ST5) — available only in packaged builds.
-export interface LoginItemState {
-  available: boolean
-  enabled: boolean
-}
-
 // Settings output-directory validation (ST2).
 export interface DirectoryFacts {
   exists: boolean
@@ -2161,8 +2155,6 @@ export interface VideorcApi {
   pickDirectory: () => Promise<string | null>
   checkDirectory: (path: string) => Promise<DirectoryFacts>
   createDirectory: (path: string) => Promise<DirectoryFacts>
-  getLoginItem: () => Promise<LoginItemState>
-  setLoginItem: (enabled: boolean) => Promise<LoginItemState>
   // Picks a PNG/JPG/WebP and copies it into app-support storage, returning the
   // managed asset (Assets Tab plan, slice A4).
   importBackgroundImage: () => Promise<BackgroundImportResult | null>

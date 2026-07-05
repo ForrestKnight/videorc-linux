@@ -177,8 +177,6 @@ const api: VideorcApi = {
   pickDirectory: () => ipcRenderer.invoke('system:pick-directory'),
   checkDirectory: (path) => ipcRenderer.invoke('system:check-directory', path),
   createDirectory: (path) => ipcRenderer.invoke('system:create-directory', path),
-  getLoginItem: () => ipcRenderer.invoke('system:get-login-item'),
-  setLoginItem: (enabled) => ipcRenderer.invoke('system:set-login-item', enabled),
   onOAuthCallbackUrl: (callback) => {
     const listener = (_event: Electron.IpcRendererEvent, callbackUrl: string): void => {
       callback(callbackUrl)

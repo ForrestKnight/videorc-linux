@@ -7183,18 +7183,6 @@ app.whenReady().then(async () => {
   ipcMain.handle('screens:pick-image', () => pickScreenImage())
   ipcMain.handle('system:pick-file', () => pickFilePath())
   ipcMain.handle('system:pick-directory', () => pickDirectoryPath())
-  // ST5: launch-at-login (packaged only — dev builds have no stable bundle).
-  ipcMain.handle('system:get-login-item', () => ({
-    available: app.isPackaged,
-    enabled: app.isPackaged ? app.getLoginItemSettings().openAtLogin : false
-  }))
-  ipcMain.handle('system:set-login-item', (_event, enabled: boolean) => {
-    if (!app.isPackaged) {
-      return { available: false, enabled: false }
-    }
-    app.setLoginItemSettings({ openAtLogin: enabled })
-    return { available: true, enabled: app.getLoginItemSettings().openAtLogin }
-  })
   ipcMain.handle('system:check-directory', (_event, path: string) => checkDirectoryFacts(path))
   ipcMain.handle('system:create-directory', (_event, path: string) => createDirectoryAt(path))
   ipcMain.handle('backgrounds:import-image', () => importBackgroundImage())

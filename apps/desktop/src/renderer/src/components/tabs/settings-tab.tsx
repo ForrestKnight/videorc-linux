@@ -28,20 +28,13 @@ import { ConfigGrid } from '@/components/page'
 import { PanelSection } from '@/components/panel-section'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
-import {
-  Field,
-  FieldContent,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel
-} from '@/components/ui/field'
+import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import { Switch } from '@/components/ui/switch'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useWorkspaceNav } from '@/components/workspace-nav'
 import { useStudio } from '@/hooks/use-studio'
 import { useUpdater } from '@/hooks/use-updater'
-import type { DirectoryFacts, LoginItemState, UpdateStatus } from '@/lib/backend'
+import type { DirectoryFacts, UpdateStatus } from '@/lib/backend'
 import { isActiveRecordingState } from '@/lib/format'
 import { recordingQuality, streamingSummary } from '@/lib/studio-session-view'
 import { shortcutsByGroup } from '@/lib/shortcuts'
@@ -108,18 +101,6 @@ export function SettingsTab({
     const path = await window.videorc?.pickDirectory?.()
     if (path) {
       setSettings((current) => ({ ...current, outputDirectory: path }))
-    }
-  }
-
-  // ST5: launch at login (packaged builds only).
-  const [loginItem, setLoginItem] = useState<LoginItemState | null>(null)
-  useEffect(() => {
-    void window.videorc?.getLoginItem?.().then((state) => setLoginItem(state ?? null))
-  }, [])
-  const toggleLoginItem = async (enabled: boolean): Promise<void> => {
-    const state = await window.videorc?.setLoginItem?.(enabled)
-    if (state) {
-      setLoginItem(state)
     }
   }
 
@@ -382,20 +363,6 @@ export function SettingsTab({
             <ToggleGroupItem value="dark">Dark</ToggleGroupItem>
             <ToggleGroupItem value="system">System</ToggleGroupItem>
           </ToggleGroup>
-        </Field>
-        <Field orientation="horizontal">
-          <FieldContent>
-            <FieldLabel htmlFor="login-item">Launch Videorc at login</FieldLabel>
-            {!loginItem?.available ? (
-              <FieldDescription>Available in the installed app.</FieldDescription>
-            ) : null}
-          </FieldContent>
-          <Switch
-            checked={Boolean(loginItem?.enabled)}
-            disabled={!loginItem?.available}
-            id="login-item"
-            onCheckedChange={(checked) => void toggleLoginItem(checked)}
-          />
         </Field>
       </PanelSection>
 
