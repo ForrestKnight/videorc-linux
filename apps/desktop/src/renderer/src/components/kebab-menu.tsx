@@ -56,11 +56,7 @@ export function KebabMenu({
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" onClick={(event) => event.stopPropagation()}>
         {regular.map((item) => (
-          <DropdownMenuItem
-            key={item.id}
-            disabled={item.disabled}
-            onSelect={() => item.onSelect()}
-          >
+          <DropdownMenuItem key={item.id} disabled={item.disabled} onSelect={() => item.onSelect()}>
             {item.icon ? <item.icon data-icon="inline-start" /> : null}
             {item.label}
           </DropdownMenuItem>

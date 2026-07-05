@@ -28,7 +28,13 @@ import { ConfigGrid } from '@/components/page'
 import { PanelSection } from '@/components/panel-section'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
-import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel
+} from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
@@ -330,7 +336,11 @@ export function SettingsTab({
               <span className="w-32 shrink-0 font-medium">{row.label}</span>
               <StatusBadge
                 tone={
-                  row.state === 'granted' ? 'good' : row.state === 'not-granted' ? 'warn' : 'neutral'
+                  row.state === 'granted'
+                    ? 'good'
+                    : row.state === 'not-granted'
+                      ? 'warn'
+                      : 'neutral'
                 }
                 value={
                   row.state === 'granted'
@@ -343,11 +353,7 @@ export function SettingsTab({
               <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
                 {row.purpose} {row.detail}
               </span>
-              <Button
-                size="xs"
-                variant="outline"
-                onClick={() => void openSystemPermission(row.id)}
-              >
+              <Button size="xs" variant="outline" onClick={() => void openSystemPermission(row.id)}>
                 Open settings
               </Button>
             </div>
@@ -595,7 +601,6 @@ function UpdateControl({
       )
   }
 }
-
 
 function formatFreeSpace(bytes: number): string {
   const gb = bytes / 1024 ** 3

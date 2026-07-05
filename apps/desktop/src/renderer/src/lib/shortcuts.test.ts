@@ -11,7 +11,11 @@ describe('SHORTCUTS registry', () => {
     for (const { digit, tab } of WORKSPACE_SHORTCUTS) {
       expect(navShortcutDigit(tab), `nav-${tab}`).toBe(digit)
     }
-    const navEntries = SHORTCUTS.filter((entry) => entry.id.startsWith('nav-') && entry.id !== 'nav-settings' ? true : entry.id.startsWith('nav-'))
+    const navEntries = SHORTCUTS.filter((entry) =>
+      entry.id.startsWith('nav-') && entry.id !== 'nav-settings'
+        ? true
+        : entry.id.startsWith('nav-')
+    )
     expect(navEntries.filter((entry) => /^[1-9]$/.test(entry.keys.at(-1) ?? '')).length).toBe(
       WORKSPACE_SHORTCUTS.length
     )

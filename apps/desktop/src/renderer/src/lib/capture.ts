@@ -1333,9 +1333,7 @@ export function reconcileSourceSelection(
   // SCContentFilter initWithDesktopIndependentWindow: — F-013). Windows are
   // only ever explicit, remembered user choices; the fallback is a display or
   // nothing, and the permission banners guide the user from there.
-  const defaultCaptureDevice = selectableCaptureDevices.find(
-    (device) => device.kind === 'screen'
-  )
+  const defaultCaptureDevice = selectableCaptureDevices.find((device) => device.kind === 'screen')
   const selectedCapture = nextSources.windowId
     ? (findRememberedSource(
         nextSources.windowId,

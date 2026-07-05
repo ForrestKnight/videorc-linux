@@ -67,7 +67,6 @@ export function ScenesGallery(): ReactElement {
             </button>
           )
         })}
-
       </div>
     </PanelSection>
   )
