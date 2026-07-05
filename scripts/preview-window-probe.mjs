@@ -33,6 +33,23 @@ let launched
 let smoke
 const failures = []
 let lastWindowDump = []
+// PT4 (preview res/tearing plan): the helper logs every surface sizing change;
+// capturing the lines lets the probe assert the REAL drawable, not TS math.
+const surfaceSizingLines = []
+function recordSurfaceSizing(line) {
+  const match = line.match(
+    /\[videorc-native-preview-sizing\] \w+ bounds_pts=(\d+)x(\d+) scale=([\d.]+) drawable_px=(\d+)x(\d+)/
+  )
+  if (match) {
+    surfaceSizingLines.push({
+      boundsWidth: Number(match[1]),
+      boundsHeight: Number(match[2]),
+      scale: Number(match[3]),
+      drawableWidth: Number(match[4]),
+      drawableHeight: Number(match[5])
+    })
+  }
+}
 let exitCode = 0
 try {
   exitCode = await main()
@@ -55,7 +72,10 @@ async function main() {
       VIDEORC_DISABLE_AUTO_PREVIEW: '1',
       VIDEORC_SMOKE_COMMAND_SERVER: '1'
     },
-    onLine: (line) => console.log(line)
+    onLine: (line) => {
+      console.log(line)
+      recordSurfaceSizing(line)
+    }
   })
   smoke = launched.connections['preview-motion-ready']
 
@@ -162,6 +182,36 @@ async function main() {
     JSON.stringify(docked)
   )
   await waitForDockedSurfaceAtSlot('dock: surface covers the Studio slot rect')
+
+  // Drawable-resolution regression gate: the surface's Metal drawable must be
+  // the slot rect in PHYSICAL pixels (points × the display's scale factor) —
+  // a lost scale factor halves the effective preview resolution on Retina.
+  {
+    const state = await smokeCommand('preview-window-state')
+    const sizing = surfaceSizingLines[surfaceSizingLines.length - 1]
+    assertProbe(
+      Boolean(sizing),
+      'dock-drawable: helper reported a surface sizing line',
+      `captured=${surfaceSizingLines.length}`
+    )
+    if (sizing) {
+      const widthMatches =
+        Math.abs(sizing.drawableWidth - sizing.boundsWidth * sizing.scale) <= 1
+      const heightMatches =
+        Math.abs(sizing.drawableHeight - sizing.boundsHeight * sizing.scale) <= 1
+      assertProbe(
+        widthMatches && heightMatches,
+        'dock-drawable: drawable equals slot points × scale',
+        JSON.stringify(sizing)
+      )
+      assertProbe(
+        typeof state.scaleFactor !== 'number' ||
+          Math.abs(sizing.scale - state.scaleFactor) < 0.01,
+        'dock-drawable: helper scale matches the display scale factor',
+        `helper=${sizing.scale} display=${state.scaleFactor}`
+      )
+    }
+  }
 
   // Stale-epoch reports must be dropped, not applied.
   await smokeCommand('preview-window-report-dock-slot', {
