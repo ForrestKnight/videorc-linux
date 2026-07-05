@@ -26,8 +26,6 @@ import type { StreamScreen } from '@/lib/backend'
 export function TakeoverScreensSection(): ReactElement {
   const {
     activeScreen,
-    activateScreen,
-    clearActiveScreen,
     deleteScreen,
     importScreenImage,
     isSessionActive,
@@ -69,17 +67,11 @@ export function TakeoverScreensSection(): ReactElement {
             {screens.map((screen, index) => (
               <ScreenTile
                 active={activeScreen?.id === screen.id}
-                activationDisabled={wsStatus !== 'connected'}
                 disabled={managementDisabled}
                 index={index}
                 key={screen.id}
                 screen={screen}
                 total={screens.length}
-                onActivate={() =>
-                  void (activeScreen?.id === screen.id
-                    ? clearActiveScreen()
-                    : activateScreen(screen.id))
-                }
                 onDelete={() => void deleteScreen(screen.id)}
                 onMove={(direction) => void moveScreen(screen.id, direction)}
                 onRename={(name) => void renameScreen(screen.id, name)}
@@ -95,22 +87,18 @@ export function TakeoverScreensSection(): ReactElement {
 function ScreenTile({
   screen,
   active,
-  activationDisabled,
   disabled,
   index,
   total,
-  onActivate,
   onDelete,
   onMove,
   onRename
 }: {
   screen: StreamScreen
   active: boolean
-  activationDisabled: boolean
   disabled: boolean
   index: number
   total: number
-  onActivate: () => void
   onDelete: () => void
   onMove: (direction: -1 | 1) => void
   onRename: (name: string) => void
@@ -183,19 +171,8 @@ function ScreenTile({
           </Button>
         </div>
         <span className="truncate text-xs text-muted-foreground">{screen.imagePath}</span>
-        {/* Activate gets its own full-width row so the label never truncates;
-            the icon controls share a second row inside the tile's clip edge. */}
-        <Button
-          className="w-full"
-          disabled={activationDisabled || missing}
-          size="sm"
-          type="button"
-          variant={active ? 'outline' : 'secondary'}
-          onClick={onActivate}
-        >
-          <ImageSquare data-icon="inline-start" weight="duotone" />
-          {active ? 'Deactivate' : 'Activate'}
-        </Button>
+        {/* Activation lives in the Studio session panel (one home per control);
+            tiles are management only — the Active badge still reports state. */}
         <div className="flex min-w-0 items-center gap-1.5">
           <Button
             aria-label="Move Screen up"

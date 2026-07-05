@@ -4,6 +4,7 @@ import {
   CaretRight,
   Clock,
   FrameCorners,
+  ImageSquare,
   Info,
   Record,
   StopCircle,
@@ -158,7 +159,72 @@ export function SessionPanel({
           </div>
         ) : null}
       </div>
+
+      <TakeoverControls onOpenAssets={() => setActive('assets')} />
     </PanelSection>
+  )
+}
+
+// The takeover on-air switch (its ONE home — the Assets grid manages images,
+// this flips them). Live-safe: activation only needs the backend socket, so it
+// works mid-session; a takeover replaces the output regardless of scene.
+function TakeoverControls({ onOpenAssets }: { onOpenAssets: () => void }): ReactElement {
+  const { activateScreen, activeScreen, clearActiveScreen, screens, wsStatus } = useStudio()
+  const ready = screens.filter((screen) => screen.status !== 'missing')
+  const disconnected = wsStatus !== 'connected'
+
+  return (
+    <div className="flex flex-col gap-2 border-t border-border pt-4">
+      <span className="text-xs font-medium text-muted-foreground">Takeover</span>
+      {ready.length === 0 ? (
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <ImageSquare className="size-3.5 shrink-0" weight="duotone" />
+          <span className="min-w-0">No takeover screens yet.</span>
+          <button
+            className="shrink-0 font-medium text-foreground underline-offset-2 hover:underline"
+            type="button"
+            onClick={onOpenAssets}
+          >
+            Add in Assets
+          </button>
+        </div>
+      ) : (
+        <>
+          <div className="flex flex-wrap gap-1.5">
+            {ready.map((screen) => {
+              const isActive = activeScreen?.id === screen.id
+              return (
+                <Button
+                  aria-pressed={isActive}
+                  disabled={disconnected}
+                  key={screen.id}
+                  size="sm"
+                  title={
+                    disconnected
+                      ? `Backend socket is ${wsStatus}.`
+                      : isActive
+                        ? `Take ${screen.name} off the output`
+                        : `Put ${screen.name} on the output`
+                  }
+                  variant={isActive ? 'default' : 'outline'}
+                  onClick={() => void (isActive ? clearActiveScreen() : activateScreen(screen.id))}
+                >
+                  <ImageSquare data-icon="inline-start" weight={isActive ? 'fill' : 'duotone'} />
+                  {screen.name}
+                </Button>
+              )
+            })}
+          </div>
+          <span className="text-xs text-muted-foreground">
+            {disconnected
+              ? `Backend socket is ${wsStatus} — takeovers need the backend.`
+              : activeScreen
+                ? `${activeScreen.name} is covering the output. Click it to go back to the scene.`
+                : 'Click a takeover to cover the output — works while live.'}
+          </span>
+        </>
+      )}
+    </div>
   )
 }
 
