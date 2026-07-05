@@ -123,5 +123,7 @@ verification gates.
 
 ## License
 
-[AGPL-3.0](LICENSE). The bundled FFmpeg is built LGPL-compliant; see
+Code: [AGPL-3.0](LICENSE). Brand: the Videorc name, logo, and app icon are not
+part of the code license — see [TRADEMARK.md](TRADEMARK.md) before
+distributing a modified build. The bundled FFmpeg is built LGPL-compliant; see
 [docs/distribution.md](docs/distribution.md) for third-party licensing notes.
