@@ -7171,6 +7171,15 @@ protocol.registerSchemesAsPrivileged([
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
 if (!hasSingleInstanceLock) {
+  // Correct but previously SILENT: `pnpm dev` shares the "Videorc" profile with
+  // the packaged app, so a running /Applications/Videorc.app holds this lock
+  // and dev exited without a word (reported 2026-07-06). Say why we quit.
+  console.error(
+    'Videorc is already running (another instance holds the single-instance lock), ' +
+      'so this instance is exiting and the running app was focused instead. ' +
+      'For `pnpm dev`, quit the installed Videorc app first — or isolate this run ' +
+      'with VIDEORC_USER_DATA_DIR=<dir> to use a separate profile.'
+  )
   app.quit()
 } else {
   app.on('second-instance', (_event, argv) => {
