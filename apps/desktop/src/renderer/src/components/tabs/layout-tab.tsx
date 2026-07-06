@@ -475,7 +475,10 @@ export function LayoutTab(): ReactElement {
                   Reset
                 </Button>
               </div>
-              <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 self-start">
+              {/* w-fit + auto columns keep the arrows a tight d-pad cluster —
+                  1fr side columns stretched, stranding ← at the panel edge
+                  (external tester report, 2026-07-06). */}
+              <div className="grid w-fit grid-cols-[repeat(3,auto)] items-center justify-items-center gap-2 self-start">
                 <span />
                 <Button
                   aria-label="Nudge source up"
