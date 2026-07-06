@@ -8,23 +8,23 @@ use crate::protocol::{
 pub const PREMIUM_FEATURES_ENV_VAR: &str = "VIDEORC_PREMIUM_FEATURES";
 
 const ENTITLEMENT_SCHEMA_VERSION: u32 = 1;
-const BASIC_MAX_WIDTH: u32 = 1920;
-const BASIC_MAX_HEIGHT: u32 = 1080;
-const BASIC_MAX_FPS: u32 = 30;
+// Local recording is NOT a paid feature: every tier records up to 4K60 (the
+// website promises "free forever — including 4K local recording"; the old
+// 1080p basic cap contradicted it, 2026-07-06). Only streaming is tiered.
+const RECORDING_MAX_WIDTH: u32 = 3840;
+const RECORDING_MAX_HEIGHT: u32 = 2160;
+const RECORDING_MAX_FPS: u32 = 60;
+const BASIC_STREAMING_MAX_WIDTH: u32 = 1920;
+const BASIC_STREAMING_MAX_HEIGHT: u32 = 1080;
+const BASIC_STREAMING_MAX_FPS: u32 = 30;
 const BASIC_STREAMING_MAX_BITRATE_KBPS: u32 = 6000;
 const BASIC_STREAMING_MAX_DESTINATIONS: u32 = 1;
-const PREMIUM_RECORDING_MAX_WIDTH: u32 = 3840;
-const PREMIUM_RECORDING_MAX_HEIGHT: u32 = 2160;
-const PREMIUM_RECORDING_MAX_FPS: u32 = 30;
-const PREMIUM_STREAMING_MAX_WIDTH: u32 = 1920;
-const PREMIUM_STREAMING_MAX_HEIGHT: u32 = 1080;
+// Premium streams up to 4K30 (the YouTube 4K30 preset); basic stays HD.
+const PREMIUM_STREAMING_MAX_WIDTH: u32 = 3840;
+const PREMIUM_STREAMING_MAX_HEIGHT: u32 = 2160;
 const PREMIUM_STREAMING_MAX_FPS: u32 = 30;
-const PREMIUM_STREAMING_MAX_BITRATE_KBPS: u32 = 6000;
+const PREMIUM_STREAMING_MAX_BITRATE_KBPS: u32 = 30_000;
 const PREMIUM_STREAMING_MAX_DESTINATIONS: u32 = 3;
-const DEVELOPER_STREAMING_MAX_WIDTH: u32 = 3840;
-const DEVELOPER_STREAMING_MAX_HEIGHT: u32 = 2160;
-const DEVELOPER_STREAMING_MAX_FPS: u32 = 30;
-const DEVELOPER_STREAMING_MAX_BITRATE_KBPS: u32 = 30_000;
 
 const MULTISTREAMING_DISABLED_REASON: &str =
     "Multistreaming requires Videorc Premium. Basic can stream to one destination at HD.";
@@ -252,18 +252,22 @@ fn enabled_capabilities(
     .collect()
 }
 
+fn recording_limits() -> RecordingEntitlementLimits {
+    RecordingEntitlementLimits {
+        max_width: RECORDING_MAX_WIDTH,
+        max_height: RECORDING_MAX_HEIGHT,
+        max_fps: RECORDING_MAX_FPS,
+        max_bitrate_kbps: None,
+    }
+}
+
 fn basic_limits() -> EntitlementLimits {
     EntitlementLimits {
-        recording: RecordingEntitlementLimits {
-            max_width: BASIC_MAX_WIDTH,
-            max_height: BASIC_MAX_HEIGHT,
-            max_fps: BASIC_MAX_FPS,
-            max_bitrate_kbps: None,
-        },
+        recording: recording_limits(),
         streaming: StreamingEntitlementLimits {
-            max_width: BASIC_MAX_WIDTH,
-            max_height: BASIC_MAX_HEIGHT,
-            max_fps: BASIC_MAX_FPS,
+            max_width: BASIC_STREAMING_MAX_WIDTH,
+            max_height: BASIC_STREAMING_MAX_HEIGHT,
+            max_fps: BASIC_STREAMING_MAX_FPS,
             max_bitrate_kbps: BASIC_STREAMING_MAX_BITRATE_KBPS,
             max_destinations: BASIC_STREAMING_MAX_DESTINATIONS,
         },
@@ -272,12 +276,7 @@ fn basic_limits() -> EntitlementLimits {
 
 fn premium_limits() -> EntitlementLimits {
     EntitlementLimits {
-        recording: RecordingEntitlementLimits {
-            max_width: PREMIUM_RECORDING_MAX_WIDTH,
-            max_height: PREMIUM_RECORDING_MAX_HEIGHT,
-            max_fps: PREMIUM_RECORDING_MAX_FPS,
-            max_bitrate_kbps: None,
-        },
+        recording: recording_limits(),
         streaming: StreamingEntitlementLimits {
             max_width: PREMIUM_STREAMING_MAX_WIDTH,
             max_height: PREMIUM_STREAMING_MAX_HEIGHT,
@@ -289,21 +288,8 @@ fn premium_limits() -> EntitlementLimits {
 }
 
 fn developer_limits() -> EntitlementLimits {
-    EntitlementLimits {
-        recording: RecordingEntitlementLimits {
-            max_width: PREMIUM_RECORDING_MAX_WIDTH,
-            max_height: PREMIUM_RECORDING_MAX_HEIGHT,
-            max_fps: PREMIUM_RECORDING_MAX_FPS,
-            max_bitrate_kbps: None,
-        },
-        streaming: StreamingEntitlementLimits {
-            max_width: DEVELOPER_STREAMING_MAX_WIDTH,
-            max_height: DEVELOPER_STREAMING_MAX_HEIGHT,
-            max_fps: DEVELOPER_STREAMING_MAX_FPS,
-            max_bitrate_kbps: DEVELOPER_STREAMING_MAX_BITRATE_KBPS,
-            max_destinations: PREMIUM_STREAMING_MAX_DESTINATIONS,
-        },
-    }
+    // Developer == premium; the tier exists to test the gates, not to unlock more.
+    premium_limits()
 }
 
 fn capability(
@@ -466,7 +452,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn entitlement_default_snapshot_is_basic_with_hd_recording_and_one_hd_livestream() {
+    fn entitlement_default_snapshot_is_basic_with_4k_recording_and_one_hd_livestream() {
         let snapshot = current_entitlements_from_env_value(None, false);
 
         assert_eq!(snapshot.schema_version, ENTITLEMENT_SCHEMA_VERSION);
@@ -476,14 +462,38 @@ mod tests {
         assert!(feature_entitled(&snapshot, FeatureId::Livestreaming));
         assert!(!feature_entitled(&snapshot, FeatureId::Multistreaming));
         assert!(!feature_entitled(&snapshot, FeatureId::CloudAi));
-        assert_eq!(snapshot.limits.recording.max_width, 1920);
-        assert_eq!(snapshot.limits.recording.max_height, 1080);
-        assert_eq!(snapshot.limits.recording.max_fps, 30);
+        // Recording is free at full quality (the website promises free 4K
+        // recording); only the streaming leg is tiered.
+        assert_eq!(snapshot.limits.recording.max_width, 3840);
+        assert_eq!(snapshot.limits.recording.max_height, 2160);
+        assert_eq!(snapshot.limits.recording.max_fps, 60);
         assert_eq!(snapshot.limits.streaming.max_width, 1920);
         assert_eq!(snapshot.limits.streaming.max_height, 1080);
         assert_eq!(snapshot.limits.streaming.max_fps, 30);
         assert_eq!(snapshot.limits.streaming.max_bitrate_kbps, 6000);
         assert_eq!(snapshot.limits.streaming.max_destinations, 1);
+    }
+
+    #[test]
+    fn recording_limits_are_identical_across_tiers() {
+        let basic = basic_entitlements();
+        let premium = premium_entitlements(EntitlementSource::Creem);
+        let developer = developer_test_entitlements();
+
+        assert_eq!(basic.limits.recording, premium.limits.recording);
+        assert_eq!(premium.limits.recording, developer.limits.recording);
+    }
+
+    #[test]
+    fn premium_streaming_allows_4k30_and_basic_stays_hd() {
+        let basic = basic_entitlements();
+        let premium = premium_entitlements(EntitlementSource::Creem);
+
+        assert_eq!(premium.limits.streaming.max_width, 3840);
+        assert_eq!(premium.limits.streaming.max_height, 2160);
+        assert_eq!(premium.limits.streaming.max_fps, 30);
+        assert_eq!(premium.limits.streaming.max_bitrate_kbps, 30_000);
+        assert_eq!(basic.limits.streaming.max_height, 1080);
     }
 
     #[test]
@@ -517,7 +527,7 @@ mod tests {
             assert!(!feature_entitled(&snapshot, FeatureId::Multistreaming));
             assert!(!feature_entitled(&snapshot, FeatureId::CloudAi));
             assert_eq!(snapshot.limits.streaming.max_destinations, 1);
-            assert_eq!(snapshot.limits.recording.max_width, 1920);
+            assert_eq!(snapshot.limits.streaming.max_height, 1080);
         }
     }
 

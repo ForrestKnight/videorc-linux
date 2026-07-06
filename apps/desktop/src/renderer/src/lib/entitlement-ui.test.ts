@@ -199,48 +199,47 @@ describe('entitlement UI gates', () => {
     ).toEqual({ allowed: true })
   })
 
-  it('locks Basic recording profiles that exceed local recording caps', () => {
-    const allowedHd: VideoSettings = {
-      preset: 'tutorial-1080p30',
-      width: 1920,
-      height: 1080,
-      fps: 30,
-      bitrateKbps: 6000
+  it('allows every recording preset on Basic — recording is not premium-gated', () => {
+    // Regression (2026-07-06): the website promises free 4K local recording;
+    // Basic used to cap recording at 1080p, contradicting it.
+    const recordingPresets: VideoSettings[] = [
+      { preset: 'tutorial-1080p30', width: 1920, height: 1080, fps: 30, bitrateKbps: 6000 },
+      { preset: 'record-4k30', width: 3840, height: 2160, fps: 30, bitrateKbps: 30000 },
+      {
+        preset: 'record-4k60-experimental',
+        width: 3840,
+        height: 2160,
+        fps: 60,
+        bitrateKbps: 50000
+      }
+    ]
+
+    for (const video of recordingPresets) {
+      expect(
+        videoProfileEntitlementGate({ entitlements: basicEntitlements, kind: 'recording', video })
+      ).toEqual({ allowed: true })
     }
-    const premium4kRecording: VideoSettings = {
-      preset: 'record-4k30',
-      width: 3840,
-      height: 2160,
+  })
+
+  it('still locks recording profiles beyond the shared cap', () => {
+    const eightK: VideoSettings = {
+      preset: 'custom',
+      width: 7680,
+      height: 4320,
       fps: 30,
-      bitrateKbps: 30000
+      bitrateKbps: 80000
     }
 
     expect(
       videoProfileEntitlementGate({
         entitlements: basicEntitlements,
         kind: 'recording',
-        video: allowedHd
-      })
-    ).toEqual({ allowed: true })
-    expect(
-      videoProfileEntitlementGate({
-        entitlements: basicEntitlements,
-        kind: 'recording',
-        video: premium4kRecording
+        video: eightK
       })
     ).toMatchObject({
       allowed: false,
-      featureId: 'local-recording',
-      upgradeUrl: VIDEORC_PREMIUM_URL,
-      allowFixAction: true
+      featureId: 'local-recording'
     })
-    expect(
-      videoProfileEntitlementGate({
-        entitlements: premiumEntitlements,
-        kind: 'recording',
-        video: premium4kRecording
-      })
-    ).toEqual({ allowed: true })
   })
 
   it('keeps premium toasts as fallbacks by linking normal locked controls', () => {

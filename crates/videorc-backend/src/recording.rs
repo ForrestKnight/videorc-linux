@@ -10222,7 +10222,40 @@ mod tests {
     }
 
     #[test]
-    fn entitlement_guard_blocks_true_4k_streaming_without_developer_limits() {
+    fn entitlement_guard_blocks_true_4k_streaming_on_basic() {
+        let mut params = base_params(true, true);
+        params.output.video = VideoSettings {
+            preset: VideoPreset::Record4k30,
+            width: 3840,
+            height: 2160,
+            fps: 30,
+            bitrate_kbps: 30_000,
+        };
+        let mut streaming = streaming_for(&[(
+            StreamPlatform::Youtube,
+            "rtmp://a.rtmp.youtube.com/live2",
+            "youtube-key",
+        )]);
+        streaming.default_output_preset = VideoPreset::StreamYoutube4k30;
+        streaming.default_bitrate_kbps = 30_000;
+        params.streaming = Some(streaming);
+        let snapshot = entitlements::basic_entitlements();
+        let error = validate_session_entitlements(&params, &snapshot)
+            .expect_err("Basic streams HD only — true 4K streaming is Premium");
+
+        assert!(
+            error
+                .to_string()
+                .contains("allows livestreaming up to 1920x1080"),
+            "{error}"
+        );
+    }
+
+    // 4K streaming is a Premium feature (2026-07-06): premium streams up to
+    // 4K30; only basic stays HD. Recording is never the blocker — every tier
+    // records 4K.
+    #[test]
+    fn entitlement_guard_allows_true_4k_streaming_on_premium() {
         let mut params = base_params(true, true);
         params.output.video = VideoSettings {
             preset: VideoPreset::Record4k30,
@@ -10240,15 +10273,8 @@ mod tests {
         streaming.default_bitrate_kbps = 30_000;
         params.streaming = Some(streaming);
         let snapshot = entitlements::premium_entitlements(EntitlementSource::Creem);
-        let error = validate_session_entitlements(&params, &snapshot)
-            .expect_err("Premium should stay 1080p until product enables true 4K streaming");
 
-        assert!(
-            error
-                .to_string()
-                .contains("allows livestreaming up to 1920x1080"),
-            "{error}"
-        );
+        validate_session_entitlements(&params, &snapshot).unwrap();
     }
 
     #[test]

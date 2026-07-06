@@ -55,17 +55,19 @@ describe('entitlements', () => {
     expect(entitlementDisabledReason(null, 'local-recording')).toBeNull()
   })
 
-  it('treats Basic fallback as HD recording plus one HD livestream', () => {
+  it('treats Basic fallback as full-quality 4K recording plus one HD livestream', () => {
     expect(isFeatureEntitled(null, 'livestreaming')).toBe(true)
     expect(entitlementDisabledReason(null, 'livestreaming')).toBeNull()
     expect(isFeatureEntitled(null, 'multistreaming')).toBe(false)
     expect(entitlementDisabledReason(null, 'multistreaming')).toContain('Premium')
     expect(isFeatureEntitled(null, 'cloud-ai')).toBe(false)
     expect(entitlementDisabledReason(null, 'cloud-ai')).toContain('Premium')
+    // Recording is free at full quality — the website promises free 4K
+    // local recording; only streaming is tiered.
     expect(DEFAULT_BASIC_ENTITLEMENTS.limits.recording).toMatchObject({
-      maxWidth: 1920,
-      maxHeight: 1080,
-      maxFps: 30
+      maxWidth: 3840,
+      maxHeight: 2160,
+      maxFps: 60
     })
     expect(DEFAULT_BASIC_ENTITLEMENTS.limits.streaming).toMatchObject({
       maxWidth: 1920,

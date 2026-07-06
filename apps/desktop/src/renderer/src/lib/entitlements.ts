@@ -25,10 +25,12 @@ export const DEFAULT_BASIC_ENTITLEMENTS: EntitlementsSnapshot = {
     }
   ],
   limits: {
+    // Recording is free at full quality on every tier (mirror of the backend's
+    // recording_limits — the website promises free 4K local recording).
     recording: {
-      maxWidth: 1920,
-      maxHeight: 1080,
-      maxFps: 30
+      maxWidth: 3840,
+      maxHeight: 2160,
+      maxFps: 60
     },
     streaming: {
       maxWidth: 1920,
