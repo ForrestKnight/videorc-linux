@@ -28,6 +28,7 @@ describe('macOS beta release manifest', () => {
       platform: 'macos',
       architecture: 'arm64',
       filename: 'Videorc-0.9.0-mac-arm64.dmg',
+      objectKey: 'releases/macos/0.9.0-beta.1/Videorc-0.9.0-mac-arm64.dmg',
       sha256: 'abc123',
       sizeBytes: 42,
       minimumMacOS: 'macOS 13 Ventura or later',

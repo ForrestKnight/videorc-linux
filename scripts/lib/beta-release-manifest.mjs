@@ -84,6 +84,11 @@ export function buildMacosBetaReleaseManifest({
     platform: 'macos',
     architecture: nonEmpty(env.VIDEORC_RELEASE_ARCHITECTURE) ?? inferMacosArchitecture(filename),
     filename,
+    // The authoritative bucket key of the DMG. The stable latest/release.json
+    // manifest is a COPY of the versioned one, so consumers must not derive the
+    // artifact key from the manifest's own location (that produced presigned
+    // latest/<dmg> URLs that 404'd — the DMG only lives under the releaseId).
+    objectKey: `releases/macos/${releaseId}/${filename}`,
     sha256,
     sizeBytes,
     minimumMacOS: nonEmpty(env.VIDEORC_RELEASE_MINIMUM_MACOS) ?? DEFAULT_MINIMUM_MACOS,
