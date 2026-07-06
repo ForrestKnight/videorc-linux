@@ -142,7 +142,7 @@ function MeterBar({
     ? 'bg-muted-foreground/40'
     : status === 'ready'
       ? 'bg-success'
-      : status === 'silent'
+      : status === 'silent' || status === 'no-frames'
         ? 'bg-warning'
         : 'bg-muted-foreground/40'
   return (

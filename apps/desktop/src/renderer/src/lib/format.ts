@@ -136,6 +136,7 @@ export function setupChecklist({
     audioMeter?.status === 'ready'
       ? 'good'
       : audioMeter?.status === 'silent' ||
+          audioMeter?.status === 'no-frames' ||
           audioMeter?.status === 'permission-required' ||
           !selectedMicrophone
         ? 'warn'

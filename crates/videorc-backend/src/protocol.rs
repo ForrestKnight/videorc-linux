@@ -968,12 +968,44 @@ pub struct AudioMeterParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AudioMeterProbeParams {
+    pub ffmpeg_path: Option<String>,
+    #[serde(default)]
+    pub microphone_gain_db: f32,
+    #[serde(default)]
+    pub microphone_muted: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AudioMeterResult {
     pub status: AudioMeterStatus,
     pub level: Option<f64>,
     pub peak_db: Option<f64>,
     pub mean_db: Option<f64>,
     pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioMeterSampleSnapshot {
+    pub microphone_id: Option<String>,
+    pub result: AudioMeterResult,
+    pub sampled_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioMeterDeviceProbe {
+    pub device: Device,
+    pub result: AudioMeterResult,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioMeterDeviceProbeResult {
+    pub sampled_at: String,
+    pub probes: Vec<AudioMeterDeviceProbe>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2071,6 +2103,7 @@ pub enum DiagnosticBottleneck {
 pub enum AudioMeterStatus {
     Ready,
     Silent,
+    NoFrames,
     Unavailable,
     PermissionRequired,
 }

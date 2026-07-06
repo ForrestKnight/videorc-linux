@@ -65,6 +65,7 @@ describe('microphoneAccessState', () => {
   it('maps probe results to states, never guessing green', () => {
     expect(microphoneAccessState(null)).toBe('first-use')
     expect(microphoneAccessState(meter('permission-required'))).toBe('not-granted')
+    expect(microphoneAccessState(meter('no-frames'))).toBe('device-issue')
     expect(microphoneAccessState(meter('ready'))).toBe('granted')
     expect(microphoneAccessState(meter('silent'))).toBe('granted')
   })
@@ -100,6 +101,24 @@ describe('shouldShowPermissionsOnboarding', () => {
     expect(
       shouldShowPermissionsOnboarding({ rows: firstUse, dismissed: false, backendReady: true })
     ).toBe(true)
+  })
+  it('does not show for a mic device issue because permissions are not the fix', () => {
+    const noFrames = systemAccessRows({
+      deviceList: devices([
+        { id: 'screen:screencapturekit:1', kind: 'screen', status: 'available' },
+        { kind: 'camera', status: 'available' }
+      ]),
+      audioMeter: {
+        status: 'no-frames',
+        message: 'This microphone opened but did not send audio frames.'
+      }
+    })
+
+    expect(
+      shouldShowPermissionsOnboarding({ rows: noFrames, dismissed: false, backendReady: true })
+    ).toBe(false)
+    expect(noFrames[2].state).toBe('device-issue')
+    expect(noFrames[2].detail).toMatch(/did not send audio frames/)
   })
   it('a dismissal snoozes it even with grants still missing', () => {
     expect(

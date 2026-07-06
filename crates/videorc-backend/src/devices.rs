@@ -11,8 +11,8 @@ use crate::audio::{
 use crate::camera_capture::list_native_cameras;
 use crate::ffmpeg::resolve_ffmpeg_path;
 use crate::protocol::{
-    AudioMeterParams, AudioMeterResult, AudioMeterStatus, Device, DeviceKind, DeviceList,
-    DeviceStatus,
+    AudioMeterDeviceProbe, AudioMeterDeviceProbeResult, AudioMeterParams, AudioMeterProbeParams,
+    AudioMeterResult, AudioMeterStatus, Device, DeviceKind, DeviceList, DeviceStatus,
 };
 use crate::screen_capture::{list_native_capture_sources, parse_screencapturekit_display_id};
 
@@ -116,22 +116,10 @@ pub async fn list_devices(ffmpeg_path: &str) -> DeviceList {
                             });
                         }
                     }
-                    AvFoundationDeviceKind::Audio => {
-                        if !native_microphone_available {
-                            devices.push(Device {
-                                id: format!("microphone:avfoundation:{}", device.index),
-                                name: device.name,
-                                kind: DeviceKind::Microphone,
-                                status: DeviceStatus::Available,
-                                detail: Some(
-                                    "FFmpeg avfoundation fallback; native CoreAudio probe did not return an available input."
-                                        .to_string(),
-                                ),
-                                width: None,
-                                height: None,
-                            });
-                        }
-                    }
+                    AvFoundationDeviceKind::Audio => devices.push(avfoundation_microphone_device(
+                        &device,
+                        native_microphone_available,
+                    )),
                 }
             }
         }
@@ -316,8 +304,43 @@ pub async fn find_avfoundation_camera_index(ffmpeg_path: &str, camera_name: &str
         .map(|device| device.index)
 }
 
+pub async fn find_avfoundation_microphone_index_for_native_name(
+    ffmpeg_path: &str,
+    microphone_name: &str,
+) -> Option<usize> {
+    let devices = probe_avfoundation_devices(ffmpeg_path).await.ok()?;
+    find_avfoundation_microphone_index_for_name(&devices, microphone_name)
+}
+
+pub fn find_avfoundation_microphone_index_for_name(
+    av_devices: &[AvFoundationDevice],
+    microphone_name: &str,
+) -> Option<usize> {
+    let normalized_microphone_name = normalize_device_name(microphone_name);
+    let audio_devices = av_devices
+        .iter()
+        .filter(|device| device.kind == AvFoundationDeviceKind::Audio)
+        .collect::<Vec<_>>();
+
+    audio_devices
+        .iter()
+        .find(|device| normalize_device_name(&device.name) == normalized_microphone_name)
+        .or_else(|| {
+            audio_devices.iter().find(|device| {
+                let normalized_name = normalize_device_name(&device.name);
+                normalized_name.contains(&normalized_microphone_name)
+                    || normalized_microphone_name.contains(&normalized_name)
+            })
+        })
+        .map(|device| device.index)
+}
+
 fn normalize_device_name(name: &str) -> String {
-    name.trim().to_lowercase()
+    let trimmed = name.trim();
+    trimmed
+        .strip_prefix("Fallback - ")
+        .unwrap_or(trimmed)
+        .to_lowercase()
 }
 
 pub async fn sample_audio_meter(params: AudioMeterParams) -> AudioMeterResult {
@@ -462,6 +485,38 @@ pub async fn sample_audio_meter(params: AudioMeterParams) -> AudioMeterResult {
     }
 }
 
+pub async fn sample_native_audio_meters(
+    params: AudioMeterProbeParams,
+) -> AudioMeterDeviceProbeResult {
+    let settings = AudioProcessingSettings {
+        gain_db: params.microphone_gain_db,
+        muted: params.microphone_muted,
+    };
+    let probes = list_native_microphones()
+        .into_iter()
+        .filter_map(|device| {
+            let device_id = parse_coreaudio_microphone_id(&device.id)?;
+            let result = if device.status == DeviceStatus::Available {
+                sample_native_audio_meter(device_id, settings)
+            } else {
+                AudioMeterResult {
+                    status: AudioMeterStatus::Unavailable,
+                    level: None,
+                    peak_db: None,
+                    mean_db: None,
+                    message: device.detail.clone(),
+                }
+            };
+            Some(AudioMeterDeviceProbe { device, result })
+        })
+        .collect();
+
+    AudioMeterDeviceProbeResult {
+        sampled_at: chrono::Utc::now().to_rfc3339(),
+        probes,
+    }
+}
+
 pub async fn probe_avfoundation_devices(
     ffmpeg_path: &str,
 ) -> Result<Vec<AvFoundationDevice>, String> {
@@ -523,6 +578,31 @@ fn parse_volume_db(text: &str, label: &str) -> Option<f64> {
 
 fn db_to_level(db: f64) -> f64 {
     ((db + 60.0) / 60.0).clamp(0.0, 1.0)
+}
+
+fn avfoundation_microphone_device(
+    device: &AvFoundationDevice,
+    native_microphone_available: bool,
+) -> Device {
+    Device {
+        id: format!("microphone:avfoundation:{}", device.index),
+        name: if native_microphone_available {
+            format!("Fallback - {}", device.name)
+        } else {
+            device.name.clone()
+        },
+        kind: DeviceKind::Microphone,
+        status: DeviceStatus::Available,
+        detail: Some(if native_microphone_available {
+            "FFmpeg avfoundation fallback; use this if the native CoreAudio input opens but does not send frames."
+                .to_string()
+        } else {
+            "FFmpeg avfoundation fallback; native CoreAudio probe did not return an available input."
+                .to_string()
+        }),
+        width: None,
+        height: None,
+    }
 }
 
 fn first_nonempty_line(text: &str) -> Option<String> {
@@ -608,6 +688,78 @@ mod tests {
                     kind: AvFoundationDeviceKind::Audio,
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn avfoundation_microphone_is_exposed_as_fallback_when_native_exists() {
+        let device = avfoundation_microphone_device(
+            &AvFoundationDevice {
+                index: 2,
+                name: "MacBook Pro Microphone".to_string(),
+                kind: AvFoundationDeviceKind::Audio,
+            },
+            true,
+        );
+
+        assert_eq!(device.id, "microphone:avfoundation:2");
+        assert_eq!(device.name, "Fallback - MacBook Pro Microphone");
+        assert_eq!(device.status, DeviceStatus::Available);
+        assert!(
+            device
+                .detail
+                .as_deref()
+                .unwrap_or_default()
+                .contains("does not send frames")
+        );
+    }
+
+    #[test]
+    fn avfoundation_microphone_keeps_plain_label_when_native_is_unavailable() {
+        let device = avfoundation_microphone_device(
+            &AvFoundationDevice {
+                index: 2,
+                name: "MacBook Pro Microphone".to_string(),
+                kind: AvFoundationDeviceKind::Audio,
+            },
+            false,
+        );
+
+        assert_eq!(device.name, "MacBook Pro Microphone");
+        assert!(
+            device
+                .detail
+                .as_deref()
+                .unwrap_or_default()
+                .contains("native CoreAudio probe did not return")
+        );
+    }
+
+    #[test]
+    fn finds_avfoundation_microphone_by_native_name() {
+        let devices = vec![
+            AvFoundationDevice {
+                index: 0,
+                name: "FaceTime HD Camera".to_string(),
+                kind: AvFoundationDeviceKind::Video,
+            },
+            AvFoundationDevice {
+                index: 4,
+                name: "MacBook Pro Microphone".to_string(),
+                kind: AvFoundationDeviceKind::Audio,
+            },
+        ];
+
+        assert_eq!(
+            find_avfoundation_microphone_index_for_name(&devices, "MacBook Pro Microphone"),
+            Some(4)
+        );
+        assert_eq!(
+            find_avfoundation_microphone_index_for_name(
+                &devices,
+                "Fallback - MacBook Pro Microphone"
+            ),
+            Some(4)
         );
     }
 

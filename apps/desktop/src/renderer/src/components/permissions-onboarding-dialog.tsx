@@ -153,8 +153,9 @@ function PermissionRow({
   // Screen Recording has no native prompt API — System Settings is the only
   // door. Camera/mic get the in-place prompt while undetermined; once macOS
   // has said no, only System Settings can flip it (TCC never re-asks).
+  const canEnableInPlace = row.id !== 'screen-recording' && row.state === 'first-use'
   const action =
-    row.state === 'granted' ? null : row.id !== 'screen-recording' && row.state === 'first-use' ? (
+    row.state === 'granted' || row.state === 'device-issue' ? null : canEnableInPlace ? (
       <Button disabled={pending} size="xs" variant="outline" onClick={onEnable}>
         {pending ? <CircleNotch className="animate-spin" data-icon="inline-start" /> : null}
         Enable
@@ -169,13 +170,21 @@ function PermissionRow({
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-row border bg-muted/30 px-3 py-2.5 text-sm">
       <span className="w-36 shrink-0 font-medium">{row.label}</span>
       <StatusBadge
-        tone={row.state === 'granted' ? 'good' : row.state === 'not-granted' ? 'warn' : 'neutral'}
+        tone={
+          row.state === 'granted'
+            ? 'good'
+            : row.state === 'not-granted' || row.state === 'device-issue'
+              ? 'warn'
+              : 'neutral'
+        }
         value={
           row.state === 'granted'
             ? 'Granted'
             : row.state === 'not-granted'
               ? 'Not granted'
-              : 'Checked on first use'
+              : row.state === 'device-issue'
+                ? 'Device issue'
+                : 'Checked on first use'
         }
       />
       <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={row.detail}>

@@ -6,7 +6,7 @@ import type { AudioMeterResult, Device, DeviceList } from '@/lib/backend'
 // macOS genuinely won't tell us until first use, we say so instead of faking
 // a green chip.
 
-export type SystemAccessState = 'granted' | 'not-granted' | 'first-use'
+export type SystemAccessState = 'granted' | 'not-granted' | 'first-use' | 'device-issue'
 
 export interface SystemAccessRow {
   id: 'screen-recording' | 'camera' | 'microphone'
@@ -57,6 +57,9 @@ export function microphoneAccessState(audioMeter: AudioMeterResult | null): Syst
   if (audioMeter.status === 'permission-required') {
     return 'not-granted'
   }
+  if (audioMeter.status === 'no-frames') {
+    return 'device-issue'
+  }
   if (audioMeter.status === 'ready' || audioMeter.status === 'silent') {
     return 'granted'
   }
@@ -95,9 +98,12 @@ export function systemAccessRows({
       purpose: 'Voice audio and live captions.',
       state: microphone,
       detail:
-        microphone === 'first-use'
-          ? 'Checked when you run a mic check or start a session.'
-          : accessDetail(microphone, 'the microphone')
+        microphone === 'device-issue'
+          ? (audioMeter?.message ??
+            'The microphone opened but did not send frames. Try the fallback input or another mic.')
+          : microphone === 'first-use'
+            ? 'Checked when you run a mic check or start a session.'
+            : accessDetail(microphone, 'the microphone')
     }
   ]
 }
@@ -121,7 +127,7 @@ export function shouldShowPermissionsOnboarding({
   if (dismissed || !backendReady) {
     return false
   }
-  return rows.some((row) => row.state !== 'granted')
+  return rows.some((row) => row.state !== 'granted' && row.state !== 'device-issue')
 }
 
 function accessDetail(state: SystemAccessState, subject: string): string {
@@ -135,5 +141,7 @@ function accessDetail(state: SystemAccessState, subject: string): string {
       return `macOS is blocking ${subject} — grant access in System Settings.`
     case 'first-use':
       return 'macOS reports this on first use.'
+    case 'device-issue':
+      return 'The device opened but did not send audio frames.'
   }
 }

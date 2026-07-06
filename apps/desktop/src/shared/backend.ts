@@ -1319,7 +1319,12 @@ export interface AudioMeterParams {
   microphoneMuted?: boolean
 }
 
-export type AudioMeterStatus = 'ready' | 'silent' | 'unavailable' | 'permission-required'
+export type AudioMeterStatus =
+  | 'ready'
+  | 'silent'
+  | 'no-frames'
+  | 'unavailable'
+  | 'permission-required'
 
 export interface AudioMeterResult {
   status: AudioMeterStatus
@@ -1327,6 +1332,28 @@ export interface AudioMeterResult {
   peakDb?: number
   meanDb?: number
   message?: string
+}
+
+export interface AudioMeterSampleSnapshot {
+  microphoneId?: string
+  result: AudioMeterResult
+  sampledAt: string
+}
+
+export interface AudioMeterProbeParams {
+  ffmpegPath?: string
+  microphoneGainDb?: number
+  microphoneMuted?: boolean
+}
+
+export interface AudioMeterDeviceProbe {
+  device: Device
+  result: AudioMeterResult
+}
+
+export interface AudioMeterDeviceProbeResult {
+  sampledAt: string
+  probes: AudioMeterDeviceProbe[]
 }
 
 export interface StreamHealth {

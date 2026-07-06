@@ -34,8 +34,8 @@ use crate::compositor::{
     update_compositor_scene, wait_for_compositor_startup_frames,
 };
 use crate::devices::{
-    find_avfoundation_camera_index, find_avfoundation_screen_index,
-    find_avfoundation_screen_index_for_native_display_id,
+    find_avfoundation_camera_index, find_avfoundation_microphone_index_for_native_name,
+    find_avfoundation_screen_index, find_avfoundation_screen_index_for_native_display_id,
 };
 use crate::diagnostics::{
     RecordingStartupBarrierDiagnosticSnapshot, apply_active_scene_revision, apply_audio_stats,
@@ -514,19 +514,36 @@ pub async fn start_session(
         && !await_microphone_warmup(&state, prepared.source.stats_handle()).await
         && let Some(prepared) = native_audio_source.take()
     {
-        let message = format!(
-            "Native microphone {} did not deliver warmup frames; omitting the mic FIFO so FFmpeg can finalize video instead of blocking on an empty audio input.",
-            prepared.source.device_name
-        );
-        state.emit_log("warn", &message);
-        let _ = emit_health_event(
-            &state,
-            Some(&session_id),
-            HealthLevel::Warn,
-            "microphone-native-warmup-timeout",
-            &message,
-        );
-        capture.microphone = None;
+        let device_name = prepared.source.device_name.clone();
+        if let Some(index) =
+            find_avfoundation_microphone_index_for_native_name(&ffmpeg_path, &device_name).await
+        {
+            let message = format!(
+                "Native microphone {device_name} did not deliver warmup frames; switching this session to the FFmpeg avfoundation fallback input."
+            );
+            state.emit_log("warn", &message);
+            let _ = emit_health_event(
+                &state,
+                Some(&session_id),
+                HealthLevel::Warn,
+                "microphone-fallback-selected",
+                &message,
+            );
+            capture.microphone = Some(MicrophoneInput::AvFoundation { index });
+        } else {
+            let message = format!(
+                "Native microphone {device_name} did not deliver warmup frames and no matching fallback input was found; omitting the mic FIFO so FFmpeg can finalize video instead of blocking on an empty audio input."
+            );
+            state.emit_log("warn", &message);
+            let _ = emit_health_event(
+                &state,
+                Some(&session_id),
+                HealthLevel::Warn,
+                "microphone-native-warmup-timeout",
+                &message,
+            );
+            capture.microphone = None;
+        }
         let _ = std::fs::remove_file(&prepared.fifo_path);
     }
     let audio_tracks = capture_audio_tracks(&capture);

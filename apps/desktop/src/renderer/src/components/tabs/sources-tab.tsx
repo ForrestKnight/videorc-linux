@@ -148,7 +148,9 @@ export function SourcesTab(): ReactElement {
   const meterTone =
     audioMeter?.status === 'ready'
       ? 'bg-success'
-      : audioMeter?.status === 'silent' || audioMeter?.status === 'permission-required'
+      : audioMeter?.status === 'silent' ||
+          audioMeter?.status === 'no-frames' ||
+          audioMeter?.status === 'permission-required'
         ? 'bg-warning'
         : 'bg-muted-foreground/40'
   const selectedCaptureId = captureConfig.sources.screenId ?? captureConfig.sources.windowId
@@ -429,7 +431,13 @@ export function SourcesTab(): ReactElement {
                       }
                     : audioMeter?.status === 'permission-required'
                       ? { label: 'Permission needed', tone: 'warn' }
-                      : null
+                      : audioMeter?.status === 'no-frames'
+                        ? {
+                            label: 'No frames',
+                            tone: 'warn',
+                            hint: 'The mic opened but did not send audio frames.'
+                          }
+                        : null
               }
             />
           </span>

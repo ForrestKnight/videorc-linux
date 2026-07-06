@@ -6,8 +6,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::protocol::{
-    AiArtifactKind, AiArtifactStatus, BackendHealth, BackendLogEvent, DiagnosticStats,
-    EntitlementsSnapshot, HealthEvent, RecordingStatus, SessionLogEntry, SessionSummary,
+    AiArtifactKind, AiArtifactStatus, AudioMeterSampleSnapshot, BackendHealth, BackendLogEvent,
+    DeviceList, DiagnosticStats, EntitlementsSnapshot, HealthEvent, RecordingStatus,
+    SessionLogEntry, SessionSummary,
 };
 use crate::repair::GateStatus;
 
@@ -35,6 +36,8 @@ pub struct SupportBundleExportInput {
     pub output_directory: Option<PathBuf>,
     pub database_path: PathBuf,
     pub health: BackendHealth,
+    pub devices: DeviceList,
+    pub last_audio_meter: Option<AudioMeterSampleSnapshot>,
     pub entitlements: EntitlementsSnapshot,
     pub recording: RecordingStatus,
     pub diagnostics: DiagnosticStats,
@@ -49,6 +52,8 @@ pub struct SupportBundle {
     pub generated_at: String,
     pub app: SupportBundleApp,
     pub health: Value,
+    pub devices: DeviceList,
+    pub last_audio_meter: Option<AudioMeterSampleSnapshot>,
     pub entitlements: Value,
     pub recording: Value,
     pub diagnostics: Value,
@@ -176,6 +181,8 @@ pub fn build_support_bundle(input: SupportBundleExportInput) -> Result<SupportBu
             run_mode: backend_run_mode(),
         },
         health,
+        devices: input.devices,
+        last_audio_meter: input.last_audio_meter,
         entitlements,
         recording,
         diagnostics,
@@ -340,6 +347,8 @@ fn included_sections() -> Vec<String> {
     [
         "app",
         "health",
+        "devices",
+        "lastAudioMeter",
         "entitlements",
         "recording",
         "diagnostics",
@@ -625,6 +634,23 @@ mod tests {
                     .to_string(),
                 secret_store_backend: "json-file".to_string(),
             },
+            devices: DeviceList {
+                devices: vec![],
+                warnings: vec![],
+            },
+            last_audio_meter: Some(AudioMeterSampleSnapshot {
+                microphone_id: Some("microphone:coreaudio:42".to_string()),
+                result: crate::protocol::AudioMeterResult {
+                    status: crate::protocol::AudioMeterStatus::NoFrames,
+                    level: None,
+                    peak_db: None,
+                    mean_db: None,
+                    message: Some(
+                        "This microphone opened but did not send audio frames.".to_string(),
+                    ),
+                },
+                sampled_at: "2026-07-06T20:46:00Z".to_string(),
+            }),
             entitlements: current_entitlements(),
             recording: RecordingStatus {
                 state: RecordingState::Idle,
@@ -648,10 +674,18 @@ mod tests {
         assert!(!text.contains("plain-key"));
         assert!(!text.contains("sk-test"));
         assert!(!text.contains("videorc.sqlite3"));
+        assert!(text.contains("\"lastAudioMeter\""));
+        assert!(text.contains("\"no-frames\""));
         assert!(
             result
                 .included_sections
                 .contains(&"diagnostics".to_string())
+        );
+        assert!(result.included_sections.contains(&"devices".to_string()));
+        assert!(
+            result
+                .included_sections
+                .contains(&"lastAudioMeter".to_string())
         );
         let _ = std::fs::remove_dir_all(directory);
     }

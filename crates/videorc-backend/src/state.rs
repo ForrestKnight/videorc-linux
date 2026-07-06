@@ -13,7 +13,8 @@ use crate::preview_camera::{PreviewCameraSlot, initial_preview_camera_state};
 use crate::preview_screen::{PreviewScreenSlot, initial_preview_screen_state};
 use crate::preview_surface::{PreviewSurfaceSlot, initial_preview_surface_state};
 use crate::protocol::{
-    BackendLogEvent, DiagnosticStats, Scene, ServerEvent, VideorcAccountSnapshot,
+    AudioMeterSampleSnapshot, BackendLogEvent, DiagnosticStats, Scene, ServerEvent,
+    VideorcAccountSnapshot,
 };
 use crate::recording::{LivePreviewSlot, RecordingSlot, initial_live_preview_state};
 use crate::scene::default_scene;
@@ -62,6 +63,7 @@ pub struct AppState {
     pub scene: Arc<tokio::sync::Mutex<Scene>>,
     pub source_registry: Arc<tokio::sync::Mutex<SourceRegistry>>,
     pub diagnostics: Arc<tokio::sync::Mutex<DiagnosticStats>>,
+    pub last_audio_meter: Arc<tokio::sync::Mutex<Option<AudioMeterSampleSnapshot>>>,
     pub logs: Arc<StdMutex<Vec<BackendLogEvent>>>,
     pub database: Database,
     pub oauth: Arc<OAuthSessions>,
@@ -103,6 +105,7 @@ impl AppState {
             scene: Arc::new(tokio::sync::Mutex::new(default_scene())),
             source_registry: Arc::new(tokio::sync::Mutex::new(SourceRegistry::new())),
             diagnostics: Arc::new(tokio::sync::Mutex::new(idle_diagnostics())),
+            last_audio_meter: Arc::new(tokio::sync::Mutex::new(None)),
             logs: Arc::new(StdMutex::new(Vec::new())),
             database,
             oauth: Arc::new(OAuthSessions::default()),

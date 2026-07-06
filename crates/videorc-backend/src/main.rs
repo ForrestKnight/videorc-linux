@@ -2038,8 +2038,29 @@ async fn handle_text_message(state: &AppState, text: &str) -> ServerResponse {
         "audio.meter.sample" => {
             match serde_json::from_value::<protocol::AudioMeterParams>(command.params) {
                 Ok(params) => {
-                    ServerResponse::ok(command.id, devices::sample_audio_meter(params).await)
+                    let microphone_id = params.microphone_id.clone();
+                    let result = devices::sample_audio_meter(params).await;
+                    {
+                        let mut last_audio_meter = state.last_audio_meter.lock().await;
+                        *last_audio_meter = Some(protocol::AudioMeterSampleSnapshot {
+                            microphone_id,
+                            result: result.clone(),
+                            sampled_at: chrono::Utc::now().to_rfc3339(),
+                        });
+                    }
+                    ServerResponse::ok(command.id, result)
                 }
+                Err(error) => {
+                    ServerResponse::error(command.id, "invalid-params", error.to_string())
+                }
+            }
+        }
+        "audio.meter.probeNative" => {
+            match serde_json::from_value::<protocol::AudioMeterProbeParams>(command.params) {
+                Ok(params) => ServerResponse::ok(
+                    command.id,
+                    devices::sample_native_audio_meters(params).await,
+                ),
                 Err(error) => {
                     ServerResponse::error(command.id, "invalid-params", error.to_string())
                 }
@@ -3295,6 +3316,8 @@ async fn export_support_bundle_for_state(
         output_directory: params.output_directory.map(PathBuf::from),
         database_path: state.database.path().clone(),
         health: backend_health(state, ffmpeg_path).await,
+        devices: devices::list_devices(ffmpeg_path).await,
+        last_audio_meter: state.last_audio_meter.lock().await.clone(),
         entitlements: entitlements::current_entitlements(),
         recording: current_recording_status(state).await,
         diagnostics: current_diagnostics_stats(state).await,

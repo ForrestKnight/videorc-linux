@@ -615,11 +615,14 @@ fn sample_meter_from_source(mut source: NativeAudioSource, duration: Duration) -
 
     if samples == 0 {
         return AudioMeterResult {
-            status: AudioMeterStatus::Unavailable,
+            status: AudioMeterStatus::NoFrames,
             level: None,
             peak_db: None,
             mean_db: None,
-            message: Some("Native microphone capture did not receive audio frames.".to_string()),
+            message: Some(
+                "This microphone opened but did not send audio frames. Try a fallback input or another mic."
+                    .to_string(),
+            ),
         };
     }
 
@@ -1020,6 +1023,32 @@ mod tests {
         assert!((stalled - 0.5).abs() < 1e-6, "stalled coverage {stalled}");
         // Zero sample rate is undefined.
         assert_eq!(audio_capture_coverage(1000, 5.0, 0), None);
+    }
+
+    #[test]
+    fn meter_reports_no_frames_separately_from_unavailable() {
+        let (_sender, receiver) = mpsc::channel();
+        let source = NativeAudioSource {
+            device_id: 42,
+            device_name: "Built-in Microphone".to_string(),
+            receiver: Some(receiver),
+            stats: Arc::new(AudioCaptureStats::default()),
+            stop: Arc::new(AtomicBool::new(false)),
+            stop_on_drop: true,
+            #[cfg(target_os = "macos")]
+            audio_unit: None,
+        };
+
+        let result = sample_meter_from_source(source, Duration::from_millis(1));
+
+        assert_eq!(result.status, AudioMeterStatus::NoFrames);
+        assert!(
+            result
+                .message
+                .as_deref()
+                .unwrap_or_default()
+                .contains("did not send audio frames")
+        );
     }
 
     #[test]
