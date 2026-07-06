@@ -2282,10 +2282,10 @@ export interface VideorcApi {
   onGlassGeometry: (
     callback: (geometry: Pick<GlassWallpaperState, 'window' | 'display'>) => void
   ) => () => void
-  // App self-update (electron-updater) — Settings → About & updates. A manual
-  // check works whenever the app is packaged (explicit user intent); it does not
-  // require VIDEORC_ENABLE_AUTO_UPDATE (that flag only gates the silent
-  // background check). `installUpdate` quits and relaunches, so its promise may
+  // App self-update (electron-updater) — Settings → About & updates. Packaged
+  // builds also check automatically on every launch (silent background flow,
+  // opt out via VIDEORC_DISABLE_AUTO_UPDATE=1); the manual button shares the
+  // same status. `installUpdate` quits and relaunches, so its promise may
   // never resolve. The install must be blocked by the caller while a capture is
   // live — never interrupt a recording.
   checkForUpdates: () => Promise<UpdateStatus>

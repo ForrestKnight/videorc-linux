@@ -10,9 +10,9 @@ import { shouldAutoDownload, updateStatusFromEvent } from './updater-status'
 const { autoUpdater } = electronUpdater
 
 // One shared electron-updater singleton drives two flows:
-//   • a silent background check (opt-in via VIDEORC_ENABLE_AUTO_UPDATE=1) that
-//     downloads and applies on the NEXT quit (autoInstallOnAppQuit), so a
-//     recording is never cut off; and
+//   • a silent background check on every launch (default for packaged builds;
+//     opt out via VIDEORC_DISABLE_AUTO_UPDATE=1) that downloads and applies on
+//     the NEXT quit (autoInstallOnAppQuit), so a recording is never cut off; and
 //   • a manual "Check for updates / Download / Restart & install" button in
 //     Settings → About & updates, driven over IPC.
 //
@@ -87,13 +87,15 @@ function attachUpdaterListeners(): void {
   })
 }
 
-// Background auto-update for packaged, signed builds — OFF by default for the
-// download-only beta (videorc-web does not serve an electron-updater feed yet).
-// Set VIDEORC_ENABLE_AUTO_UPDATE=1 once the feed ships: updates then download in
-// the background and apply on the NEXT quit, never a forced restart, so a
-// recording is never cut off.
+// Background auto-update for packaged, signed builds — ON by default since
+// 0.9.10 (the feed has been live and verified since 0.9.0; the old opt-in flag
+// dated from before it shipped, so users had to find Settings → Check for
+// updates by hand). Every launch checks, downloads in the background, and
+// applies on the NEXT quit — never a forced restart, so a recording is never
+// cut off; the sidebar chip and Settings reflect the same shared status.
+// Escape hatch: VIDEORC_DISABLE_AUTO_UPDATE=1.
 export function initAutoUpdater(): void {
-  if (!app.isPackaged || process.env.VIDEORC_ENABLE_AUTO_UPDATE !== '1') {
+  if (!app.isPackaged || process.env.VIDEORC_DISABLE_AUTO_UPDATE === '1') {
     return
   }
 

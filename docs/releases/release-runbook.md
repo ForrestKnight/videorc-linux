@@ -15,8 +15,9 @@ videorc-web:
 | **Download** (dmg + sha256 + release.json) | `releases/macos/<releaseId>/` | `/api/downloads/macos/latest` (auth-gated, presigned) | New users |
 | **Update feed** (`latest-mac.yml` + `.zip` + `.zip.blockmap`) | `updates/macos/` (stable, overwritten each release) | `/api/updates/*` (public, presigned) | Existing users auto-updating |
 
-The desktop **Settings → About & updates** button — and the opt-in background
-checker (`VIDEORC_ENABLE_AUTO_UPDATE=1`) — read the feed.
+The desktop **Settings → About & updates** button — and the automatic launch
+check (default in packaged builds since 0.9.10; opt out via
+`VIDEORC_DISABLE_AUTO_UPDATE=1`) — read the feed.
 
 ## Versioning model
 
