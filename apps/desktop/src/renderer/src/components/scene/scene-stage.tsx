@@ -178,7 +178,10 @@ export function SceneStage({
       </svg>
 
       {/* Legend chips (HTML overlay, top-left) */}
-      <div className="pointer-events-none absolute left-2 top-2 flex gap-1.5">
+      {/* FX7: max-w-24 clipped "Screen capture Utility…" mid-word straight
+          into the next chip, reading as overlap. Wrap + a wider budget keeps
+          names legible; truncation stays as the last resort. */}
+      <div className="pointer-events-none absolute left-2 right-2 top-2 flex flex-wrap gap-1.5">
         {sources.map((source) => (
           <button
             key={source.id}
@@ -199,7 +202,7 @@ export function SceneStage({
             ) : (
               <Monitor className="size-3" weight="duotone" />
             )}
-            <span className="max-w-24 truncate">{source.name}</span>
+            <span className="max-w-44 truncate">{source.name}</span>
           </button>
         ))}
       </div>
