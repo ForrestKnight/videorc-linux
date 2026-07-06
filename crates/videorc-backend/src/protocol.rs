@@ -357,6 +357,18 @@ pub struct LayoutSettings {
     pub camera_corner: CameraCorner,
     pub camera_size: CameraSize,
     pub camera_shape: CameraShape,
+    /// Corner radius for `CameraShape::Rounded`, as a PERCENT of the camera
+    /// box's shorter side (0 = square corners, 50 = pill). Ignored by the
+    /// other shapes. All three render paths (CPU, Metal, FFmpeg) derive their
+    /// radius from this one number — never re-derive geometry per path.
+    #[serde(default = "default_camera_corner_radius_pct")]
+    pub camera_corner_radius_pct: u32,
+    /// Aspect of the camera box: `source` keeps the per-shape default
+    /// (16:9 rectangle, square circle), `square` forces 1:1, `portrait`
+    /// forces 3:4 — combined with the default Fill fit this center-crops the
+    /// camera like a vertical framing. Circle keeps its square box always.
+    #[serde(default = "default_camera_aspect")]
+    pub camera_aspect: CameraAspect,
     pub camera_margin: u32,
     #[serde(default = "default_camera_fit")]
     pub camera_fit: CameraFit,
@@ -395,7 +407,24 @@ pub enum CameraSize {
 #[serde(rename_all = "kebab-case")]
 pub enum CameraShape {
     Rectangle,
+    Rounded,
     Circle,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum CameraAspect {
+    Source,
+    Square,
+    Portrait,
+}
+
+fn default_camera_corner_radius_pct() -> u32 {
+    12
+}
+
+fn default_camera_aspect() -> CameraAspect {
+    CameraAspect::Source
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -657,6 +686,8 @@ pub(crate) fn default_layout_settings() -> LayoutSettings {
         camera_corner: CameraCorner::BottomRight,
         camera_size: CameraSize::Medium,
         camera_shape: CameraShape::Rectangle,
+        camera_corner_radius_pct: default_camera_corner_radius_pct(),
+        camera_aspect: default_camera_aspect(),
         camera_margin: 32,
         camera_fit: default_camera_fit(),
         camera_mirror: false,
@@ -2721,6 +2752,8 @@ mod tests {
             camera_corner: CameraCorner::BottomRight,
             camera_size: CameraSize::Medium,
             camera_shape: CameraShape::Rectangle,
+            camera_corner_radius_pct: 12,
+            camera_aspect: crate::protocol::CameraAspect::Source,
             camera_margin: 32,
             camera_fit: CameraFit::Fill,
             camera_mirror: false,

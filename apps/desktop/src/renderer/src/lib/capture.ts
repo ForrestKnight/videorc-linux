@@ -413,6 +413,8 @@ export const defaultCaptureConfig: CaptureConfig = {
     cameraCorner: 'bottom-right',
     cameraSize: 'medium',
     cameraShape: 'rectangle',
+    cameraCornerRadiusPct: 12,
+    cameraAspect: 'source',
     cameraMargin: 32,
     cameraFit: 'fill',
     cameraMirror: false,
@@ -795,6 +797,24 @@ export function normalizeLayoutSettings(layout: unknown): LayoutSettings {
       candidate.cameraFit === 'fit' || candidate.cameraFit === 'fill'
         ? candidate.cameraFit
         : defaultCaptureConfig.layout.cameraFit,
+    cameraShape:
+      candidate.cameraShape === 'rectangle' ||
+      candidate.cameraShape === 'rounded' ||
+      candidate.cameraShape === 'circle'
+        ? candidate.cameraShape
+        : defaultCaptureConfig.layout.cameraShape,
+    cameraCornerRadiusPct: clampNumber(
+      candidate.cameraCornerRadiusPct,
+      defaultCaptureConfig.layout.cameraCornerRadiusPct,
+      0,
+      50
+    ),
+    cameraAspect:
+      candidate.cameraAspect === 'source' ||
+      candidate.cameraAspect === 'square' ||
+      candidate.cameraAspect === 'portrait'
+        ? candidate.cameraAspect
+        : defaultCaptureConfig.layout.cameraAspect,
     sideBySideSplit: isSideBySideSplit(candidate.sideBySideSplit)
       ? candidate.sideBySideSplit
       : defaultCaptureConfig.layout.sideBySideSplit,

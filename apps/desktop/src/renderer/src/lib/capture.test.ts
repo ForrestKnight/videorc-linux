@@ -22,6 +22,7 @@ import {
   layoutPresetNeedsCamera,
   layoutPresetNeedsScreen,
   loadCaptureConfig,
+  normalizeLayoutSettings,
   normalizeAudioSettings,
   normalizeMicrophoneSyncOffsetMs,
   normalizeVideoSettings,
@@ -454,6 +455,8 @@ describe('smokePreviewCompositorCaptureConfig', () => {
       cameraCorner: 'bottom-right',
       cameraSize: 'medium',
       cameraShape: 'rectangle',
+      cameraCornerRadiusPct: 12,
+      cameraAspect: 'source',
       cameraMargin: 32,
       cameraFit: 'fill',
       cameraMirror: false,
@@ -532,6 +535,8 @@ describe('smokePreviewCompositorCaptureConfig', () => {
         cameraCorner: 'bottom-right',
         cameraSize: 'medium',
         cameraShape: 'rectangle',
+        cameraCornerRadiusPct: 12,
+        cameraAspect: 'source',
         cameraMargin: 32,
         cameraFit: 'fill',
         cameraMirror: false,
@@ -1118,5 +1123,40 @@ describe('normalizeCaptionsCaptureSettings', () => {
       position: 'bottom',
       textSize: 'm'
     })
+  })
+})
+
+describe('camera shape and aspect (2026-07-06)', () => {
+  it('defaults new fields for configs persisted before they existed', () => {
+    const layout = normalizeLayoutSettings({
+      layoutPreset: 'screen-camera',
+      cameraCorner: 'bottom-right',
+      cameraSize: 'medium',
+      cameraShape: 'rectangle',
+      cameraMargin: 32
+    })
+
+    expect(layout.cameraCornerRadiusPct).toBe(12)
+    expect(layout.cameraAspect).toBe('source')
+  })
+
+  it('keeps valid persisted values and clamps the radius', () => {
+    const layout = normalizeLayoutSettings({
+      layoutPreset: 'screen-camera',
+      cameraShape: 'rounded',
+      cameraCornerRadiusPct: 900,
+      cameraAspect: 'portrait'
+    })
+
+    expect(layout.cameraShape).toBe('rounded')
+    expect(layout.cameraCornerRadiusPct).toBe(50)
+    expect(layout.cameraAspect).toBe('portrait')
+  })
+
+  it('rejects junk shape/aspect values back to defaults', () => {
+    const layout = normalizeLayoutSettings({ cameraShape: 'triangle', cameraAspect: 'ultrawide' })
+
+    expect(layout.cameraShape).toBe('rectangle')
+    expect(layout.cameraAspect).toBe('source')
   })
 })

@@ -6206,6 +6206,8 @@ function smokePreviewSceneParams(
     cameraCorner: 'top-right',
     cameraSize: 'medium',
     cameraShape: 'circle',
+    cameraCornerRadiusPct: 12,
+    cameraAspect: 'source',
     cameraMargin: 32,
     cameraFit: 'fill',
     cameraMirror: true,

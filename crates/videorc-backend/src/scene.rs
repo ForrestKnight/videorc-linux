@@ -1,11 +1,11 @@
 use std::path::Path;
 
 use crate::protocol::{
-    CameraCorner, CameraFit, CameraShape, CameraSize, CameraTransformMode, LayoutPreset, Scene,
-    SceneConfigParams, SceneOutput, SceneOutputKind, SceneSource, SceneSourceKind,
-    SceneSourceOrderParams, SceneSourceParams, SceneSourceVisibilityParams, SceneTransform,
-    SceneTransformPatch, SceneTransformUpdateParams, SideBySideCameraSide, SideBySideSplit,
-    SourceSelection,
+    CameraAspect, CameraCorner, CameraFit, CameraShape, CameraSize, CameraTransformMode,
+    LayoutPreset, Scene, SceneConfigParams, SceneOutput, SceneOutputKind, SceneSource,
+    SceneSourceKind, SceneSourceOrderParams, SceneSourceParams, SceneSourceVisibilityParams,
+    SceneTransform, SceneTransformPatch, SceneTransformUpdateParams, SideBySideCameraSide,
+    SideBySideSplit, SourceSelection,
 };
 
 const DEFAULT_SCENE_ID: &str = "scene:default";
@@ -321,8 +321,12 @@ fn camera_transform(
     let output_width = f64::from(output_width.max(1));
     let output_height = f64::from(output_height.max(1));
     let scale = camera_output_scale(output_width, output_height);
-    let (camera_width, camera_height) =
-        scaled_camera_box_size(&layout.camera_size, &layout.camera_shape, scale);
+    let (camera_width, camera_height) = scaled_camera_box_size(
+        &layout.camera_size,
+        &layout.camera_shape,
+        &layout.camera_aspect,
+        scale,
+    );
     let camera_width = f64::from(camera_width);
     let camera_height = f64::from(camera_height);
     let margin = f64::from(scale_camera_dimension(layout.camera_margin.min(160), scale));
@@ -363,21 +367,34 @@ fn camera_transform(
     })
 }
 
-fn camera_box_size(size: &CameraSize, shape: &CameraShape) -> (u32, u32) {
+fn camera_box_size(size: &CameraSize, shape: &CameraShape, aspect: &CameraAspect) -> (u32, u32) {
     let width = match size {
         CameraSize::Small => 260,
         CameraSize::Medium => 360,
         CameraSize::Large => 480,
     };
+    // The box aspect decides the framing; the default Fill fit center-crops
+    // the camera into it, so `portrait` produces a Theo-style vertical camera
+    // from a landscape webcam. Circle keeps its square box regardless — a
+    // circle has no aspect.
     let height = match shape {
-        CameraShape::Rectangle => (width * 9 + 8) / 16,
         CameraShape::Circle => width,
+        CameraShape::Rectangle | CameraShape::Rounded => match aspect {
+            CameraAspect::Source => (width * 9 + 8) / 16,
+            CameraAspect::Square => width,
+            CameraAspect::Portrait => (width * 4u32).div_ceil(3),
+        },
     };
     (width, height)
 }
 
-fn scaled_camera_box_size(size: &CameraSize, shape: &CameraShape, scale: f64) -> (u32, u32) {
-    let (width, height) = camera_box_size(size, shape);
+fn scaled_camera_box_size(
+    size: &CameraSize,
+    shape: &CameraShape,
+    aspect: &CameraAspect,
+    scale: f64,
+) -> (u32, u32) {
+    let (width, height) = camera_box_size(size, shape, aspect);
 
     (
         scale_camera_dimension(width, scale),
@@ -534,6 +551,53 @@ mod tests {
         SourceSelection,
     };
 
+    // Camera shape/aspect feature (2026-07-06): the box aspect is decided HERE
+    // once; every render path center-crops into it via Fill. Portrait = 3:4,
+    // square = 1:1, source keeps the per-shape default; circle has no aspect.
+    #[test]
+    fn camera_box_size_follows_shape_and_aspect() {
+        let medium = CameraSize::Medium;
+
+        assert_eq!(
+            camera_box_size(&medium, &CameraShape::Rectangle, &CameraAspect::Source),
+            (360, 203)
+        );
+        assert_eq!(
+            camera_box_size(&medium, &CameraShape::Rounded, &CameraAspect::Source),
+            (360, 203)
+        );
+        assert_eq!(
+            camera_box_size(&medium, &CameraShape::Rounded, &CameraAspect::Square),
+            (360, 360)
+        );
+        assert_eq!(
+            camera_box_size(&medium, &CameraShape::Rectangle, &CameraAspect::Portrait),
+            (360, 480)
+        );
+        // Circle ignores aspect — a circle has no aspect.
+        assert_eq!(
+            camera_box_size(&medium, &CameraShape::Circle, &CameraAspect::Portrait),
+            (360, 360)
+        );
+    }
+
+    // Old persisted layouts predate cameraCornerRadiusPct/cameraAspect — they
+    // must deserialize to the defaults, never fail.
+    #[test]
+    fn layout_settings_without_new_fields_deserialize_to_defaults() {
+        let old_json = serde_json::json!({
+            "layoutPreset": "screen-camera",
+            "cameraCorner": "bottom-right",
+            "cameraSize": "medium",
+            "cameraShape": "rectangle",
+            "cameraMargin": 32
+        });
+        let layout: LayoutSettings = serde_json::from_value(old_json).expect("old layout parses");
+
+        assert_eq!(layout.camera_corner_radius_pct, 12);
+        assert_eq!(layout.camera_aspect, crate::protocol::CameraAspect::Source);
+    }
+
     fn base_params() -> SceneConfigParams {
         SceneConfigParams {
             sources: SourceSelection {
@@ -550,6 +614,8 @@ mod tests {
                 camera_corner: CameraCorner::BottomRight,
                 camera_size: CameraSize::Medium,
                 camera_shape: CameraShape::Rectangle,
+                camera_corner_radius_pct: 12,
+                camera_aspect: crate::protocol::CameraAspect::Source,
                 camera_margin: 32,
                 camera_fit: CameraFit::Fill,
                 camera_mirror: false,

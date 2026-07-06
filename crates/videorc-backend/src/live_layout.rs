@@ -564,6 +564,8 @@ mod tests {
             camera_corner: CameraCorner::BottomRight,
             camera_size: CameraSize::Medium,
             camera_shape: CameraShape::Rectangle,
+            camera_corner_radius_pct: 12,
+            camera_aspect: crate::protocol::CameraAspect::Source,
             camera_margin: 32,
             camera_fit: CameraFit::Fill,
             camera_mirror: false,

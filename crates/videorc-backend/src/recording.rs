@@ -56,11 +56,11 @@ use crate::preview_camera::{
 };
 use crate::preview_screen::preview_screen_latest_frame_info;
 use crate::protocol::{
-    AudioSettings, AudioTrack, AudioTrackSource, BackgroundFit, CameraCorner, CameraFit,
-    CameraShape, CameraSize, CameraTransformMode, CompositorBackend, CompositorSceneUpdateParams,
-    CompositorState, DiagnosticStats, EffectiveSceneBackground, EncodeBackend,
-    EntitlementsSnapshot, FeatureId, HealthLevel, LayoutPreset, LayoutSettings, PreviewCameraState,
-    PreviewLiveParams, PreviewLiveSource, PreviewLiveState, PreviewLiveStatus,
+    AudioSettings, AudioTrack, AudioTrackSource, BackgroundFit, CameraAspect, CameraCorner,
+    CameraFit, CameraShape, CameraSize, CameraTransformMode, CompositorBackend,
+    CompositorSceneUpdateParams, CompositorState, DiagnosticStats, EffectiveSceneBackground,
+    EncodeBackend, EntitlementsSnapshot, FeatureId, HealthLevel, LayoutPreset, LayoutSettings,
+    PreviewCameraState, PreviewLiveParams, PreviewLiveSource, PreviewLiveState, PreviewLiveStatus,
     PreviewScreenSourceKind, PreviewScreenState, PreviewSnapshot, PreviewSnapshotParams,
     PreviewTransport, RecordingPipelineStage, RecordingState, RecordingStatus, RemuxSessionParams,
     RtmpPreset, RtmpSettings, Scene, SceneConfigParams, SceneSourceKind, SceneTransform,
@@ -5503,12 +5503,17 @@ fn scene_source_layer_filter(
     };
     let crop = normalized_crop_filter(transform);
     let fit = scene_source_fit_filter(kind, width, height, params);
-    let shape =
-        if matches!(kind, SceneSourceKind::Camera) && camera_circle_mask_applies(&params.layout) {
+    let shape = if matches!(kind, SceneSourceKind::Camera) {
+        if camera_circle_mask_applies(&params.layout) {
             circle_alpha_mask_filter(width, height)
+        } else if let Some(pct) = camera_rounded_mask_pct(&params.layout) {
+            rounded_alpha_mask_filter(width, height, pct)
         } else {
             String::new()
-        };
+        }
+    } else {
+        String::new()
+    };
     format!("[{input_index}:v]setpts=PTS-STARTPTS,{mirror}{crop}{fit}{shape}[{layer_label}]")
 }
 
@@ -5556,6 +5561,29 @@ fn circle_alpha_mask_filter(width: u32, height: u32) -> String {
     format!(
         ",geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lte((X-{center_x:.3})*(X-{center_x:.3})+(Y-{center_y:.3})*(Y-{center_y:.3}),{radius:.3}*{radius:.3}),255,0)'"
     )
+}
+
+/// Rounded-rect alpha mask over the full `width`×`height` box. Radius is
+/// `radius_pct`% of the shorter side (the same rule every render path uses —
+/// CPU `inside_rounded_rect`, the Metal shader, and this filter must agree).
+/// SDF form: a pixel is inside when its distance beyond the radius-shrunk box
+/// (qx, qy) satisfies qx²+qy² ≤ r².
+fn rounded_alpha_mask_filter(width: u32, height: u32, radius_pct: u32) -> String {
+    let center_x = f64::from(width) / 2.0;
+    let center_y = f64::from(height) / 2.0;
+    let radius = f64::from(width.min(height)) * f64::from(radius_pct.min(50)) / 100.0;
+    let inner_half_w = (f64::from(width) / 2.0 - radius).max(0.0);
+    let inner_half_h = (f64::from(height) / 2.0 - radius).max(0.0);
+    let radius_sq = radius * radius;
+    format!(
+        ",geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lte(st(0,max(abs(X-{center_x:.3})-{inner_half_w:.3},0))*ld(0)+st(1,max(abs(Y-{center_y:.3})-{inner_half_h:.3},0))*ld(1),{radius_sq:.3}),255,0)'"
+    )
+}
+
+fn camera_rounded_mask_pct(layout: &LayoutSettings) -> Option<u32> {
+    (matches!(layout.layout_preset, LayoutPreset::ScreenCamera)
+        && matches!(layout.camera_shape, CameraShape::Rounded))
+    .then(|| layout.camera_corner_radius_pct.min(50))
 }
 
 fn live_preview_filter(camera_input_index: Option<usize>, params: &StartSessionParams) -> String {
@@ -5712,12 +5740,15 @@ fn camera_frame_filter(
 fn camera_chain_filter(camera_input_index: usize, params: &StartSessionParams) -> String {
     let overlay_shape = if camera_circle_mask_applies(&params.layout) {
         CameraShape::Circle
+    } else if camera_rounded_mask_pct(&params.layout).is_some() {
+        CameraShape::Rounded
     } else {
         CameraShape::Rectangle
     };
     let (width, height) = scaled_camera_box_size(
         &params.layout.camera_size,
         &overlay_shape,
+        &params.layout.camera_aspect,
         &params.output.video,
     );
     let prefix = if params.layout.camera_mirror {
@@ -5729,6 +5760,11 @@ fn camera_chain_filter(camera_input_index: usize, params: &StartSessionParams) -
 
     match overlay_shape {
         CameraShape::Rectangle => format!("{prefix}{frame}[cam]"),
+        CameraShape::Rounded => {
+            let pct = camera_rounded_mask_pct(&params.layout).unwrap_or(0);
+            let mask = rounded_alpha_mask_filter(width, height, pct);
+            format!("{prefix}{frame},format=rgba{mask}[cam]")
+        }
         CameraShape::Circle => {
             let radius = width / 2;
             format!(
@@ -5738,15 +5774,20 @@ fn camera_chain_filter(camera_input_index: usize, params: &StartSessionParams) -
     }
 }
 
-fn camera_box_size(size: &CameraSize, shape: &CameraShape) -> (u32, u32) {
+fn camera_box_size(size: &CameraSize, shape: &CameraShape, aspect: &CameraAspect) -> (u32, u32) {
     let width = match size {
         CameraSize::Small => 260,
         CameraSize::Medium => 360,
         CameraSize::Large => 480,
     };
+    // Must mirror scene::camera_box_size and preview_camera's copy.
     let height = match shape {
-        CameraShape::Rectangle => (width * 9 + 8) / 16,
         CameraShape::Circle => width,
+        CameraShape::Rectangle | CameraShape::Rounded => match aspect {
+            CameraAspect::Source => (width * 9 + 8) / 16,
+            CameraAspect::Square => width,
+            CameraAspect::Portrait => (width * 4u32).div_ceil(3),
+        },
     };
 
     (width, height)
@@ -5755,10 +5796,11 @@ fn camera_box_size(size: &CameraSize, shape: &CameraShape) -> (u32, u32) {
 fn scaled_camera_box_size(
     size: &CameraSize,
     shape: &CameraShape,
+    aspect: &CameraAspect,
     video: &VideoSettings,
 ) -> (u32, u32) {
     let scale = camera_output_scale(video);
-    let (width, height) = camera_box_size(size, shape);
+    let (width, height) = camera_box_size(size, shape, aspect);
 
     (
         scale_camera_dimension(width, scale),
@@ -5780,8 +5822,12 @@ fn camera_overlay_position(
     if let (CameraTransformMode::Custom, Some(transform)) =
         (layout.camera_transform_mode, layout.camera_transform)
     {
-        let (cam_width, cam_height) =
-            scaled_camera_box_size(&layout.camera_size, &layout.camera_shape, video);
+        let (cam_width, cam_height) = scaled_camera_box_size(
+            &layout.camera_size,
+            &layout.camera_shape,
+            &layout.camera_aspect,
+            video,
+        );
         let max_x = 1.0 - f64::from(cam_width) / f64::from(video.width.max(1));
         let max_y = 1.0 - f64::from(cam_height) / f64::from(video.height.max(1));
         let x = transform.x.clamp(0.0, max_x.max(0.0));
@@ -7079,6 +7125,8 @@ mod tests {
                 camera_corner: CameraCorner::BottomRight,
                 camera_size: CameraSize::Medium,
                 camera_shape: CameraShape::Rectangle,
+                camera_corner_radius_pct: 12,
+                camera_aspect: crate::protocol::CameraAspect::Source,
                 camera_margin: 32,
                 camera_fit: CameraFit::Fill,
                 camera_mirror: false,

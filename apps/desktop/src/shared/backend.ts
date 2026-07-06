@@ -230,7 +230,8 @@ export interface SourceSelection {
 
 export type CameraCorner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'
 export type CameraSize = 'small' | 'medium' | 'large'
-export type CameraShape = 'rectangle' | 'circle'
+export type CameraShape = 'rectangle' | 'rounded' | 'circle'
+export type CameraAspect = 'source' | 'square' | 'portrait'
 export type CameraFit = 'fit' | 'fill'
 export type LayoutPreset = 'screen-camera' | 'screen-only' | 'camera-only' | 'side-by-side'
 export type CameraTransformMode = 'preset' | 'custom'
@@ -251,6 +252,10 @@ export interface LayoutSettings {
   cameraCorner: CameraCorner
   cameraSize: CameraSize
   cameraShape: CameraShape
+  /** Corner radius for the 'rounded' shape, % of the box's shorter side. */
+  cameraCornerRadiusPct: number
+  /** Camera box aspect: source (per-shape default), square, or portrait 3:4. */
+  cameraAspect: CameraAspect
   cameraMargin: number
   cameraFit: CameraFit
   cameraMirror: boolean

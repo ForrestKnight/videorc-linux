@@ -20,9 +20,9 @@ use crate::diagnostics::{
 };
 use crate::frame_store::{FrameHandle, FrameStore, FrameStoreStats};
 use crate::protocol::{
-    CameraCapabilityFormat, CameraShape, CameraSize, CameraTransformMode, LayoutPreset,
-    LayoutSettings, PreviewCameraStartParams, PreviewCameraState, PreviewCameraStatus,
-    VideoSettings,
+    CameraAspect, CameraCapabilityFormat, CameraShape, CameraSize, CameraTransformMode,
+    LayoutPreset, LayoutSettings, PreviewCameraStartParams, PreviewCameraState,
+    PreviewCameraStatus, VideoSettings,
 };
 use crate::source_registry::{SourceConsumerReason, SourceKey};
 use crate::source_status::SourceLifecycleStatus;
@@ -1066,7 +1066,12 @@ fn camera_capture_target_dimensions(layout: &LayoutSettings, video: &VideoSettin
             ),
         )
     } else {
-        scaled_camera_box_size(&layout.camera_size, &layout.camera_shape, video)
+        scaled_camera_box_size(
+            &layout.camera_size,
+            &layout.camera_shape,
+            &layout.camera_aspect,
+            video,
+        )
     };
 
     (
@@ -1082,6 +1087,7 @@ fn camera_capture_target_dimensions(layout: &LayoutSettings, video: &VideoSettin
 fn scaled_camera_box_size(
     size: &CameraSize,
     shape: &CameraShape,
+    aspect: &CameraAspect,
     video: &VideoSettings,
 ) -> (u32, u32) {
     let scale = camera_output_scale(video);
@@ -1090,9 +1096,15 @@ fn scaled_camera_box_size(
         CameraSize::Medium => 360,
         CameraSize::Large => 480,
     };
+    // Must mirror scene::camera_box_size — the preview box and the composed
+    // box are the same box or the preview lies.
     let height = match shape {
-        CameraShape::Rectangle => (width * 9 + 8) / 16,
         CameraShape::Circle => width,
+        CameraShape::Rectangle | CameraShape::Rounded => match aspect {
+            CameraAspect::Source => (width * 9 + 8) / 16,
+            CameraAspect::Square => width,
+            CameraAspect::Portrait => (width * 4u32).div_ceil(3),
+        },
     };
 
     (
@@ -1998,6 +2010,8 @@ mod tests {
             camera_corner: CameraCorner::TopRight,
             camera_size: CameraSize::Medium,
             camera_shape: CameraShape::Rectangle,
+            camera_corner_radius_pct: 12,
+            camera_aspect: crate::protocol::CameraAspect::Source,
             camera_margin: 24,
             camera_fit: CameraFit::Fill,
             camera_mirror,
