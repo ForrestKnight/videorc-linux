@@ -332,7 +332,14 @@ export function SettingsTab({
                         : 'Checked on first use'
                   }
                 />
-                <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                {/* Q4 (plan 022): the permission TARGET is the actionable part —
+                    truncation clipped it to "Captur…"/"Voice a…". The row
+                    flex-wraps, so let the detail take a full line when tight
+                    instead of truncating; tooltip keeps the hover affordance. */}
+                <span
+                  className="min-w-0 flex-1 basis-56 text-xs text-muted-foreground"
+                  title={`${row.purpose} ${row.detail}`}
+                >
                   {row.purpose} {row.detail}
                 </span>
                 <Button
