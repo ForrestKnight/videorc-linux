@@ -362,7 +362,7 @@ mod macos {
             dest: [0.0, 0.0, 1.0, 1.0],
             crop: [0.0, 0.0, 0.0, 0.0],
             mirror: false,
-            circle: false,
+            mask: crate::metal_compositor::SourceMask::None,
         };
         compositor
             .compose_bgra(16, 16, [0.0, 0.0, 0.0, 1.0], &[source])
@@ -441,7 +441,7 @@ mod macos {
             dest: [0.0, 0.0, 1.0, 1.0],
             crop: [0.0, 0.0, 0.0, 0.0],
             mirror: false,
-            circle: false,
+            mask: crate::metal_compositor::SourceMask::None,
         };
         compositor
             .compose_bgra(16, 16, [0.0, 0.0, 0.0, 1.0], &[source])

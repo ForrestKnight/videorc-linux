@@ -1629,7 +1629,7 @@ struct PreparedGpuSource<'a> {
     dest: [f32; 4],
     crop: [f32; 4],
     mirror: bool,
-    circle: bool,
+    mask: crate::metal_compositor::SourceMask,
 }
 
 #[cfg(target_os = "macos")]
@@ -1645,7 +1645,7 @@ impl<'a> PreparedGpuSource<'a> {
             dest: self.dest,
             crop: self.crop,
             mirror: self.mirror,
-            circle: self.circle,
+            mask: self.mask,
         }
     }
 }
@@ -1776,7 +1776,7 @@ fn push_caption_overlay_gpu_source(
         dest,
         crop,
         mirror: false,
-        circle: false,
+        mask: crate::metal_compositor::SourceMask::None,
     });
 }
 
@@ -1829,7 +1829,7 @@ fn try_gpu_compose(
                     dest,
                     crop,
                     mirror: false,
-                    circle: false,
+                    mask: crate::metal_compositor::SourceMask::None,
                 });
                 true
             } else {
@@ -1879,7 +1879,7 @@ fn try_gpu_compose(
             dest,
             crop,
             mirror: false,
-            circle: false,
+            mask: crate::metal_compositor::SourceMask::None,
         });
         if let Some(overlay) = inputs.caption_overlay {
             push_caption_overlay_gpu_source(
@@ -1938,7 +1938,7 @@ fn try_gpu_compose(
             dest,
             crop,
             mirror: false,
-            circle: false,
+            mask: crate::metal_compositor::SourceMask::None,
         });
         if let Some(overlay) = inputs.caption_overlay {
             push_caption_overlay_gpu_source(
@@ -2005,7 +2005,7 @@ fn try_gpu_compose(
                         dest,
                         crop,
                         mirror: layout.camera_mirror,
-                        circle: camera_circle_mask_applies(layout),
+                        mask: camera_source_mask(layout),
                     });
                 } else {
                     let placeholder =
@@ -2030,7 +2030,7 @@ fn try_gpu_compose(
                         dest,
                         crop,
                         mirror: layout.camera_mirror,
-                        circle: camera_circle_mask_applies(layout),
+                        mask: camera_source_mask(layout),
                     });
                 }
             }
@@ -2076,7 +2076,7 @@ fn try_gpu_compose(
                         dest,
                         crop,
                         mirror: false,
-                        circle: false,
+                        mask: crate::metal_compositor::SourceMask::None,
                     });
                 } else {
                     let placeholder =
@@ -2101,7 +2101,7 @@ fn try_gpu_compose(
                         dest,
                         crop,
                         mirror: false,
-                        circle: false,
+                        mask: crate::metal_compositor::SourceMask::None,
                     });
                 }
             }
@@ -2127,7 +2127,7 @@ fn try_gpu_compose(
                     dest,
                     crop,
                     mirror: false,
-                    circle: false,
+                    mask: crate::metal_compositor::SourceMask::None,
                 });
             }
         }
@@ -2793,7 +2793,7 @@ fn render_compositor_yuv420p_scene(inputs: CompositorRenderInputs<'_>, bytes: &m
                     CompositorSceneSourceFit::Contain
                 ),
                 mirror_x: false,
-                circle_mask: false,
+                mask: crate::metal_compositor::SourceMask::None,
             },
         ) {
             return;
@@ -2838,7 +2838,7 @@ fn render_compositor_yuv420p_scene(inputs: CompositorRenderInputs<'_>, bytes: &m
                             crop: source_crop_from_transform(&transform),
                             contain: screen_contain,
                             mirror_x: false,
-                            circle_mask: false,
+                            mask: crate::metal_compositor::SourceMask::None,
                         },
                     )
                 } else if let Some(frame) = screen_frame {
@@ -2857,7 +2857,7 @@ fn render_compositor_yuv420p_scene(inputs: CompositorRenderInputs<'_>, bytes: &m
                             crop: source_crop_from_transform(&transform),
                             contain: screen_contain,
                             mirror_x: false,
-                            circle_mask: false,
+                            mask: crate::metal_compositor::SourceMask::None,
                         },
                     )
                 } else {
@@ -2881,7 +2881,7 @@ fn render_compositor_yuv420p_scene(inputs: CompositorRenderInputs<'_>, bytes: &m
                         contain: matches!(snapshot.layout.camera_fit, CameraFit::Fit)
                             && snapshot.layout.camera_zoom <= 100,
                         mirror_x: snapshot.layout.camera_mirror,
-                        circle_mask: camera_circle_mask_applies(&snapshot.layout),
+                        mask: camera_source_mask(&snapshot.layout),
                     },
                 )
             }),
@@ -3083,7 +3083,7 @@ struct SourceRenderOptions {
     crop: SourceCrop,
     contain: bool,
     mirror_x: bool,
-    circle_mask: bool,
+    mask: crate::metal_compositor::SourceMask,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -3164,7 +3164,7 @@ fn render_scene_background(
             crop: background_zoom_crop(Some(background)),
             contain: matches!(background.fit, BackgroundFit::Fit),
             mirror_x: false,
-            circle_mask: false,
+            mask: crate::metal_compositor::SourceMask::None,
         },
     )
 }
@@ -3351,7 +3351,7 @@ fn render_synthetic_source_rect(
             crop: SourceCrop::none(),
             contain: false,
             mirror_x: false,
-            circle_mask: false,
+            mask: crate::metal_compositor::SourceMask::None,
         },
     );
 }
@@ -3505,7 +3505,7 @@ fn blit_rgba_to_yuv420p(
 
     for dest_y in draw_top..draw_bottom {
         for dest_x in draw_left..draw_right {
-            if options.circle_mask && !inside_circle(dest_x, dest_y, &fit) {
+            if !source_mask_allows(options.mask, dest_x, dest_y, &fit) {
                 continue;
             }
             let Some((source_x, source_y)) =
@@ -3530,7 +3530,7 @@ fn blit_rgba_to_yuv420p(
         for uv_x in uv_left..uv_right {
             let dest_x = (uv_x * 2).min(draw_right.saturating_sub(1));
             let dest_y = (uv_y * 2).min(draw_bottom.saturating_sub(1));
-            if options.circle_mask && !inside_circle(dest_x, dest_y, &fit) {
+            if !source_mask_allows(options.mask, dest_x, dest_y, &fit) {
                 continue;
             }
             let Some((source_x, source_y)) =
@@ -3668,6 +3668,37 @@ fn map_source_pixel(
 /// so the "square" camera box renders slightly non-square). Using separate x/y radii here
 /// drew an ellipse; this matches the recording path's `circle_alpha_mask_filter` so the
 /// preview and the encoded file agree.
+fn source_mask_allows(
+    mask: crate::metal_compositor::SourceMask,
+    dest_x: usize,
+    dest_y: usize,
+    fit: &SourceFit,
+) -> bool {
+    use crate::metal_compositor::SourceMask;
+    match mask {
+        SourceMask::None => true,
+        SourceMask::Circle => inside_circle(dest_x, dest_y, fit),
+        SourceMask::Rounded { radius_pct } => inside_rounded_rect(dest_x, dest_y, fit, radius_pct),
+    }
+}
+
+/// Whether `(dest_x, dest_y)` falls inside `fit`'s box with its corners clipped at
+/// `radius_pct`% of the shorter side — the same SDF the Metal shader and the FFmpeg
+/// rounded_alpha_mask_filter use, so preview and recording agree.
+fn inside_rounded_rect(dest_x: usize, dest_y: usize, fit: &SourceFit, radius_pct: u32) -> bool {
+    let radius = f64::from(fit.width.min(fit.height)) * f64::from(radius_pct.min(50)) / 100.0;
+    if radius <= 0.0 {
+        return true;
+    }
+    let center_x = f64::from(fit.x) + f64::from(fit.width) / 2.0;
+    let center_y = f64::from(fit.y) + f64::from(fit.height) / 2.0;
+    let inner_half_w = (f64::from(fit.width) / 2.0 - radius).max(0.0);
+    let inner_half_h = (f64::from(fit.height) / 2.0 - radius).max(0.0);
+    let qx = ((dest_x as f64 + 0.5 - center_x).abs() - inner_half_w).max(0.0);
+    let qy = ((dest_y as f64 + 0.5 - center_y).abs() - inner_half_h).max(0.0);
+    qx * qx + qy * qy <= radius * radius
+}
+
 fn inside_circle(dest_x: usize, dest_y: usize, fit: &SourceFit) -> bool {
     let center_x = f64::from(fit.x) + f64::from(fit.width) / 2.0;
     let center_y = f64::from(fit.y) + f64::from(fit.height) / 2.0;
@@ -3780,6 +3811,11 @@ fn compositor_scene_sources(
                     shape: if matches!(source.kind, SceneSourceKind::Camera) {
                         Some(if camera_circle_mask_applies(&snapshot.layout) {
                             CameraShape::Circle
+                        } else if matches!(
+                            camera_source_mask(&snapshot.layout),
+                            crate::metal_compositor::SourceMask::Rounded { .. }
+                        ) {
+                            CameraShape::Rounded
                         } else {
                             CameraShape::Rectangle
                         })
@@ -3867,6 +3903,23 @@ fn compositor_scene_source_fit(
 fn camera_circle_mask_applies(layout: &LayoutSettings) -> bool {
     matches!(layout.layout_preset, LayoutPreset::ScreenCamera)
         && matches!(layout.camera_shape, CameraShape::Circle)
+}
+
+/// The camera bubble's mask for BOTH software compositors — one derivation,
+/// mirrored by the FFmpeg filter graph (rounded_alpha_mask_filter): circle
+/// inscribes min(w,h); rounded clips corners at radius_pct% of the shorter side.
+fn camera_source_mask(layout: &LayoutSettings) -> crate::metal_compositor::SourceMask {
+    use crate::metal_compositor::SourceMask;
+    if !matches!(layout.layout_preset, LayoutPreset::ScreenCamera) {
+        return SourceMask::None;
+    }
+    match layout.camera_shape {
+        CameraShape::Circle => SourceMask::Circle,
+        CameraShape::Rounded => SourceMask::Rounded {
+            radius_pct: layout.camera_corner_radius_pct.min(50),
+        },
+        CameraShape::Rectangle => SourceMask::None,
+    }
 }
 
 fn full_frame_transform() -> SceneTransform {
@@ -4306,7 +4359,7 @@ mod tests {
                 },
                 contain: false,
                 mirror_x: false,
-                circle_mask: false,
+                mask: crate::metal_compositor::SourceMask::None,
             },
         ));
 
@@ -6696,6 +6749,83 @@ mod tests {
         // A true circle is symmetric: the same 30px offset is outside vertically too
         // (here bounded by the box, so assert the corner is dropped).
         assert!(!inside_circle(0, 0, &fit), "corner is masked out");
+    }
+
+    // Rounded camera bubble (2026-07-06): the corner arcs must match the Metal
+    // shader and the FFmpeg rounded_alpha_mask_filter — radius = pct% of the
+    // shorter side, SDF on the full box.
+    #[test]
+    fn rounded_mask_clips_corners_and_keeps_edges() {
+        let fit = SourceFit {
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 60,
+            source_x: 0.0,
+            source_y: 0.0,
+            source_width: 100.0,
+            source_height: 60.0,
+        };
+        // radius = 20% of min(100, 60) = 12px.
+        let pct = 20;
+
+        assert!(inside_rounded_rect(50, 30, &fit, pct), "center is inside");
+        assert!(
+            inside_rounded_rect(50, 0, &fit, pct),
+            "top edge midpoint survives"
+        );
+        assert!(
+            inside_rounded_rect(0, 30, &fit, pct),
+            "left edge midpoint survives"
+        );
+        assert!(
+            !inside_rounded_rect(0, 0, &fit, pct),
+            "corner tip is clipped"
+        );
+        assert!(
+            !inside_rounded_rect(99, 59, &fit, pct),
+            "opposite corner tip is clipped"
+        );
+        assert!(
+            inside_rounded_rect(12, 12, &fit, pct),
+            "just inside the corner arc survives"
+        );
+        // pct 0 = plain rectangle: nothing clipped.
+        assert!(
+            inside_rounded_rect(0, 0, &fit, 0),
+            "0% radius keeps corners"
+        );
+    }
+
+    #[test]
+    fn camera_source_mask_follows_shape_and_preset() {
+        use crate::metal_compositor::SourceMask;
+        let mut layout = crate::protocol::default_layout_settings();
+        layout.layout_preset = LayoutPreset::ScreenCamera;
+
+        layout.camera_shape = CameraShape::Rectangle;
+        assert_eq!(camera_source_mask(&layout), SourceMask::None);
+
+        layout.camera_shape = CameraShape::Circle;
+        assert_eq!(camera_source_mask(&layout), SourceMask::Circle);
+
+        layout.camera_shape = CameraShape::Rounded;
+        layout.camera_corner_radius_pct = 18;
+        assert_eq!(
+            camera_source_mask(&layout),
+            SourceMask::Rounded { radius_pct: 18 }
+        );
+
+        // The radius clamps to 50 (a pill) — beyond that is meaningless.
+        layout.camera_corner_radius_pct = 400;
+        assert_eq!(
+            camera_source_mask(&layout),
+            SourceMask::Rounded { radius_pct: 50 }
+        );
+
+        // Only the screen+camera overlay masks; other presets render plain.
+        layout.layout_preset = LayoutPreset::SideBySide;
+        assert_eq!(camera_source_mask(&layout), SourceMask::None);
     }
 
     #[tokio::test]

@@ -8879,6 +8879,40 @@ mod tests {
         );
     }
 
+    // Rounded camera bubble (2026-07-06): the FFmpeg mask derives from the same
+    // constants as the CPU/Metal paths — radius = pct% of min(w,h), SDF on the
+    // full box. Pin the generated filter so a refactor cannot silently drift
+    // the recording leg away from the previews.
+    #[test]
+    fn rounded_alpha_mask_filter_uses_min_side_radius_sdf() {
+        // 200x100 box at 20% → radius 20, inner half extents (80, 30).
+        let filter = rounded_alpha_mask_filter(200, 100, 20);
+        assert!(filter.contains("geq="), "{filter}");
+        assert!(filter.contains("abs(X-100.000)-80.000"), "{filter}");
+        assert!(filter.contains("abs(Y-50.000)-30.000"), "{filter}");
+        assert!(filter.contains("400.000"), "radius² term: {filter}");
+
+        // Radius clamps at 50% (a pill) even if the pct is out of range.
+        let clamped = rounded_alpha_mask_filter(100, 100, 400);
+        assert!(clamped.contains("2500.000"), "{clamped}");
+    }
+
+    #[test]
+    fn camera_rounded_mask_pct_only_applies_to_screen_camera_rounded() {
+        let mut layout = crate::protocol::default_layout_settings();
+        layout.layout_preset = LayoutPreset::ScreenCamera;
+        layout.camera_shape = CameraShape::Rounded;
+        layout.camera_corner_radius_pct = 18;
+        assert_eq!(camera_rounded_mask_pct(&layout), Some(18));
+
+        layout.camera_shape = CameraShape::Circle;
+        assert_eq!(camera_rounded_mask_pct(&layout), None);
+
+        layout.camera_shape = CameraShape::Rounded;
+        layout.layout_preset = LayoutPreset::SideBySide;
+        assert_eq!(camera_rounded_mask_pct(&layout), None);
+    }
+
     #[test]
     fn native_source_health_copy_matches_selected_recording_path() {
         assert!(native_screen_recording_path_message(true).contains("protected compositor"));

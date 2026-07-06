@@ -48,7 +48,7 @@ const SHADER_SOURCE: &str = r#"
 #include <metal_stdlib>
 using namespace metal;
 struct VOut { float4 pos [[position]]; float2 uv; };
-struct FragParams { float4 crop; float mirror; float circle; float aspect; };
+struct FragParams { float4 crop; float mirror; float circle; float aspect; float radius; };
 vertex VOut v_main(uint vid [[vertex_id]], const device float4* verts [[buffer(0)]]) {
     VOut out;
     float4 v = verts[vid];
@@ -78,6 +78,25 @@ fragment float4 f_main(VOut in [[stage_in]],
             discard_fragment();
         }
     }
+    // Rounded-rect mask (matches the CPU compositor's inside_rounded_rect and the
+    // FFmpeg rounded_alpha_mask_filter): params.radius is the corner radius in
+    // shorter-side-half units (2 * pct / 100). Work in the same aspect-normalized
+    // space as the circle so the corner arcs stay circular on any quad.
+    if (params.radius > 0.0) {
+        float2 c = (uv - 0.5) * 2.0;
+        float2 half_extent = float2(1.0, 1.0);
+        if (params.aspect >= 1.0) {
+            c.x *= params.aspect;
+            half_extent.x = params.aspect;
+        } else {
+            c.y /= params.aspect;
+            half_extent.y = 1.0 / params.aspect;
+        }
+        float2 q = max(abs(c) - (half_extent - params.radius), 0.0);
+        if (dot(q, q) > params.radius * params.radius) {
+            discard_fragment();
+        }
+    }
     // Horizontal mirror.
     float u = (params.mirror > 0.5) ? (1.0 - uv.x) : uv.x;
     // Crop: sample only the visible region [cl, 1-cr] x [ct, 1-cb] of the source.
@@ -96,6 +115,9 @@ struct FragParams {
     /// Destination quad aspect (width/height in pixels); lets the shader inscribe a true
     /// circle in a non-square quad rather than stretching it into an ellipse.
     aspect: f32,
+    /// Rounded-rect corner radius in shorter-side-half units (2 * pct / 100);
+    /// 0 disables the rounded mask.
+    radius: f32,
 }
 
 /// One source layer to composite: BGRA8 pixels at `width`×`height`, drawn into the
@@ -119,9 +141,38 @@ pub struct GpuSource<'a> {
     pub crop: [f32; 4],
     /// Mirror the source horizontally (camera selfie view).
     pub mirror: bool,
-    /// Hard-edge circular mask inscribed in the destination rect (a true circle of
-    /// diameter `min(width, height)`, centered — round regardless of the rect's aspect).
-    pub circle: bool,
+    /// Hard-edge mask over the destination rect. Circle inscribes a true circle of
+    /// diameter `min(width, height)`, centered; Rounded clips the corners with a
+    /// radius of `radius_pct`% of the shorter side. Every render path (CPU, Metal,
+    /// FFmpeg) derives its geometry from the same rule.
+    pub mask: SourceMask,
+}
+
+/// Camera-bubble mask shared by both software compositors (the FFmpeg leg mirrors
+/// the same constants in its filter graph).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceMask {
+    None,
+    Circle,
+    Rounded { radius_pct: u32 },
+}
+
+impl SourceMask {
+    pub fn circle_flag(self) -> f32 {
+        if matches!(self, SourceMask::Circle) {
+            1.0
+        } else {
+            0.0
+        }
+    }
+
+    /// Corner radius in shorter-side-half units for the shader (2 * pct / 100).
+    pub fn shader_radius(self) -> f32 {
+        match self {
+            SourceMask::Rounded { radius_pct } => (radius_pct.min(50) as f32) * 2.0 / 100.0,
+            _ => 0.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -610,8 +661,9 @@ impl MetalSceneCompositor {
             let params = FragParams {
                 crop: source.crop,
                 mirror: f32::from(u8::from(source.mirror)),
-                circle: f32::from(u8::from(source.circle)),
+                circle: source.mask.circle_flag(),
                 aspect,
+                radius: source.mask.shader_radius(),
             };
             command_encode_ms += encode_segment_started_at.elapsed().as_secs_f64() * 1000.0;
             let source_texture_started_at = Instant::now();
@@ -1381,6 +1433,7 @@ fn encode_texture_present(
         mirror: 0.0,
         circle: 0.0,
         aspect: 1.0,
+        radius: 0.0,
     };
     unsafe {
         encoder.setVertexBuffer_offset_atIndex(Some(&buffer), 0, 0);
@@ -1529,7 +1582,7 @@ mod tests {
             dest: [0.0, 0.0, 1.0, 1.0],
             crop: [0.0; 4],
             mirror: false,
-            circle: false,
+            mask: SourceMask::None,
         }];
         let yuv = compositor.compose_yuv420p(4, 4, &sources).unwrap();
         assert_eq!(yuv.len(), 16 + 2 * 4);
@@ -1544,7 +1597,7 @@ mod tests {
             return;
         };
         let src = vec![255u8; 8 * 8 * 4];
-        let sources = [full_frame(&src, 8, 8, false, false, [0.0; 4])];
+        let sources = [full_frame(&src, 8, 8, false, SourceMask::None, [0.0; 4])];
 
         compositor.compose_yuv420p(16, 16, &sources).unwrap();
         assert_eq!(compositor.cached_target_size(), Some((16, 16)));
@@ -1561,7 +1614,7 @@ mod tests {
             return;
         };
         let red = [0u8, 0, 255, 255];
-        let sources = [full_frame(&red, 1, 1, false, false, [0.0; 4])];
+        let sources = [full_frame(&red, 1, 1, false, SourceMask::None, [0.0; 4])];
 
         let pixels = compositor
             .compose_bgra(4, 4, [0.0, 0.0, 0.0, 1.0], &sources)
@@ -1588,7 +1641,7 @@ mod tests {
             return;
         };
         let red = [0u8, 0, 255, 255];
-        let sources = [full_frame(&red, 1, 1, false, false, [0.0; 4])];
+        let sources = [full_frame(&red, 1, 1, false, SourceMask::None, [0.0; 4])];
 
         assert!(compositor.latest_target_pixel_buffer().is_none());
         compositor
@@ -1619,7 +1672,7 @@ mod tests {
             return;
         };
         let red = [0u8, 0, 255, 255];
-        let sources = [full_frame(&red, 1, 1, false, false, [0.0; 4])];
+        let sources = [full_frame(&red, 1, 1, false, SourceMask::None, [0.0; 4])];
 
         let mut exported_ids = Vec::new();
         for _ in 0..(TARGET_RING_SIZE * 2) {
@@ -1666,14 +1719,14 @@ mod tests {
         };
         let small = vec![255u8; 8 * 8 * 4];
         let wide = vec![128u8; 16 * 8 * 4];
-        let sources = [full_frame(&small, 8, 8, false, false, [0.0; 4])];
+        let sources = [full_frame(&small, 8, 8, false, SourceMask::None, [0.0; 4])];
 
         compositor.compose_yuv420p(16, 16, &sources).unwrap();
         assert_eq!(compositor.cached_source_texture_sizes(), vec![Some((8, 8))]);
         compositor.compose_yuv420p(16, 16, &sources).unwrap();
         assert_eq!(compositor.cached_source_texture_sizes(), vec![Some((8, 8))]);
 
-        let resized_sources = [full_frame(&wide, 16, 8, false, false, [0.0; 4])];
+        let resized_sources = [full_frame(&wide, 16, 8, false, SourceMask::None, [0.0; 4])];
         compositor
             .compose_yuv420p(16, 16, &resized_sources)
             .unwrap();
@@ -1688,7 +1741,7 @@ mod tests {
         w: usize,
         h: usize,
         mirror: bool,
-        circle: bool,
+        mask: SourceMask,
         crop: [f32; 4],
     ) -> GpuSource<'_> {
         GpuSource {
@@ -1701,7 +1754,7 @@ mod tests {
             dest: [0.0, 0.0, 1.0, 1.0],
             crop,
             mirror,
-            circle,
+            mask,
         }
     }
 
@@ -1712,7 +1765,14 @@ mod tests {
         }
         let out = 8usize;
         let green = [0u8, 255, 0, 255].repeat(2 * 2);
-        let sources = [full_frame(&green, 2, 2, false, true, [0.0; 4])];
+        let sources = [full_frame(
+            &green,
+            2,
+            2,
+            false,
+            SourceMask::Circle,
+            [0.0; 4],
+        )];
         // Black background; the circle mask drops the corners so the background shows.
         let px = composite_sources(out, out, [0.0, 0.0, 0.0, 1.0], &sources).unwrap();
         assert_eq!(pixel(&px, out, 4, 4), [0, 255, 0, 255], "center is green");
@@ -1735,13 +1795,62 @@ mod tests {
         let out_w = 16usize;
         let out_h = 8usize;
         let green = [0u8, 255, 0, 255].repeat(out_w * out_h);
-        let sources = [full_frame(&green, out_w, out_h, false, true, [0.0; 4])];
+        let sources = [full_frame(
+            &green,
+            out_w,
+            out_h,
+            false,
+            SourceMask::Circle,
+            [0.0; 4],
+        )];
         let px = composite_sources(out_w, out_h, [0.0, 0.0, 0.0, 1.0], &sources).unwrap();
         assert_eq!(pixel(&px, out_w, 8, 4), [0, 255, 0, 255], "center is green");
         assert_eq!(
             pixel(&px, out_w, 14, 4),
             [0, 0, 0, 255],
             "horizontal extreme masked to background — round, not elliptical"
+        );
+    }
+
+    // Rounded camera bubble (2026-07-06): must agree with the CPU compositor's
+    // inside_rounded_rect and the FFmpeg rounded_alpha_mask_filter.
+    #[test]
+    fn gpu_rounded_mask_clips_corners_keeps_edges_or_skips() {
+        if !metal_available() {
+            return;
+        }
+        let out = 20usize;
+        let green = [0u8, 255, 0, 255].repeat(out * out);
+        // 30% of the 20px side = 6px corner radius.
+        let sources = [full_frame(
+            &green,
+            out,
+            out,
+            false,
+            SourceMask::Rounded { radius_pct: 30 },
+            [0.0; 4],
+        )];
+        let px = composite_sources(out, out, [0.0, 0.0, 0.0, 1.0], &sources).unwrap();
+        assert_eq!(pixel(&px, out, 10, 10), [0, 255, 0, 255], "center is green");
+        assert_eq!(
+            pixel(&px, out, 10, 0),
+            [0, 255, 0, 255],
+            "top edge midpoint survives"
+        );
+        assert_eq!(
+            pixel(&px, out, 0, 10),
+            [0, 255, 0, 255],
+            "left edge midpoint survives"
+        );
+        assert_eq!(
+            pixel(&px, out, 0, 0),
+            [0, 0, 0, 255],
+            "corner tip masked to background"
+        );
+        assert_eq!(
+            pixel(&px, out, 19, 19),
+            [0, 0, 0, 255],
+            "opposite corner tip masked to background"
         );
     }
 
@@ -1754,7 +1863,7 @@ mod tests {
         let src = [
             0u8, 0, 255, 255, 255, 0, 0, 255, 0, 0, 255, 255, 255, 0, 0, 255,
         ];
-        let sources = [full_frame(&src, 2, 2, true, false, [0.0; 4])];
+        let sources = [full_frame(&src, 2, 2, true, SourceMask::None, [0.0; 4])];
         let px = composite_sources(4, 4, [0.0, 0.0, 0.0, 1.0], &sources).unwrap();
         assert_eq!(
             pixel(&px, 4, 0, 0),
@@ -1785,7 +1894,14 @@ mod tests {
             }
         }
         // Crop off the right 50% → only the red half is sampled, stretched to the frame.
-        let sources = [full_frame(&src, 4, 2, false, false, [0.0, 0.0, 0.5, 0.0])];
+        let sources = [full_frame(
+            &src,
+            4,
+            2,
+            false,
+            SourceMask::None,
+            [0.0, 0.0, 0.5, 0.0],
+        )];
         let px = composite_sources(4, 4, [0.0, 0.0, 0.0, 1.0], &sources).unwrap();
         assert_eq!(pixel(&px, 4, 0, 0), [0, 0, 255, 255], "left red");
         assert_eq!(
@@ -1815,7 +1931,7 @@ mod tests {
                 dest: [0.0, 0.0, 1.0, 1.0],
                 crop: [0.0; 4],
                 mirror: false,
-                circle: false,
+                mask: SourceMask::None,
             },
             GpuSource {
                 kind: GpuSourceKind::Camera,
@@ -1827,7 +1943,7 @@ mod tests {
                 dest: [0.7, 0.7, 0.28, 0.28],
                 crop: [0.0; 4],
                 mirror: true,
-                circle: false,
+                mask: SourceMask::None,
             },
         ];
         let yuv = compositor.compose_yuv420p(1920, 1080, &sources).unwrap();
@@ -1852,7 +1968,7 @@ mod tests {
                 dest: [0.0, 0.0, 1.0, 1.0],
                 crop: [0.0; 4],
                 mirror: false,
-                circle: false,
+                mask: SourceMask::None,
             },
             GpuSource {
                 kind: GpuSourceKind::Camera,
@@ -1864,7 +1980,7 @@ mod tests {
                 dest: [0.0, 0.0, 0.5, 0.5],
                 crop: [0.0; 4],
                 mirror: true,
-                circle: false,
+                mask: SourceMask::None,
             },
         ];
 
@@ -1938,7 +2054,7 @@ mod tests {
             dest: [0.0, 0.0, 1.0, 1.0],
             crop: [0.0; 4],
             mirror: false,
-            circle: false,
+            mask: SourceMask::None,
         }];
 
         let output = compositor
@@ -1982,7 +2098,7 @@ mod tests {
             dest: [0.0, 0.0, 1.0, 1.0],
             crop: [0.0; 4],
             mirror: false,
-            circle: false,
+            mask: SourceMask::None,
         }];
 
         let output = compositor
@@ -2056,7 +2172,7 @@ mod tests {
         )
         .unwrap();
         let green = [0u8, 255, 0, 255];
-        let source_frame = full_frame(&green, 1, 1, false, false, [0.0; 4]);
+        let source_frame = full_frame(&green, 1, 1, false, SourceMask::None, [0.0; 4]);
         upload_bgra_to_texture(&source, &source_frame).unwrap();
 
         presenter
@@ -2078,7 +2194,7 @@ mod tests {
             return;
         };
         let red = [0u8, 0, 255, 255];
-        let source = full_frame(&red, 1, 1, false, false, [0.0; 4]);
+        let source = full_frame(&red, 1, 1, false, SourceMask::None, [0.0; 4]);
         compositor
             .compose_bgra(8, 4, [0.0, 0.0, 0.0, 1.0], &[source])
             .expect("compose IOSurface-backed target");
@@ -2131,7 +2247,7 @@ mod tests {
         };
         let layer = make_preview_layer(presenter.device(), 4.0, 4.0);
         let red = [0u8, 0, 255, 255];
-        let source = full_frame(&red, 1, 1, false, false, [0.0; 4]);
+        let source = full_frame(&red, 1, 1, false, SourceMask::None, [0.0; 4]);
 
         assert!(!compositor.present_latest_to_layer(&presenter, &layer));
         let _pixels = compositor
@@ -2164,7 +2280,7 @@ mod tests {
             dest: [0.5, 0.0, 0.5, 1.0],
             crop: [0.0; 4],
             mirror: false,
-            circle: false,
+            mask: SourceMask::None,
         }];
         let pixels = composite_sources(out, out, [0.0, 0.0, 1.0, 1.0], &sources).unwrap();
         assert_eq!(pixels.len(), out * out * 4);
