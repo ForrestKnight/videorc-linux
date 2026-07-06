@@ -120,6 +120,25 @@ A signed beta is releasable only after a clean-machine pass recorded under
 Add a per-release note `docs/releases/<version>.md` (see
 [0.9.0-beta.1.md](0.9.0-beta.1.md)).
 
+### Release-candidate device + provider gates (plan 022)
+
+Two gate groups are advisory in day-to-day runs but REQUIRED for a
+release candidate:
+
+- **Real-device screen gates** (host must have Screen Recording AND Camera
+  TCC granted to the dev Electron and `target/debug/videorc-backend`, and
+  the target display must not be otherwise in use). Run in order:
+  1. `pnpm smoke:screen-recording-real`
+  2. `pnpm smoke:notes-window-invisible`
+  3. `pnpm smoke:recording-studio:devices`
+  If the motion-stimulus signature fails, fix stimulus placement on the
+  SELECTED display (`VIDEORC_SCREEN_MOTION_*`) — never loosen the
+  signature assertion.
+- **Provider live readiness, strict**: with the smoke-only provider
+  credentials from [../oauth-live-smoke.md](../oauth-live-smoke.md) in the
+  environment, run readiness with `VIDEORC_SMOKE_REQUIRE_PROVIDER_READY=1`
+  so missing prerequisites FAIL the gate instead of printing advice.
+
 ## How users get the update
 
 1. On launch — and on **Settings → About & updates → Check for updates** — the

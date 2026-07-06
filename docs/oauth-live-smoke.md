@@ -102,6 +102,13 @@ VIDEORC_SMOKE_PROVIDER_CALLBACKS_READY=1
 The readiness report prints the required callback URLs and the confirmation flag
 only; it does not inspect provider portals or print private account details.
 
+Readiness is advisory by default. For release-candidate QA, run it strict so
+missing prerequisites FAIL instead of advising:
+
+```sh
+VIDEORC_SMOKE_REQUIRE_PROVIDER_READY=1
+```
+
 For X only, `VIDEORC_OAUTH_X_CALLBACK=app-protocol` restores the legacy
 `videorc://oauth/callback` redirect. Avoid it: X auto-approves re-authorization
 without a user gesture and browsers block gestureless custom-scheme navigation,
