@@ -1,4 +1,7 @@
+import { readFileSync } from 'node:fs'
 import { basename, relative } from 'node:path'
+
+export const BUNDLED_YOUTUBE_OAUTH_SECRET_ENV = 'VIDEORC_BUNDLED_YOUTUBE_CLIENT_SECRET'
 
 export function artifactKindFromPath(path) {
   if (String(path).endsWith('.app')) {
@@ -40,6 +43,51 @@ export function captureEntitlementCheckTargets(appPath) {
   ]
 }
 
+export function bundledYoutubeOAuthSecretCheckTarget(appPath) {
+  return {
+    id: 'bundled-youtube-oauth-secret',
+    label: 'bundled YouTube OAuth secret (videorc-backend)',
+    type: 'binary-contains-env-secret',
+    envName: BUNDLED_YOUTUBE_OAUTH_SECRET_ENV,
+    path: `${appPath}/Contents/Resources/videorc-backend`
+  }
+}
+
+export function evaluateBinaryContainsEnvSecretCheck(
+  check,
+  { env = process.env, readFile = readFileSync } = {}
+) {
+  if (check.type !== 'binary-contains-env-secret') {
+    throw new Error(`Unsupported release validation check type: ${check.type}`)
+  }
+
+  const envName = check.envName
+  const secret = typeof env[envName] === 'string' ? env[envName].trim() : ''
+  if (!secret) {
+    return {
+      ok: false,
+      output: `missing required environment variable: ${envName}`
+    }
+  }
+
+  let binary
+  try {
+    binary = readFile(check.path)
+  } catch (error) {
+    return {
+      ok: false,
+      output: `could not read ${check.path}: ${error?.message ?? 'unknown error'}`
+    }
+  }
+
+  return binary.includes(Buffer.from(secret, 'utf8'))
+    ? { ok: true, output: '' }
+    : {
+        ok: false,
+        output: `${check.path} does not contain the ${envName} value from the release environment`
+      }
+}
+
 export function buildMacosReleaseArtifactChecks(path) {
   const kind = artifactKindFromPath(path)
   if (!kind) {
@@ -79,19 +127,7 @@ export function buildMacosReleaseArtifactChecks(path) {
         args: ['-d', '--entitlements', ':-', target.path],
         expectOutputIncludes: REQUIRED_CAPTURE_ENTITLEMENTS
       })),
-      {
-        // The YouTube OAuth client secret left source (public repo, 2026-07-06)
-        // and is compiled in via VIDEORC_BUNDLED_YOUTUBE_CLIENT_SECRET at release
-        // build time. A release backend without it ships broken YouTube connect,
-        // so the gate proves the OUTCOME: the binary must embed a GOCSPX- secret
-        // (every Google Desktop-client secret carries that prefix).
-        id: 'bundled-youtube-oauth-secret',
-        label: 'bundled YouTube OAuth secret (videorc-backend)',
-        command: 'grep',
-        // -a is load-bearing: BSD grep refuses to match inside a binary file
-        // without it (verified 2026-07-06 — the check fails on a GOOD build).
-        args: ['-q', '-a', 'GOCSPX-', `${path}/Contents/Resources/videorc-backend`]
-      }
+      bundledYoutubeOAuthSecretCheckTarget(path)
     ]
   }
 

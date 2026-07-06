@@ -17,6 +17,7 @@ import {
 import {
   artifactKindFromPath,
   buildMacosReleaseArtifactChecks,
+  evaluateBinaryContainsEnvSecretCheck,
   formatArtifactPath,
   formatReleaseArtifactValidationReport,
   sanitizeReleaseValidationOutput,
@@ -176,6 +177,15 @@ function validateArtifact(artifactPath) {
 }
 
 function runCheck(check) {
+  if (check.type === 'binary-contains-env-secret') {
+    const result = evaluateBinaryContainsEnvSecretCheck(check)
+    return {
+      label: check.label,
+      ok: result.ok,
+      output: sanitizeReleaseValidationOutput(result.output, context())
+    }
+  }
+
   const result = spawnSync(check.command, check.args, {
     encoding: 'utf8'
   })
@@ -183,9 +193,7 @@ function runCheck(check) {
   // Some checks assert on what the command PRINTS, not just its exit status —
   // e.g. the capture-entitlement gate requires the device entitlements to appear
   // in `codesign -d --entitlements` output (a signed binary without them exits 0).
-  const missing = (check.expectOutputIncludes ?? []).filter(
-    (needle) => !rawOutput.includes(needle)
-  )
+  const missing = (check.expectOutputIncludes ?? []).filter((needle) => !rawOutput.includes(needle))
   const output = sanitizeReleaseValidationOutput(
     [rawOutput, ...missing.map((needle) => `missing required entitlement: ${needle}`)]
       .filter(Boolean)

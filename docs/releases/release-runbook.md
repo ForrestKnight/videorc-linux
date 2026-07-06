@@ -43,9 +43,9 @@ check (default in packaged builds since 0.9.10; opt out via
 - **YouTube OAuth secret** — `VIDEORC_BUNDLED_YOUTUBE_CLIENT_SECRET` must be in
   the build env (it lives in `~/.videorc-release.env`). The secret left source
   when the repo went public; `option_env!` compiles it into `videorc-backend`,
-  and `release:validate:macos` **fails closed** if the built binary lacks a
-  `GOCSPX-` secret. Without it, YouTube connect in the shipped app reports a
-  missing client secret.
+  and `release:validate:macos` **fails closed** if the built binary lacks the
+  exact build-time secret from the release environment. Without it, YouTube
+  connect in the shipped app reports a missing client secret.
 - **⚠️ Bucket-less S3 endpoint** — `VIDEORC_DOWNLOAD_S3_ENDPOINT_URL` must be the
   ACCOUNT host only: `https://<account-id>.r2.cloudflarestorage.com` — **NOT**
   `.../videorc-releases`. The path-style client appends the bucket itself; an

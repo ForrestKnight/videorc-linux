@@ -2,9 +2,12 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import {
+  BUNDLED_YOUTUBE_OAUTH_SECRET_ENV,
   artifactKindFromPath,
   buildMacosReleaseArtifactChecks,
+  bundledYoutubeOAuthSecretCheckTarget,
   captureEntitlementCheckTargets,
+  evaluateBinaryContainsEnvSecretCheck,
   formatArtifactPath,
   formatReleaseArtifactValidationReport,
   REQUIRED_CAPTURE_ENTITLEMENTS,
@@ -104,22 +107,50 @@ describe('capture entitlement gate', () => {
   })
 
   it('fails closed when the release backend lacks the baked-in YouTube OAuth secret', () => {
-    // The secret left source for the public repo (2026-07-06); release builds
-    // must compile it in via VIDEORC_BUNDLED_YOUTUBE_CLIENT_SECRET. The gate
-    // greps the shipped binary for the Google Desktop-client secret prefix.
     const check = buildMacosReleaseArtifactChecks('/release/Videorc.app').find(
       (entry) => entry.id === 'bundled-youtube-oauth-secret'
     )
 
-    assert.ok(check)
-    assert.equal(check.command, 'grep')
-    // -a: BSD grep will not match inside a binary without it.
-    assert.deepEqual(check.args, [
-      '-q',
-      '-a',
-      'GOCSPX-',
-      '/release/Videorc.app/Contents/Resources/videorc-backend'
-    ])
+    assert.deepEqual(check, bundledYoutubeOAuthSecretCheckTarget('/release/Videorc.app'))
+    assert.equal(check.type, 'binary-contains-env-secret')
+    assert.equal(check.envName, BUNDLED_YOUTUBE_OAUTH_SECRET_ENV)
+    assert.equal(check.command, undefined)
+  })
+
+  it('requires the exact release-env YouTube OAuth secret to be embedded', () => {
+    const check = bundledYoutubeOAuthSecretCheckTarget('/release/Videorc.app')
+    const secret = 'fake-rotated-youtube-client-secret'
+
+    assert.deepEqual(
+      evaluateBinaryContainsEnvSecretCheck(check, {
+        env: {},
+        readFile: () => Buffer.from(secret)
+      }),
+      {
+        ok: false,
+        output: `missing required environment variable: ${BUNDLED_YOUTUBE_OAUTH_SECRET_ENV}`
+      }
+    )
+
+    assert.deepEqual(
+      evaluateBinaryContainsEnvSecretCheck(check, {
+        env: { [BUNDLED_YOUTUBE_OAUTH_SECRET_ENV]: secret },
+        readFile: () => Buffer.from('different binary contents')
+      }),
+      {
+        ok: false,
+        output:
+          '/release/Videorc.app/Contents/Resources/videorc-backend does not contain the VIDEORC_BUNDLED_YOUTUBE_CLIENT_SECRET value from the release environment'
+      }
+    )
+
+    assert.deepEqual(
+      evaluateBinaryContainsEnvSecretCheck(check, {
+        env: { [BUNDLED_YOUTUBE_OAUTH_SECRET_ENV]: secret },
+        readFile: () => Buffer.from(`binary prefix ${secret} binary suffix`)
+      }),
+      { ok: true, output: '' }
+    )
   })
 
   it('pins the required entitlements to camera + microphone', () => {

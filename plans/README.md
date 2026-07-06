@@ -35,6 +35,7 @@ row when done.
 | 017 | Add native system audio capture and a mixed audio graph | P1 | L | 006, 007, 014 | TODO |
 | 018 | Add a redacted support bundle and diagnostics export | P1 | M | 007 | DONE (2026-06-13; backend export, Diagnostics action, verifier, docs, and required gates passed) |
 | 019 | Finish Windows v1 capture and package acceptance | P2 | L | 001, 002, 003, 006, 012 | IN PROGRESS (2026-06-13; Windows status and local gate script landed, real Windows package/capture/signing evidence pending) |
+| 020 | Remediate leaked Google OAuth desktop client secret | P0 | M | Google Cloud + release access | IN PROGRESS (2026-07-06; env rotated + validation hardened, rotated release + old-secret disable pending) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
