@@ -1,5 +1,5 @@
 import { GearSix, Pulse, SignIn, SignOut, Sparkle, UserCircle } from '@phosphor-icons/react'
-import type { ReactElement } from 'react'
+import { useEffect, useState, type ReactElement } from 'react'
 
 import { StatusDot, type StatusDotTone } from '@/components/status-dot'
 import {
@@ -43,9 +43,34 @@ export function AccountMenu({
   const signedIn = isSignedIn(account)
   const displayName = accountDisplayName(account)
   const tierLabel = entitlementTierLabel(tier)
+  const [open, setOpen] = useState(false)
+
+  // FX5: workspace navigation arrives via main-process IPC (⌘1–9) or the
+  // custom navigate event — neither is a DOM interaction Radix can see, so
+  // the uncontrolled menu floated over the next tab. Close on any navigation
+  // signal, and on Escape regardless of where focus sits.
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+    const close = (): void => setOpen(false)
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        close()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    window.addEventListener('videorc:navigate-workspace', close)
+    const offShortcut = window.videorc?.onShortcutNavigate?.(close)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true)
+      window.removeEventListener('videorc:navigate-workspace', close)
+      offShortcut?.()
+    }
+  }, [open])
 
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
