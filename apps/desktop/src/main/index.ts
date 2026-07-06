@@ -7256,7 +7256,13 @@ async function importBackgroundImage(): Promise<BackgroundImportResult | null> {
     return null
   }
   const sourcePath = result.filePaths[0]
-  if (!sourcePath || !isSupportedBackgroundFile(sourcePath)) {
+  return sourcePath ? importBackgroundImageFromPath(sourcePath) : null
+}
+
+// Shared by the picker flow above and the OBS import (O3), which arrives with
+// a path from OBS's scene collection instead of a dialog.
+function importBackgroundImageFromPath(sourcePath: string): BackgroundImportResult | null {
+  if (!isSupportedBackgroundFile(sourcePath) || !existsSync(sourcePath)) {
     return null
   }
 
@@ -7413,6 +7419,9 @@ app.whenReady().then(async () => {
   ipcMain.handle('system:check-directory', (_event, path: string) => checkDirectoryFacts(path))
   ipcMain.handle('system:create-directory', (_event, path: string) => createDirectoryAt(path))
   ipcMain.handle('backgrounds:import-image', () => importBackgroundImage())
+  ipcMain.handle('backgrounds:import-image-path', (_event, sourcePath: string) =>
+    typeof sourcePath === 'string' ? importBackgroundImageFromPath(sourcePath) : null
+  )
   ipcMain.handle('backgrounds:bundled-assets', () => bundledBackgroundAssets())
   ipcMain.handle('backgrounds:asset-exists', (_event, assetPath: unknown) =>
     backgroundAssetFileExists(assetPath)

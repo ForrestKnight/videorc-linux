@@ -24,6 +24,8 @@ const api: VideorcApi = {
   getRuntimeInfo: () => ipcRenderer.invoke('app:get-runtime-info'),
   pickScreenImage: () => ipcRenderer.invoke('screens:pick-image'),
   importBackgroundImage: () => ipcRenderer.invoke('backgrounds:import-image'),
+  importBackgroundImagePath: (sourcePath) =>
+    ipcRenderer.invoke('backgrounds:import-image-path', sourcePath),
   backgroundAssetExists: (assetPath) => ipcRenderer.invoke('backgrounds:asset-exists', assetPath),
   cacheChatAvatar: (url) => ipcRenderer.invoke('avatars:cache', url),
   sendCommentHighlight: (message) => ipcRenderer.invoke('comments-window:highlight', message),

@@ -2192,6 +2192,7 @@ export interface VideorcApi {
   // Picks a PNG/JPG/WebP and copies it into app-support storage, returning the
   // managed asset (Assets Tab plan, slice A4).
   importBackgroundImage: () => Promise<BackgroundImportResult | null>
+  importBackgroundImagePath?: (sourcePath: string) => Promise<BackgroundImportResult | null>
   backgroundAssetExists: (assetPath: string) => Promise<boolean>
   /** Fetch-and-cache a chat avatar from an allowlisted platform CDN; returns a
    * local videorc-asset:// URL or null (disallowed host / fetch failure). */
