@@ -96,6 +96,32 @@ describe('reconcileSourceSelection', () => {
     expect(next.windowName).toBeUndefined()
   })
 
+  // FX9 (0.9.8 sweep): a selected window vanishing from the next device
+  // snapshot fell back to the default display SILENTLY by eye. The message
+  // machinery must produce the fallback notice for exactly this path.
+  it('window vanishes → falls back to the default display AND says so', () => {
+    const remembered: SourceSelection = {
+      windowId: 'window:screencapturekit:42',
+      windowName: 'cmux - ~/projects/videorc'
+    }
+    const devices: Device[] = [
+      {
+        id: 'screen:screencapturekit:1',
+        name: 'Display 1',
+        kind: 'screen',
+        status: 'available'
+      }
+    ]
+
+    const next = reconcileSourceSelection(remembered, devices)
+
+    expect(next.screenId).toBe('screen:screencapturekit:1')
+    expect(next.windowId).toBeUndefined()
+    expect(sourceSelectionChangeMessages(remembered, next)).toEqual([
+      'Capture source "cmux - ~/projects/videorc" is unavailable, so Videorc selected "Display 1".'
+    ])
+  })
+
   it('drops even a REMEMBERED loginwindow selection (persisted by older builds)', () => {
     const remembered: SourceSelection = {
       windowId: 'window:screencapturekit:95728',

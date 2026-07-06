@@ -2205,7 +2205,10 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   useEffect(() => {
     const messages = sourceReconciliationMessages.current.splice(0)
     for (const message of new Set(messages)) {
-      toast.warning(message)
+      // FX9: these fire during churny moments (backend restart, window
+      // closed) — the default 4s toast expired unseen by-eye. A source
+      // swap changes what gets recorded; give it time to be read.
+      toast.warning(message, { duration: 10_000 })
     }
   }, [captureConfig.sources])
 
