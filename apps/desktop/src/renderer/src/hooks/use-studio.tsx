@@ -2280,6 +2280,21 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
               onClick: () => openLibraryFromQualityToast(event.sessionId)
             }
           })
+        } else if (event.code === 'mic-silent') {
+          // Plan 021 F3: the user must hear about a silent mic from the app,
+          // not from playing the file back. Warn = mid-session (stopping and
+          // fixing still saves the take); error = finalize verdict.
+          if (event.level === 'error') {
+            toast.error('Recording has no sound', {
+              description: event.message,
+              duration: 15000
+            })
+          } else {
+            toast.warning('Microphone is silent', {
+              description: event.message,
+              duration: 15000
+            })
+          }
         }
       }),
       nextClient.on('session.log', (payload) => {

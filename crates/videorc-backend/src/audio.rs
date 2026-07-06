@@ -94,6 +94,11 @@ pub struct AudioCaptureStats {
     // the Studio mixer's live meter reads this via the diagnostics sampler —
     // no extra device open (post-0.9.4 fix batch F7).
     live_peak_milli: AtomicU64,
+    // Loudest peak seen over the whole recording window (same milli-units).
+    // A TCC-unauthorized process gets SILENT ZEROS from CoreAudio, not an
+    // error — frames keep counting while the track holds nothing. This is the
+    // truthful "did the mic capture any sound at all" signal (plan 021 F3).
+    session_peak_milli: AtomicU64,
 }
 
 impl AudioCaptureStats {
@@ -109,15 +114,22 @@ impl AudioCaptureStats {
         self.live_peak_milli.load(Ordering::Relaxed) as f32 / 1000.0
     }
 
+    pub fn session_peak(&self) -> f32 {
+        self.session_peak_milli.load(Ordering::Relaxed) as f32 / 1000.0
+    }
+
     fn record_live_peak(&self, peak: f32) {
         let clamped = (peak.clamp(0.0, 1.0) * 1000.0) as u64;
         self.live_peak_milli.store(clamped, Ordering::Relaxed);
+        self.session_peak_milli
+            .fetch_max(clamped, Ordering::Relaxed);
     }
 
     fn reset_recording_window(&self) {
         self.captured_frames.store(0, Ordering::Relaxed);
         self.dropped_frames.store(0, Ordering::Relaxed);
         self.fifo_write_errors.store(0, Ordering::Relaxed);
+        self.session_peak_milli.store(0, Ordering::Relaxed);
         self.recording_window_finished
             .store(false, Ordering::Relaxed);
     }
@@ -224,6 +236,10 @@ impl NativeAudioCaptureSession {
 
     pub fn live_peak(&self) -> f32 {
         self.stats.live_peak()
+    }
+
+    pub fn session_peak(&self) -> f32 {
+        self.stats.session_peak()
     }
 
     pub fn finish_recording_window(&self) {
@@ -1017,6 +1033,26 @@ mod tests {
         for pair in frames.windows(2) {
             assert!(pair[1].timestamp_micros > pair[0].timestamp_micros);
         }
+    }
+
+    // Plan 021 F3: session_peak is the max over the recording window (the
+    // live meter only keeps the LAST frame's peak, which reads 0 the moment
+    // the speaker pauses), and it resets with the window so a silent second
+    // take is not masked by a loud first one.
+    #[test]
+    fn session_peak_holds_the_window_maximum_and_resets() {
+        let stats = AudioCaptureStats::default();
+        assert_eq!(stats.session_peak(), 0.0);
+
+        stats.record_live_peak(0.25);
+        stats.record_live_peak(0.9);
+        stats.record_live_peak(0.1);
+        // Live meter follows the last frame; the session keeps the loudest.
+        assert!((stats.live_peak() - 0.1).abs() < 1e-3);
+        assert!((stats.session_peak() - 0.9).abs() < 1e-3);
+
+        stats.reset_recording_window();
+        assert_eq!(stats.session_peak(), 0.0);
     }
 
     #[test]

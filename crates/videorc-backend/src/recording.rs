@@ -85,6 +85,31 @@ use crate::streaming::{
 const PREVIEW_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(5);
 /// How often the live mic-stats sampler reads CoreAudio counters during a recording.
 const NATIVE_AUDIO_SAMPLE_INTERVAL: Duration = Duration::from_millis(1000);
+/// Silent-mic health check (plan 021 F3): how deep into a recording the mic may
+/// stay silent before the session gets a truthful warning, and the session-peak
+/// floor below which a track counts as silence (TCC-unauthorized processes get
+/// silent zeros from CoreAudio — frames advance, the track holds nothing).
+const MIC_SILENT_CHECK_AFTER: Duration = Duration::from_secs(10);
+const MIC_SILENT_PEAK_EPSILON: f32 = 0.001;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SilentMicKind {
+    /// The device never delivered a frame (missing/wedged input).
+    NoFrames,
+    /// Frames arrived but every sample was zero — CoreAudio's silence for a
+    /// TCC-unauthorized process, or a hard-muted device.
+    AllSilence,
+}
+
+fn silent_mic_verdict(captured_frames: u64, session_peak: f32) -> Option<SilentMicKind> {
+    if captured_frames == 0 {
+        return Some(SilentMicKind::NoFrames);
+    }
+    if session_peak < MIC_SILENT_PEAK_EPSILON {
+        return Some(SilentMicKind::AllSilence);
+    }
+    None
+}
 const RECORDING_PREVIEW_WIDTH: u32 = 640;
 const RECORDING_PREVIEW_HEIGHT: u32 = 360;
 const RECORDING_PREVIEW_FPS: u32 = 5;
@@ -2325,6 +2350,7 @@ async fn sample_native_audio_during_recording(state: AppState, session_id: Strin
     let started_at = std::time::Instant::now();
     let mut ticker = tokio::time::interval(NATIVE_AUDIO_SAMPLE_INTERVAL);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut silent_mic_reported = false;
     loop {
         ticker.tick().await;
         let counters = {
@@ -2336,15 +2362,46 @@ async fn sample_native_audio_during_recording(state: AppState, session_id: Strin
                             audio.captured_frames(),
                             audio.dropped_frames(),
                             audio.live_peak(),
+                            audio.session_peak(),
+                            audio.device_name.clone(),
                         )
                     })
                 }
                 _ => return,
             }
         };
-        let Some((captured_frames, dropped_frames, live_peak)) = counters else {
+        let Some((captured_frames, dropped_frames, live_peak, session_peak, device_name)) =
+            counters
+        else {
             return;
         };
+
+        // Early truthful warning (plan 021 F3): a mic that has produced nothing
+        // this deep into the recording will not fix itself — tell the user NOW,
+        // while stopping and fixing still saves the take. A TCC-unauthorized
+        // process receives silent zeros (frames count, peak stays 0), so both
+        // "no frames" and "all-silence" trip the check. Fires at most once.
+        if !silent_mic_reported
+            && started_at.elapsed() >= MIC_SILENT_CHECK_AFTER
+            && let Some(kind) = silent_mic_verdict(captured_frames, session_peak)
+        {
+            silent_mic_reported = true;
+            let message = match kind {
+                SilentMicKind::NoFrames => format!(
+                    "Microphone \"{device_name}\" has not produced any audio since this session started — check the input device in Settings."
+                ),
+                SilentMicKind::AllSilence => format!(
+                    "Microphone \"{device_name}\" is capturing only silence — if you just granted microphone access, quit and reopen Videorc."
+                ),
+            };
+            let _ = emit_health_event(
+                &state,
+                Some(&session_id),
+                HealthLevel::Warn,
+                "mic-silent",
+                &message,
+            );
+        }
         let coverage = audio_capture_coverage(
             captured_frames,
             started_at.elapsed().as_secs_f64(),
@@ -2400,6 +2457,7 @@ async fn monitor_session(
                     device_name: audio.device_name.clone(),
                     captured_frames: audio.captured_frames(),
                     dropped_frames: audio.dropped_frames(),
+                    session_peak: audio.session_peak(),
                 }
             });
             MonitoredRecording {
@@ -2460,6 +2518,30 @@ async fn monitor_session(
                 Some(&session_id),
                 HealthLevel::Warn,
                 "mic-dropped-frames",
+                &message,
+            );
+        }
+        // Silent-mic verdict at finalize (plan 021 F3): the user must learn the
+        // file has no sound from the app, not from playing it back.
+        if let Some(kind) = silent_mic_verdict(
+            native_audio_stats.captured_frames,
+            native_audio_stats.session_peak,
+        ) {
+            let message = match kind {
+                SilentMicKind::NoFrames => format!(
+                    "Microphone \"{}\" captured no audio — this recording has a silent audio track. Check the input device in Settings.",
+                    native_audio_stats.device_name
+                ),
+                SilentMicKind::AllSilence => format!(
+                    "Microphone \"{}\" captured only silence — this recording has a silent audio track. If you just granted microphone access, quit and reopen Videorc.",
+                    native_audio_stats.device_name
+                ),
+            };
+            let _ = emit_health_event(
+                &state,
+                Some(&session_id),
+                HealthLevel::Error,
+                "mic-silent",
                 &message,
             );
         }
@@ -3221,6 +3303,7 @@ struct NativeAudioStats {
     device_name: String,
     captured_frames: u64,
     dropped_frames: u64,
+    session_peak: f32,
 }
 
 #[derive(Debug)]
@@ -6973,6 +7056,28 @@ mod tests {
         StreamTargetState, default_stream_targets,
     };
     use tokio::sync::broadcast;
+
+    // Plan 021 F3 (external tester: "gave it mic permissions but it's not
+    // recording audio"): the silent-mic verdict must catch BOTH failure shapes —
+    // a device that never delivers frames, and CoreAudio's silent zeros for a
+    // TCC-unauthorized process (frames advance, every sample is 0).
+    #[test]
+    fn silent_mic_verdict_catches_no_frames_and_all_silence() {
+        assert_eq!(silent_mic_verdict(0, 0.0), Some(SilentMicKind::NoFrames));
+        // No frames wins even if a stale peak value lingered.
+        assert_eq!(silent_mic_verdict(0, 0.8), Some(SilentMicKind::NoFrames));
+        assert_eq!(
+            silent_mic_verdict(48_000, 0.0),
+            Some(SilentMicKind::AllSilence)
+        );
+        assert_eq!(
+            silent_mic_verdict(48_000, MIC_SILENT_PEAK_EPSILON / 2.0),
+            Some(SilentMicKind::AllSilence)
+        );
+        // Real audio, however quiet, is not a silent track.
+        assert_eq!(silent_mic_verdict(48_000, 0.002), None);
+        assert_eq!(silent_mic_verdict(48_000, 0.9), None);
+    }
 
     #[test]
     fn session_title_renders_in_the_target_zone_not_utc() {
