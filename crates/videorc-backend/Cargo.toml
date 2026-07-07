@@ -30,6 +30,11 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1.19", features = ["v4"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# PipeWire microphone capture (Linux port phase 1); the feature gate pins the
+# libpipewire 0.3.65+ API level (TARGET_OBJECT and friends).
+pipewire = { version = "0.10", features = ["v0_3_65"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6.1"
 coreaudio = { package = "coreaudio-rs", version = "0.14.2" }

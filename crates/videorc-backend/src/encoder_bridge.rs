@@ -2435,7 +2435,9 @@ mod tests {
     }
 
     use super::*;
-    use crate::compositor::{CompositorFrameExportHandle, CompositorPixelFormat};
+    #[cfg(target_os = "macos")]
+    use crate::compositor::CompositorFrameExportHandle;
+    use crate::compositor::CompositorPixelFormat;
     #[cfg(target_os = "macos")]
     use crate::metal_compositor::{GpuSource, GpuSourceKind, MetalSceneCompositor};
 

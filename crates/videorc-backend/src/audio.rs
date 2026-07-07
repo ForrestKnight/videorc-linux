@@ -9,7 +9,11 @@ use std::sync::{Arc, OnceLock, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
+// The remaining top-level `bail!` callers are the macOS listing and the
+// other-platform stubs; the Linux implementation imports its own.
+#[cfg(not(target_os = "linux"))]
+use anyhow::bail;
 
 use crate::protocol::{AudioMeterResult, AudioMeterStatus, Device, DeviceKind, DeviceStatus};
 
@@ -167,6 +171,8 @@ pub struct NativeAudioSource {
     stop_on_drop: bool,
     #[cfg(target_os = "macos")]
     audio_unit: Option<coreaudio::audio_unit::AudioUnit>,
+    #[cfg(target_os = "linux")]
+    pipewire_capture: Option<linux::PipewireCaptureHandle>,
 }
 
 impl NativeAudioSource {
@@ -200,6 +206,10 @@ impl Drop for NativeAudioSource {
         if let Some(audio_unit) = self.audio_unit.as_mut() {
             let _ = audio_unit.stop();
         }
+        #[cfg(target_os = "linux")]
+        if let Some(capture) = self.pipewire_capture.as_mut() {
+            capture.stop();
+        }
     }
 }
 
@@ -212,6 +222,8 @@ pub struct NativeAudioCaptureSession {
     writer: Option<thread::JoinHandle<()>>,
     #[cfg(target_os = "macos")]
     audio_unit: Option<coreaudio::audio_unit::AudioUnit>,
+    #[cfg(target_os = "linux")]
+    pipewire_capture: Option<linux::PipewireCaptureHandle>,
 }
 
 impl std::fmt::Debug for NativeAudioCaptureSession {
@@ -259,12 +271,41 @@ impl Drop for NativeAudioCaptureSession {
         if let Some(audio_unit) = self.audio_unit.as_mut() {
             let _ = audio_unit.stop();
         }
+        #[cfg(target_os = "linux")]
+        if let Some(capture) = self.pipewire_capture.as_mut() {
+            capture.stop();
+        }
         let _ = std::fs::remove_file(&self.fifo_path);
     }
 }
 
 pub fn parse_coreaudio_microphone_id(id: &str) -> Option<u32> {
     id.strip_prefix("microphone:coreaudio:")?.parse().ok()
+}
+
+#[cfg(target_os = "linux")]
+pub fn parse_pipewire_microphone_id(id: &str) -> Option<u32> {
+    id.strip_prefix("microphone:pipewire:")?.parse().ok()
+}
+
+/// Parse the current platform's native microphone id (CoreAudio on macOS,
+/// PipeWire on Linux) into the shared u32 device id. Platforms without a
+/// native capture path never match, so their sessions fall back exactly as
+/// before.
+pub fn parse_native_microphone_id(id: &str) -> Option<u32> {
+    #[cfg(target_os = "macos")]
+    {
+        parse_coreaudio_microphone_id(id)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        parse_pipewire_microphone_id(id)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        let _ = id;
+        None
+    }
 }
 
 pub fn native_audio_fifo_path(session_id: &str) -> PathBuf {
@@ -452,6 +493,8 @@ pub fn attach_fifo_writer(
     let stop = source.stop.clone();
     #[cfg(target_os = "macos")]
     let audio_unit = source.audio_unit.take();
+    #[cfg(target_os = "linux")]
+    let pipewire_capture = source.pipewire_capture.take();
 
     let writer_stats = stats.clone();
     let writer_stop = stop.clone();
@@ -548,6 +591,8 @@ pub fn attach_fifo_writer(
         writer: Some(writer),
         #[cfg(target_os = "macos")]
         audio_unit,
+        #[cfg(target_os = "linux")]
+        pipewire_capture,
     }
 }
 
@@ -863,12 +908,20 @@ fn start_platform_audio_source(
     })
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
+fn start_platform_audio_source(
+    device_id: u32,
+    settings: AudioProcessingSettings,
+) -> Result<NativeAudioSource> {
+    linux::start_platform_audio_source(device_id, settings)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn start_platform_audio_source(
     _device_id: u32,
     _settings: AudioProcessingSettings,
 ) -> Result<NativeAudioSource> {
-    bail!("Native microphone capture is only implemented on macOS");
+    bail!("Native microphone capture is only implemented on macOS and Linux");
 }
 
 #[cfg(target_os = "macos")]
@@ -922,9 +975,523 @@ fn list_platform_microphones() -> Result<Vec<Device>> {
     Ok(devices)
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn list_platform_microphones() -> Result<Vec<Device>> {
-    bail!("Native microphone discovery is only implemented on macOS")
+    linux::list_platform_microphones()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn list_platform_microphones() -> Result<Vec<Device>> {
+    bail!("Native microphone discovery is only implemented on macOS and Linux")
+}
+
+/// PipeWire microphone capture (Linux port phase 1). The `!Send` main loop,
+/// stream, and proxies all live on one dedicated thread per capture; frames
+/// cross into the shared pipeline through the same bounded ring the CoreAudio
+/// callback feeds on macOS, so everything downstream (epoch trim, FIFO
+/// writer, meters, captions) is platform-blind.
+#[cfg(target_os = "linux")]
+mod linux {
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, mpsc};
+    use std::thread;
+    use std::time::Instant;
+
+    use anyhow::{Context, Result, anyhow, bail};
+    use pipewire as pw;
+    use pw::{properties::properties, spa};
+
+    use super::{
+        AUDIO_RING_CAPACITY_PACKETS, AudioCaptureStats, AudioFrame, AudioProcessingSettings,
+        NATIVE_AUDIO_CHANNELS, NATIVE_AUDIO_SAMPLE_RATE, NativeAudioSource,
+        process_interleaved_f32, timestamp_for_frame,
+    };
+    use crate::protocol::{Device, DeviceKind, DeviceStatus};
+
+    fn ensure_pipewire_init() {
+        static INIT: std::sync::Once = std::sync::Once::new();
+        INIT.call_once(pw::init);
+    }
+
+    #[derive(Debug, Clone)]
+    struct SourceNodeInfo {
+        node_id: u32,
+        label: String,
+        node_name: String,
+    }
+
+    /// Keeps the capture thread stoppable from `Drop`: the quit sender wakes
+    /// the thread's main loop (the pw channel is the only sanctioned way to
+    /// poke a loop from another thread), then the join bounds teardown.
+    pub(super) struct PipewireCaptureHandle {
+        quit: Option<pw::channel::Sender<()>>,
+        thread: Option<thread::JoinHandle<()>>,
+    }
+
+    impl PipewireCaptureHandle {
+        pub(super) fn stop(&mut self) {
+            if let Some(quit) = self.quit.take() {
+                let _ = quit.send(());
+            }
+            if let Some(thread) = self.thread.take() {
+                let _ = thread.join();
+            }
+        }
+    }
+
+    impl Drop for PipewireCaptureHandle {
+        fn drop(&mut self) {
+            self.stop();
+        }
+    }
+
+    pub(super) fn list_platform_microphones() -> Result<Vec<Device>> {
+        ensure_pipewire_init();
+        let mainloop = pw::main_loop::MainLoopRc::new(None)
+            .context("Could not create a PipeWire main loop")?;
+        let context = pw::context::ContextRc::new(&mainloop, None)
+            .context("Could not create a PipeWire context")?;
+        let core = context.connect_rc(None).context(
+            "Could not connect to PipeWire. Is the PipeWire daemon running for this session?",
+        )?;
+        let (sources, default_node_name) = collect_audio_sources(&mainloop, &core)?;
+        if sources.is_empty() {
+            bail!("PipeWire did not report any audio input devices");
+        }
+        Ok(microphone_devices(sources, default_node_name.as_deref()))
+    }
+
+    /// One registry roundtrip collecting every `Audio/Source` node plus the
+    /// session manager's default-source node name from the "default"
+    /// metadata object. Two syncs: the first flushes registry globals (which
+    /// binds the metadata proxy), the second flushes the bound proxy's
+    /// property events.
+    fn collect_audio_sources(
+        mainloop: &pw::main_loop::MainLoopRc,
+        core: &pw::core::CoreRc,
+    ) -> Result<(Vec<SourceNodeInfo>, Option<String>)> {
+        let registry = core
+            .get_registry_rc()
+            .context("Could not get the PipeWire registry")?;
+
+        let sources: Rc<RefCell<Vec<SourceNodeInfo>>> = Rc::default();
+        let default_source: Rc<RefCell<Option<String>>> = Rc::default();
+        let metadata_holds: Rc<
+            RefCell<Vec<(pw::metadata::Metadata, pw::metadata::MetadataListener)>>,
+        > = Rc::default();
+
+        let sources_clone = sources.clone();
+        let default_clone = default_source.clone();
+        let holds_clone = metadata_holds.clone();
+        let registry_clone = registry.clone();
+        let _registry_listener = registry
+            .add_listener_local()
+            .global(move |global| {
+                let Some(props) = global.props else { return };
+                match global.type_ {
+                    pw::types::ObjectType::Node => {
+                        let media_class = props.get("media.class").unwrap_or("");
+                        // Physical + virtual microphones. Sink monitors are a
+                        // separate media class and a separate (desktop-audio)
+                        // slice.
+                        if media_class == "Audio/Source" || media_class == "Audio/Source/Virtual" {
+                            sources_clone.borrow_mut().push(SourceNodeInfo {
+                                node_id: global.id,
+                                label: props
+                                    .get("node.description")
+                                    .or_else(|| props.get("node.nick"))
+                                    .or_else(|| props.get("node.name"))
+                                    .unwrap_or("PipeWire input")
+                                    .to_string(),
+                                node_name: props.get("node.name").unwrap_or("").to_string(),
+                            });
+                        }
+                    }
+                    pw::types::ObjectType::Metadata => {
+                        if props.get("metadata.name") != Some("default") {
+                            return;
+                        }
+                        let Ok(metadata) = registry_clone.bind::<pw::metadata::Metadata, _>(global)
+                        else {
+                            return;
+                        };
+                        let default_clone = default_clone.clone();
+                        let listener = metadata
+                            .add_listener_local()
+                            .property(move |_subject, key, _type, value| {
+                                if key == Some("default.audio.source")
+                                    && let Some(name) = value.and_then(extract_default_node_name)
+                                {
+                                    *default_clone.borrow_mut() = Some(name);
+                                }
+                                0
+                            })
+                            .register();
+                        holds_clone.borrow_mut().push((metadata, listener));
+                    }
+                    _ => {}
+                }
+            })
+            .register();
+
+        let pending = Rc::new(Cell::new(
+            core.sync(0).context("Could not sync with PipeWire")?,
+        ));
+        let rounds = Rc::new(Cell::new(0_u8));
+        let loop_clone = mainloop.clone();
+        let core_clone = core.clone();
+        let pending_clone = pending.clone();
+        let _core_listener = core
+            .add_listener_local()
+            .done(move |id, seq| {
+                if id != pw::core::PW_ID_CORE || seq != pending_clone.get() {
+                    return;
+                }
+                if rounds.get() == 0 {
+                    rounds.set(1);
+                    match core_clone.sync(0) {
+                        Ok(seq) => pending_clone.set(seq),
+                        Err(_) => loop_clone.quit(),
+                    }
+                } else {
+                    loop_clone.quit();
+                }
+            })
+            .register();
+        mainloop.run();
+
+        let collected = sources.borrow().clone();
+        let default_node_name = default_source.borrow().clone();
+        Ok((collected, default_node_name))
+    }
+
+    /// The "default" metadata value is JSON shaped like {"name":"alsa_input…"}.
+    fn extract_default_node_name(value: &str) -> Option<String> {
+        serde_json::from_str::<serde_json::Value>(value)
+            .ok()?
+            .get("name")?
+            .as_str()
+            .map(str::to_string)
+    }
+
+    fn microphone_devices(
+        sources: Vec<SourceNodeInfo>,
+        default_node_name: Option<&str>,
+    ) -> Vec<Device> {
+        let mut devices: Vec<Device> = sources
+            .into_iter()
+            .map(|source| {
+                let is_default = default_node_name == Some(source.node_name.as_str());
+                Device {
+                    id: format!("microphone:pipewire:{}", source.node_id),
+                    name: source.label,
+                    kind: DeviceKind::Microphone,
+                    status: DeviceStatus::Available,
+                    detail: Some(if is_default {
+                        "PipeWire input · default".to_string()
+                    } else {
+                        "PipeWire input".to_string()
+                    }),
+                    width: None,
+                    height: None,
+                }
+            })
+            .collect();
+
+        devices.sort_by_key(|device| {
+            if device
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("default"))
+            {
+                (0, device.name.clone())
+            } else {
+                (1, device.name.clone())
+            }
+        });
+        devices
+    }
+
+    pub(super) fn start_platform_audio_source(
+        device_id: u32,
+        settings: AudioProcessingSettings,
+    ) -> Result<NativeAudioSource> {
+        ensure_pipewire_init();
+        let (sender, receiver) = mpsc::sync_channel(AUDIO_RING_CAPACITY_PACKETS);
+        let stats = Arc::new(AudioCaptureStats::default());
+        let stop = Arc::new(AtomicBool::new(false));
+        let (quit_tx, quit_rx) = pw::channel::channel::<()>();
+        let (setup_tx, setup_rx) = mpsc::channel::<Result<String>>();
+
+        let thread_stats = stats.clone();
+        let thread_stop = stop.clone();
+        let thread = thread::Builder::new()
+            .name(format!("pw-mic-{device_id}"))
+            .spawn(move || {
+                if let Err(error) = run_capture_loop(
+                    device_id,
+                    settings,
+                    sender,
+                    thread_stats,
+                    thread_stop,
+                    quit_rx,
+                    &setup_tx,
+                ) {
+                    let _ = setup_tx.send(Err(error));
+                }
+            })
+            .context("Could not spawn the PipeWire microphone capture thread")?;
+
+        let device_name = match setup_rx.recv() {
+            Ok(Ok(name)) => name,
+            Ok(Err(error)) => {
+                let _ = thread.join();
+                return Err(error);
+            }
+            Err(_) => {
+                let _ = thread.join();
+                bail!("The PipeWire capture thread exited before the stream was ready");
+            }
+        };
+
+        Ok(NativeAudioSource {
+            device_id,
+            device_name,
+            receiver: Some(receiver),
+            stats,
+            stop,
+            stop_on_drop: true,
+            pipewire_capture: Some(PipewireCaptureHandle {
+                quit: Some(quit_tx),
+                thread: Some(thread),
+            }),
+        })
+    }
+
+    /// Everything `!Send` lives here, on the capture thread: verify the node
+    /// still exists (and get its name — ids are recycled, names are how
+    /// `target.object` links reliably), connect the stream, report readiness,
+    /// then park in the main loop until the quit channel fires.
+    fn run_capture_loop(
+        node_id: u32,
+        settings: AudioProcessingSettings,
+        sender: mpsc::SyncSender<AudioFrame>,
+        stats: Arc<AudioCaptureStats>,
+        stop: Arc<AtomicBool>,
+        quit_rx: pw::channel::Receiver<()>,
+        setup_tx: &mpsc::Sender<Result<String>>,
+    ) -> Result<()> {
+        let mainloop = pw::main_loop::MainLoopRc::new(None)
+            .context("Could not create a PipeWire main loop")?;
+        let context = pw::context::ContextRc::new(&mainloop, None)
+            .context("Could not create a PipeWire context")?;
+        let core = context.connect_rc(None).context(
+            "Could not connect to PipeWire. Is the PipeWire daemon running for this session?",
+        )?;
+
+        let (sources, _default) = collect_audio_sources(&mainloop, &core)?;
+        let Some(node) = sources.into_iter().find(|source| source.node_id == node_id) else {
+            bail!(
+                "Microphone (PipeWire node {node_id}) was not found. It may have been \
+                 unplugged — refresh the device list and pick another input."
+            );
+        };
+
+        let props = properties! {
+            *pw::keys::MEDIA_TYPE => "Audio",
+            *pw::keys::MEDIA_CATEGORY => "Capture",
+            *pw::keys::MEDIA_ROLE => "Communication",
+            *pw::keys::NODE_NAME => "videorc-microphone",
+            *pw::keys::TARGET_OBJECT => node.node_name.clone(),
+        };
+        let stream = pw::stream::StreamBox::new(&core, "videorc-microphone", props)
+            .context("Could not create a PipeWire capture stream")?;
+
+        // Channel count follows the negotiated format; frame math must never
+        // assume the offer was honored verbatim.
+        let negotiated_channels = Rc::new(Cell::new(u32::from(NATIVE_AUDIO_CHANNELS)));
+        let mut frame_cursor = 0_u64;
+
+        let channels_format = negotiated_channels.clone();
+        let channels_process = negotiated_channels;
+        let process_stop = stop;
+        let _stream_listener = stream
+            .add_local_listener_with_user_data(())
+            .param_changed(move |_, (), id, param| {
+                let Some(param) = param else { return };
+                if id != spa::param::ParamType::Format.as_raw() {
+                    return;
+                }
+                let Ok((media_type, media_subtype)) = spa::param::format_utils::parse_format(param)
+                else {
+                    return;
+                };
+                if media_type != spa::param::format::MediaType::Audio
+                    || media_subtype != spa::param::format::MediaSubtype::Raw
+                {
+                    return;
+                }
+                let mut info = spa::param::audio::AudioInfoRaw::default();
+                if info.parse(param).is_ok() && info.channels() > 0 {
+                    channels_format.set(info.channels());
+                }
+            })
+            .state_changed(|_, (), _old, new| {
+                if let pw::stream::StreamState::Error(error) = new {
+                    tracing::warn!("PipeWire microphone stream error: {error}");
+                }
+            })
+            .process(move |stream, ()| {
+                if process_stop.load(Ordering::Relaxed) {
+                    return;
+                }
+                let Some(mut buffer) = stream.dequeue_buffer() else {
+                    return;
+                };
+                let datas = buffer.datas_mut();
+                let Some(data) = datas.first_mut() else {
+                    return;
+                };
+                let offset = data.chunk().offset() as usize;
+                let size = data.chunk().size() as usize;
+                let Some(bytes) = data.data() else { return };
+                let end = offset.saturating_add(size).min(bytes.len());
+                if end <= offset {
+                    return;
+                }
+
+                let input: Vec<f32> = bytes[offset..end]
+                    .chunks_exact(std::mem::size_of::<f32>())
+                    .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                    .collect();
+                let channels = channels_process.get().max(1) as usize;
+                let samples = process_interleaved_f32(&input, channels, settings);
+                let frame_count = samples.len() / usize::from(NATIVE_AUDIO_CHANNELS);
+                if frame_count == 0 {
+                    return;
+                }
+
+                let frame = AudioFrame {
+                    timestamp_micros: timestamp_for_frame(frame_cursor),
+                    captured_at: Instant::now(),
+                    sample_rate: NATIVE_AUDIO_SAMPLE_RATE,
+                    channels: NATIVE_AUDIO_CHANNELS,
+                    samples,
+                };
+                frame_cursor = frame_cursor.saturating_add(frame_count as u64);
+                stats.record_captured_frames(frame_count as u64);
+
+                match sender.try_send(frame) {
+                    Ok(()) => {}
+                    Err(mpsc::TrySendError::Full(frame)) => {
+                        stats.record_dropped_frames(frame.frame_count() as u64);
+                    }
+                    Err(mpsc::TrySendError::Disconnected(_)) => {}
+                }
+            })
+            .register()
+            .context("Could not register the PipeWire stream listener")?;
+
+        let format_pod = audio_format_pod()?;
+        let mut params = [spa::pod::Pod::from_bytes(&format_pod)
+            .ok_or_else(|| anyhow!("Could not build the PipeWire audio format pod"))?];
+        stream
+            .connect(
+                spa::utils::Direction::Input,
+                None,
+                pw::stream::StreamFlags::AUTOCONNECT
+                    | pw::stream::StreamFlags::MAP_BUFFERS
+                    | pw::stream::StreamFlags::RT_PROCESS,
+                &mut params,
+            )
+            .with_context(|| {
+                format!(
+                    "Could not connect a PipeWire capture stream to {}",
+                    node.label
+                )
+            })?;
+
+        let loop_clone = mainloop.clone();
+        let _quit_guard = quit_rx.attach(mainloop.loop_(), move |_| loop_clone.quit());
+
+        let _ = setup_tx.send(Ok(node.label));
+        mainloop.run();
+        Ok(())
+    }
+
+    /// Offer exactly one format — f32 interleaved at the pipeline's fixed
+    /// rate/channels — so the graph converts to us and the FIFO contract
+    /// downstream (`write_frame_f32le`) holds without app-side resampling.
+    fn audio_format_pod() -> Result<Vec<u8>> {
+        let mut audio_info = spa::param::audio::AudioInfoRaw::new();
+        audio_info.set_format(spa::param::audio::AudioFormat::F32LE);
+        audio_info.set_rate(NATIVE_AUDIO_SAMPLE_RATE);
+        audio_info.set_channels(u32::from(NATIVE_AUDIO_CHANNELS));
+        let object = spa::pod::Object {
+            type_: spa::utils::SpaTypes::ObjectParamFormat.as_raw(),
+            id: spa::param::ParamType::EnumFormat.as_raw(),
+            properties: audio_info.into(),
+        };
+        let (cursor, _) = spa::pod::serialize::PodSerializer::serialize(
+            std::io::Cursor::new(Vec::new()),
+            &spa::pod::Value::Object(object),
+        )
+        .map_err(|error| anyhow!("Could not serialize the PipeWire format request: {error:?}"))?;
+        Ok(cursor.into_inner())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn node(node_id: u32, label: &str, node_name: &str) -> SourceNodeInfo {
+            SourceNodeInfo {
+                node_id,
+                label: label.to_string(),
+                node_name: node_name.to_string(),
+            }
+        }
+
+        #[test]
+        fn extracts_default_node_name_from_metadata_json() {
+            assert_eq!(
+                extract_default_node_name(r#"{"name":"alsa_input.usb-mic"}"#),
+                Some("alsa_input.usb-mic".to_string())
+            );
+            assert_eq!(extract_default_node_name(r#"{"other":"x"}"#), None);
+            assert_eq!(extract_default_node_name("not json"), None);
+        }
+
+        #[test]
+        fn microphone_devices_sort_default_first_and_carry_pipewire_ids() {
+            let devices = microphone_devices(
+                vec![
+                    node(70, "Cam Link 4K", "alsa_input.camlink"),
+                    node(66, "Scarlett Solo Mic", "alsa_input.scarlett"),
+                ],
+                Some("alsa_input.scarlett"),
+            );
+
+            assert_eq!(devices[0].id, "microphone:pipewire:66");
+            assert_eq!(
+                devices[0].detail.as_deref(),
+                Some("PipeWire input · default")
+            );
+            assert_eq!(devices[1].id, "microphone:pipewire:70");
+            assert_eq!(devices[1].detail.as_deref(), Some("PipeWire input"));
+        }
+
+        #[test]
+        fn unknown_default_marks_nothing() {
+            let devices = microphone_devices(
+                vec![node(66, "Scarlett Solo Mic", "alsa_input.scarlett")],
+                None,
+            );
+            assert_eq!(devices[0].detail.as_deref(), Some("PipeWire input"));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1039,6 +1606,8 @@ mod tests {
             stop_on_drop: true,
             #[cfg(target_os = "macos")]
             audio_unit: None,
+            #[cfg(target_os = "linux")]
+            pipewire_capture: None,
         };
 
         let result = sample_meter_from_source(source, Duration::from_millis(1));

@@ -19,7 +19,7 @@ use uuid::Uuid;
 use crate::audio::{
     AudioCaptureStats, AudioProcessingSettings, NATIVE_AUDIO_CHANNELS, NATIVE_AUDIO_SAMPLE_RATE,
     NativeAudioCaptureSession, NativeAudioSource, attach_fifo_writer, audio_capture_coverage,
-    create_native_audio_fifo, native_audio_fifo_path, parse_coreaudio_microphone_id,
+    create_native_audio_fifo, native_audio_fifo_path, parse_native_microphone_id,
     start_native_audio_source,
 };
 use crate::camera_capture::{native_camera_name_for_id, parse_native_camera_id};
@@ -3421,7 +3421,7 @@ struct PreparedNativeAudioSource {
 
 async fn resolve_capture_inputs(ffmpeg_path: &str, params: &StartSessionParams) -> CaptureInputs {
     let microphone = params.sources.microphone_id.as_deref().and_then(|id| {
-        parse_coreaudio_microphone_id(id)
+        parse_native_microphone_id(id)
             .map(|device_id| MicrophoneInput::CoreAudio {
                 device_id,
                 fifo_path: None,
@@ -7188,6 +7188,7 @@ pub type LivePreviewSlot = Arc<Mutex<LivePreviewState>>;
 mod tests {
     use super::*;
     use crate::capture_input::AVFOUNDATION_VIDEO_PIXEL_FORMAT;
+    #[cfg(target_os = "macos")]
     use crate::protocol::EntitlementSource;
     use crate::protocol::PreviewSurfaceState;
     use crate::protocol::{

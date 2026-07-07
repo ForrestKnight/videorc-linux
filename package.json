@@ -77,6 +77,7 @@
     "smoke:obs-import": "node scripts/smoke-obs-import.mjs",
     "smoke:process-lifecycle": "node scripts/smoke-process-lifecycle.mjs",
     "smoke:process-memory": "node scripts/smoke-process-memory.mjs",
+    "smoke:linux-mic": "node scripts/smoke-linux-mic.mjs",
     "smoke:account-auth": "node scripts/smoke-account-auth.mjs",
     "smoke:sources": "node scripts/smoke-source-reconciliation.mjs",
     "smoke:session-ops": "node scripts/smoke-session-ops.mjs",
