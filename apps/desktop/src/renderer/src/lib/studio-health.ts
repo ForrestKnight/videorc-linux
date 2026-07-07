@@ -40,11 +40,27 @@ const PREVIEW_PRESENT_BUDGET_P99_MS = 150
  * F1) owns truthful preview-path health with self-healing; the Studio badge
  * only reports states a user can act on.
  */
-export function studioHealth(stats: StudioHealthInput, active: boolean): StudioHealth {
-  if (
-    stats.compositorBackend === 'cpu-fallback' ||
-    (active && stats.compositorCpuFallbackFrames > 0)
-  ) {
+export function studioHealth(
+  stats: StudioHealthInput,
+  active: boolean,
+  softwarePreview = false
+): StudioHealth {
+  // On a software-preview platform (Linux etc.) there is no Metal path, so the
+  // CPU compositor is the NATIVE compositor — and it is the very same one that
+  // records. Preview and recording cannot diverge, so CPU is not "degraded"
+  // and there is nothing to warn about. (On macOS, CPU means the Metal program
+  // failed and the Metal preview may differ from the CPU recording — the real
+  // degraded state below.)
+  if (!softwarePreview && stats.compositorBackend === 'cpu-fallback') {
+    return {
+      tone: 'error',
+      value: 'Degraded',
+      detail: stats.compositorFallbackReason
+        ? `Preview may not match recording — ${stats.compositorFallbackReason}`
+        : 'Preview may not match recording — compositor is on CPU fallback'
+    }
+  }
+  if (!softwarePreview && active && stats.compositorCpuFallbackFrames > 0) {
     return {
       tone: 'error',
       value: 'Degraded',
@@ -56,11 +72,14 @@ export function studioHealth(stats: StudioHealthInput, active: boolean): StudioH
 
   // A fallback transport is the dominant, stable state, so surface it before borderline latency.
   // Otherwise the badge flaps between "Fallback" and "Lagging" while the preview sits on the
-  // polling path and its present latency oscillates around the budget.
+  // polling path and its present latency oscillates around the budget. On a software-preview
+  // platform the JPEG stream is the NATIVE preview, not a fallback from a native surface, so
+  // it must not be flagged.
   if (
-    stats.previewTransport === 'latest-jpeg-polling' ||
-    stats.previewTransport === 'mjpeg-stream' ||
-    stats.previewTransport === 'electron-proof-surface'
+    !softwarePreview &&
+    (stats.previewTransport === 'latest-jpeg-polling' ||
+      stats.previewTransport === 'mjpeg-stream' ||
+      stats.previewTransport === 'electron-proof-surface')
   ) {
     return {
       tone: 'warn',
