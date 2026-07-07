@@ -8,6 +8,7 @@ use chrono::Utc;
 use image::ImageEncoder;
 use image::codecs::png::PngEncoder;
 use image::imageops::FilterType;
+use rayon::prelude::*;
 use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 use uuid::Uuid;
@@ -15,6 +16,7 @@ use uuid::Uuid;
 use crate::camera_capture::{
     CameraFormatSummary, camera_capability_matrix_for_id, parse_native_camera_id,
 };
+use crate::color::{ycbcr_bt709_full_to_bgr, ycbcr_bt709_video_to_bgr};
 use crate::diagnostics::{
     PreviewCameraCaptureTimingStats, apply_preview_camera_capability_stats,
     apply_preview_camera_capture_timing_stats, apply_preview_camera_source_stats,
@@ -1163,6 +1165,81 @@ fn run_native_camera_preview(
     }
 }
 
+/// NV12 (4:2:0 bi-planar Y'CbCr) -> BGRA, parallelized across output rows.
+#[allow(clippy::too_many_arguments)]
+fn nv12_to_bgra(
+    y: &[u8],
+    y_stride: usize,
+    cbcr: &[u8],
+    cbcr_stride: usize,
+    width: usize,
+    height: usize,
+    full_range: bool,
+    out: &mut [u8],
+) {
+    let row_bytes = width * 4;
+    out.par_chunks_mut(row_bytes)
+        .enumerate()
+        .for_each(|(row, out_row)| {
+            if row >= height {
+                return;
+            }
+            let y_row = &y[row * y_stride..];
+            let cbcr_row = &cbcr[(row / 2) * cbcr_stride..];
+            for (x, pixel) in out_row.chunks_exact_mut(4).enumerate() {
+                let chroma = (x / 2) * 2;
+                let (b, g, r) = if full_range {
+                    ycbcr_bt709_full_to_bgr(y_row[x], cbcr_row[chroma], cbcr_row[chroma + 1])
+                } else {
+                    ycbcr_bt709_video_to_bgr(y_row[x], cbcr_row[chroma], cbcr_row[chroma + 1])
+                };
+                pixel[0] = b;
+                pixel[1] = g;
+                pixel[2] = r;
+                pixel[3] = 255;
+            }
+        });
+}
+
+/// Packed 4:2:2 Y'CbCr -> BGRA, parallelized by row. `uyvy` selects the byte
+/// order: UYVY (`2vuy`, Cb Y0 Cr Y1) when true, YUY2 (`yuvs`, Y0 Cb Y1 Cr) when false.
+fn yuv422_to_bgra(
+    plane: &[u8],
+    stride: usize,
+    width: usize,
+    height: usize,
+    uyvy: bool,
+    out: &mut [u8],
+) {
+    let row_bytes = width * 4;
+    out.par_chunks_mut(row_bytes)
+        .enumerate()
+        .for_each(|(row, out_row)| {
+            if row >= height {
+                return;
+            }
+            let src = &plane[row * stride..];
+            for (pair, out8) in out_row.chunks_exact_mut(8).enumerate() {
+                let i = pair * 4;
+                let (cb, y0, cr, y1) = if uyvy {
+                    (src[i], src[i + 1], src[i + 2], src[i + 3])
+                } else {
+                    (src[i + 1], src[i], src[i + 3], src[i + 2])
+                };
+                let (b0, g0, r0) = ycbcr_bt709_video_to_bgr(y0, cb, cr);
+                let (b1, g1, r1) = ycbcr_bt709_video_to_bgr(y1, cb, cr);
+                out8[0] = b0;
+                out8[1] = g0;
+                out8[2] = r0;
+                out8[3] = 255;
+                out8[4] = b1;
+                out8[5] = g1;
+                out8[6] = r1;
+                out8[7] = 255;
+            }
+        });
+}
+
 #[cfg(target_os = "macos")]
 mod macos {
     use std::slice;
@@ -1190,13 +1267,11 @@ mod macos {
         kCVPixelFormatType_422YpCbCr8_yuvs,
     };
     use objc2_foundation::{NSDictionary, NSNumber, NSObject, NSObjectProtocol, NSString};
-    use rayon::prelude::*;
 
     use super::*;
     use crate::camera_capture::{
         CameraFormatSummary, NativeCameraPermission, choose_camera_format,
     };
-    use crate::color::{ycbcr_bt709_full_to_bgr, ycbcr_bt709_video_to_bgr};
 
     struct CameraDelegateIvars {
         shared: Arc<StdMutex<PreviewCameraShared>>,
@@ -1863,81 +1938,6 @@ mod macos {
             out,
         );
         true
-    }
-
-    /// NV12 (4:2:0 bi-planar Y'CbCr) -> BGRA, parallelized across output rows.
-    #[allow(clippy::too_many_arguments)]
-    fn nv12_to_bgra(
-        y: &[u8],
-        y_stride: usize,
-        cbcr: &[u8],
-        cbcr_stride: usize,
-        width: usize,
-        height: usize,
-        full_range: bool,
-        out: &mut [u8],
-    ) {
-        let row_bytes = width * 4;
-        out.par_chunks_mut(row_bytes)
-            .enumerate()
-            .for_each(|(row, out_row)| {
-                if row >= height {
-                    return;
-                }
-                let y_row = &y[row * y_stride..];
-                let cbcr_row = &cbcr[(row / 2) * cbcr_stride..];
-                for (x, pixel) in out_row.chunks_exact_mut(4).enumerate() {
-                    let chroma = (x / 2) * 2;
-                    let (b, g, r) = if full_range {
-                        ycbcr_bt709_full_to_bgr(y_row[x], cbcr_row[chroma], cbcr_row[chroma + 1])
-                    } else {
-                        ycbcr_bt709_video_to_bgr(y_row[x], cbcr_row[chroma], cbcr_row[chroma + 1])
-                    };
-                    pixel[0] = b;
-                    pixel[1] = g;
-                    pixel[2] = r;
-                    pixel[3] = 255;
-                }
-            });
-    }
-
-    /// Packed 4:2:2 Y'CbCr -> BGRA, parallelized by row. `uyvy` selects the byte
-    /// order: UYVY (`2vuy`, Cb Y0 Cr Y1) when true, YUY2 (`yuvs`, Y0 Cb Y1 Cr) when false.
-    fn yuv422_to_bgra(
-        plane: &[u8],
-        stride: usize,
-        width: usize,
-        height: usize,
-        uyvy: bool,
-        out: &mut [u8],
-    ) {
-        let row_bytes = width * 4;
-        out.par_chunks_mut(row_bytes)
-            .enumerate()
-            .for_each(|(row, out_row)| {
-                if row >= height {
-                    return;
-                }
-                let src = &plane[row * stride..];
-                for (pair, out8) in out_row.chunks_exact_mut(8).enumerate() {
-                    let i = pair * 4;
-                    let (cb, y0, cr, y1) = if uyvy {
-                        (src[i], src[i + 1], src[i + 2], src[i + 3])
-                    } else {
-                        (src[i + 1], src[i], src[i + 3], src[i + 2])
-                    };
-                    let (b0, g0, r0) = ycbcr_bt709_video_to_bgr(y0, cb, cr);
-                    let (b1, g1, r1) = ycbcr_bt709_video_to_bgr(y1, cb, cr);
-                    out8[0] = b0;
-                    out8[1] = g0;
-                    out8[2] = r0;
-                    out8[3] = 255;
-                    out8[4] = b1;
-                    out8[5] = g1;
-                    out8[6] = r1;
-                    out8[7] = 255;
-                }
-            });
     }
 
     fn cm_time_seconds(time: CMTime) -> Option<f64> {
