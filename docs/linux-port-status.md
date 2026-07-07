@@ -16,7 +16,7 @@ clean GNOME/KDE VM at packaging time.
 | Backend launch + WS protocol | axum/WS | **Green** — Electron dev app launches on Wayland, backend spawns via cargo, WS READY handshake and session protocol verified by `smoke:dev` |
 | Synthetic recording | Compositor → FIFO → FFmpeg | **Green** — `pnpm smoke:dev` passes all five layout scenarios on Linux (60 frames, A/V skew 16ms, artifact-analyzed) |
 | Microphone | CoreAudio | **Green (PipeWire)** — enumeration with default marker, meter, live capture through the shared FIFO/epoch pipeline; gated by `pnpm smoke:linux-mic` (virtual-mic, no hardware needed). Desktop audio (monitor sources) is a follow-up slice |
-| Camera | AVFoundation | Stubbed (`bail!`), planned on V4L2 (phase 2) |
+| Camera | AVFoundation | **Green (V4L2)** — enumeration with capability matrix, live BGRA capture (NV12/YU12/YUYV/UYVY/MJPG) into the shared preview/compositor store, recording verified on a Cam Link 4K; gated by `pnpm smoke:linux-camera` (skips explicitly without a camera) |
 | Screen/window capture | ScreenCaptureKit | Stubbed (`bail!`), planned on portal ScreenCast + PipeWire (phase 3) |
 | Composition | Metal GPU (`metal_compositor.rs`) | CPU compositor path is portable, compiles, and composits the synthetic scenes in `smoke:dev`; GPU path correctly gated off. wgpu port is a later phase |
 | Preview | Detached native CAMetalLayer window | Falls back to image polling with an explicit reason ("no Metal IOSurface target"), surfaced in backend status; native wgpu preview later |
