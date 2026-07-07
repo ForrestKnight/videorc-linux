@@ -137,6 +137,13 @@ pnpm smoke:recording-studio:devices
 
 ## Temporary Operator Mitigation
 
+> **2026-07-07 (plan 023):** the wallclock/Annex-B stopgap this mitigation
+> guarded is FIXED — record+stream now runs MpegTs with real encoder PTS,
+> minimal FIFO probing, and fifo-muxer-isolated RTMP legs (single ffmpeg;
+> LVF2's split workers were not needed). Keep this mitigation only until the
+> owner's real Twitch + 4K-recording by-eye passes on the next release, then
+> delete this section.
+
 Until LVF2-LVF4 land, avoid 4K local recording while livestreaming. Use one of:
 
 - stream-only,

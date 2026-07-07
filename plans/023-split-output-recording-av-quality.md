@@ -19,7 +19,24 @@
 - **Depends on**: nothing external; by-eye needs a real Twitch stream
 - **Category**: recording pipeline, streaming, A/V sync
 - **Planned at**: commit `c8bf97f2`, 2026-07-07
-- **Execution**: TODO
+- **Execution**: EXECUTED 2026-07-07 (L0 `dfe89df1`, L1 `cf570492`, L3
+  `c2ad9f3e`, L4 `f4bbfeee` on main). L2 NOT NEEDED — the narrow fix
+  landed. LVF2's "no bytes" had THREE stacked causes, found with the
+  multistream repro loop: (1) default ~5MB mpegts probing starves a FIFO
+  graph → minimal probing on streaming shapes; (2) tee/fifo wrappers clone
+  the mpegts codec tag [27] into flv slaves, which reject it ("-tag:v 0"
+  is a no-op for copy) → per-target fifo-muxer outputs with explicit
+  -tag:v 7; (3) any refused RTMP output aborted the whole session incl.
+  the recording → the fifo muxer makes a dead target a dead LEG (also
+  fixes the owner's single-target direct-flv shape). MpegTs is now the
+  default for record+stream; the wallclock Annex-B path is env-opt-in
+  only. Discovered: the aux 1080p companion renders ~7fps in DEBUG builds
+  (real PTS exposed the true render rate) — throughput gate belongs to
+  the release-build device baseline (noted in the smoke). L3's real-audio
+  per-leg sync (150ms/50ms) rides the RC device baseline; the smoke pins
+  PTS sanity on every received FLV. PENDING owner by-eye: one real
+  Twitch stream WITH 4K local recording on the next release, then delete
+  the "avoid 4K recording while streaming" mitigation from the LVF doc.
 
 ## Evidence (owner session 2026-07-07, 10:07)
 
