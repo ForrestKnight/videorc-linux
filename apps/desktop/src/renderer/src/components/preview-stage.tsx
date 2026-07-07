@@ -37,6 +37,8 @@ export function PreviewStage({
     closePreviewWindow,
     setPreviewWindowAlwaysOnTop,
     setPreviewWindowMode,
+    softwarePreview,
+    softwarePreviewUrl,
     captureConfig
   } = useStudio()
 
@@ -45,6 +47,20 @@ export function PreviewStage({
   // The reporter is active exactly while the docked frame is on screen; its
   // cleanup tells main the slot unmounted (tab switch, undock, close).
   const slotRef = useDockSlotReporter(docked, previewWindow.dockEpoch)
+
+  // Software preview (Linux and any non-Metal platform): the backend serves the
+  // composited scene as an MJPEG stream; render it inline in this panel — there
+  // is no separate window and no native surface to host. (After all hooks so
+  // hook order stays stable.)
+  if (softwarePreview) {
+    return (
+      <SoftwarePreviewCard
+        aspect={{ width: captureConfig.video.width, height: captureConfig.video.height }}
+        className={className}
+        streamUrl={softwarePreviewUrl}
+      />
+    )
+  }
 
   if (docked) {
     return (
@@ -88,6 +104,53 @@ export function PreviewStage({
  * layout never jumps when the preview opens, docks, or closes. */
 function previewAspectRatio(aspect: { width: number; height: number }): string {
   return aspect.width > 0 && aspect.height > 0 ? `${aspect.width} / ${aspect.height}` : '16 / 9'
+}
+
+// Inline software preview: an MJPEG stream (multipart/x-mixed-replace) the
+// browser renders natively in an <img>, refreshed as the compositor produces
+// frames. Used where there is no macOS Metal surface (Linux etc.). A cache-
+// buster in the key restarts the stream if the URL changes (backend restart).
+function SoftwarePreviewCard({
+  streamUrl,
+  aspect,
+  className
+}: {
+  streamUrl: string | null
+  aspect: { width: number; height: number }
+  className?: string
+}): ReactElement {
+  return (
+    <div
+      className={cn('flex w-full flex-col overflow-hidden rounded-panel border', className)}
+      data-videorc-preview-card
+      data-videorc-preview-software
+    >
+      <div
+        className="relative w-full bg-[#0D0D0F]"
+        style={{ aspectRatio: previewAspectRatio(aspect) }}
+      >
+        {streamUrl ? (
+          <img
+            key={streamUrl}
+            alt="Live program preview"
+            className="absolute inset-0 size-full object-contain"
+            src={streamUrl}
+          />
+        ) : (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-center">
+            <VideoCamera className="size-8 text-muted-foreground" weight="duotone" />
+            <span className="text-sm font-medium text-[#F4F4F5]">Waiting for preview</span>
+            <span className="text-xs text-[#A1A1AA]">
+              Connecting to the compositor preview stream…
+            </span>
+          </div>
+        )}
+      </div>
+      <div className="flex items-center justify-between gap-2 border-t px-3 py-1.5">
+        <span className="text-xs text-muted-foreground">Software preview (this OS)</span>
+      </div>
+    </div>
+  )
 }
 
 // Docked ("stick") mode: the native preview surface floats glued over the slot

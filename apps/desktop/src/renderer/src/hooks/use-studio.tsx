@@ -388,6 +388,11 @@ export type StudioContextValue = {
   previewScreenStatus: PreviewScreenStatus
   previewSurfaceStatus: PreviewSurfaceStatus
   nativePreviewSurfaceEnabled: boolean
+  /** True where the preview is the software JPEG stream rendered inline (no
+   * macOS Metal surface) — Linux and any other non-Metal platform. */
+  softwarePreview: boolean
+  /** MJPEG stream URL for the inline software preview, or null. */
+  softwarePreviewUrl: string | null
   previewWindow: PreviewWindowState
   openPreviewWindow: () => Promise<void>
   closePreviewWindow: () => Promise<void>
@@ -1269,7 +1274,20 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   const toastedFailedTargets = useRef<Set<string>>(new Set())
   const platformLifecycleRun = useRef(0)
   const [previewRefreshNonce, setPreviewRefreshNonce] = useState(0)
-  const nativePreviewSurfaceEnabled = Boolean(runtimeInfo?.nativePreviewSurfaceProofEnabled)
+  // The native preview surface is a macOS CAMetalLayer; other platforms use the
+  // software JPEG preview instead, so the native path must not claim to run.
+  const nativePreviewSurfaceEnabled =
+    Boolean(runtimeInfo?.nativePreviewSurfaceProofEnabled) && runtimeInfo?.platform === 'darwin'
+  // Linux (and any non-Metal platform) renders the compositor's output inline as
+  // an MJPEG stream the backend serves; the compositor is driven by an idle
+  // preview surface below.
+  const softwarePreview = runtimeInfo != null && runtimeInfo.platform !== 'darwin'
+  const softwarePreviewUrl =
+    softwarePreview && connection
+      ? `http://${connection.host}:${connection.port}/preview/live.mjpeg?token=${encodeURIComponent(
+          connection.token
+        )}`
+      : null
 
   // Surface a per-target stream drop from any tab (the Streaming tab has the full
   // banner + badges). Each failed destination toasts once per session; the set is
@@ -4116,6 +4134,25 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   const isSessionActive =
     isActiveRecordingState(recording.state) || startRequestPending || stopRequestPending
 
+  // Linux software preview: keep an idle compositor running so the inline MJPEG
+  // preview always has the composited scene to show. A recording drives its own
+  // compositor (which feeds the same preview endpoint), so stand down while one
+  // is active and re-create the idle preview once it ends.
+  useEffect(() => {
+    if (!softwarePreview || !connection || wsStatus !== 'connected' || isSessionActive) {
+      return
+    }
+    const activeClient = clientRef.current
+    if (!activeClient) {
+      return
+    }
+    const bounds = { screenX: 0, screenY: 0, width: 1280, height: 720, scaleFactor: 1 }
+    void activeClient.request('preview.surface.create', { bounds, targetFps: 30 }).catch(() => {})
+    return () => {
+      void clientRef.current?.request('preview.surface.destroy').catch(() => {})
+    }
+  }, [softwarePreview, connection, wsStatus, isSessionActive])
+
   useEffect(() => {
     if (aiConsent && !currentCloudAiReadiness.ready) {
       setAiConsent(false)
@@ -5769,6 +5806,8 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       previewScreenStatus,
       previewSurfaceStatus,
       nativePreviewSurfaceEnabled,
+      softwarePreview,
+      softwarePreviewUrl,
       previewWindow,
       openPreviewWindow,
       closePreviewWindow,
@@ -5944,6 +5983,8 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       previewScreenStatus,
       previewSurfaceStatus,
       nativePreviewSurfaceEnabled,
+      softwarePreview,
+      softwarePreviewUrl,
       previewWindow,
       openPreviewWindow,
       closePreviewWindow,

@@ -2011,6 +2011,9 @@ export interface ReorderScreensParams {
 export interface RuntimeInfo {
   /** The running app version (`app.getVersion()`), shown in Settings → About. */
   version: string
+  /** `process.platform` — lets the renderer branch on OS (e.g. Linux uses the
+   * software JPEG preview instead of the macOS native Metal surface). */
+  platform: string
   isPackaged: boolean
   permissionTargetName: string
   permissionTargetPath: string

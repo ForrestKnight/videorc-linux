@@ -11,6 +11,8 @@ export const MACOS_PERMISSION_URLS: Record<SystemPermissionPane, string> = {
 export interface RuntimeInfoInput {
   /** `app.getVersion()` — the running app version. */
   appVersion: string
+  /** Defaults to `process.platform`; injectable for tests. */
+  platform?: NodeJS.Platform
   execPath: string
   captureExecPath?: string
   env: Partial<
@@ -58,6 +60,7 @@ export function assertPermissionShortcutSupported(platform: NodeJS.Platform): vo
 
 export function buildRuntimeInfo({
   appVersion,
+  platform,
   execPath,
   captureExecPath,
   env
@@ -68,6 +71,7 @@ export function buildRuntimeInfo({
 
   return {
     version: appVersion,
+    platform: platform ?? process.platform,
     isPackaged,
     permissionTargetName: isPackaged ? 'Videorc' : 'Electron',
     permissionTargetPath: targetPath,
