@@ -23,7 +23,9 @@ export const PROVIDERS = [
     label: 'Twitch',
     clientIdVars: ['VIDEORC_TWITCH_CLIENT_ID', 'VIDEORC_BUNDLED_TWITCH_CLIENT_ID'],
     secretVars: ['VIDEORC_TWITCH_CLIENT_SECRET'],
-    secretRequired: true,
+    // Public client type: the id alone connects; a secret only upgrades
+    // confidential setups.
+    secretRequired: false,
     accountChecks: [
       {
         label: 'test broadcaster account available',

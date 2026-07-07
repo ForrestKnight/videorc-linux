@@ -846,7 +846,12 @@ pub fn provider_credential_statuses() -> Vec<OAuthProviderCredentialStatus> {
             BUNDLED_YOUTUBE_CLIENT_ID,
             BUNDLED_YOUTUBE_CLIENT_SECRET,
             true,
+            false,
         ),
+        // Twitch ships as a PUBLIC client type (dev console setting): no
+        // client secret exists, token exchange + refresh use the client id
+        // alone. VIDEORC_TWITCH_CLIENT_SECRET stays honoured for confidential
+        // setups (smoke accounts, forks running their own app).
         provider_credential_status(
             StreamPlatform::Twitch,
             "VIDEORC_TWITCH_CLIENT_ID",
@@ -854,6 +859,7 @@ pub fn provider_credential_statuses() -> Vec<OAuthProviderCredentialStatus> {
             BUNDLED_TWITCH_CLIENT_ID,
             None,
             false,
+            true,
         ),
         provider_credential_status(
             StreamPlatform::X,
@@ -862,6 +868,7 @@ pub fn provider_credential_statuses() -> Vec<OAuthProviderCredentialStatus> {
             BUNDLED_X_CLIENT_ID,
             None,
             true,
+            false,
         ),
     ]
 }
@@ -873,12 +880,13 @@ fn provider_credential_status(
     bundled_client_id: Option<&'static str>,
     bundled_client_secret: Option<&'static str>,
     pkce: bool,
+    secret_optional: bool,
 ) -> OAuthProviderCredentialStatus {
     let client_id_source = credential_source(optional_env(client_id_env), bundled_client_id);
     let client_id_present = client_id_source != OAuthCredentialSource::Missing;
     let client_secret_present =
         optional_env(client_secret_env).is_some() || bundled_client_secret.is_some();
-    let ready = client_id_present && (pkce || client_secret_present);
+    let ready = client_id_present && (pkce || secret_optional || client_secret_present);
     let label = stream_platform_label(platform);
     OAuthProviderCredentialStatus {
         platform,
@@ -889,7 +897,7 @@ fn provider_credential_status(
         pkce,
         message: if !client_id_present {
             format!("{label} OAuth requires {client_id_env}.")
-        } else if !pkce && !client_secret_present {
+        } else if !pkce && !secret_optional && !client_secret_present {
             format!("{label} OAuth also needs its runtime client secret before connecting.")
         } else {
             match client_id_source {
@@ -1417,13 +1425,14 @@ mod tests {
     }
 
     #[test]
-    fn non_pkce_provider_status_requires_runtime_client_secret() {
+    fn non_pkce_confidential_provider_status_requires_runtime_client_secret() {
         let status = provider_credential_status(
             StreamPlatform::Twitch,
             "VIDEORC_TEST_TWITCH_CLIENT_ID",
             "VIDEORC_TEST_TWITCH_CLIENT_SECRET",
             Some("bundled-twitch-client"),
             None,
+            false,
             false,
         );
 
@@ -1432,6 +1441,27 @@ mod tests {
         assert!(!status.pkce);
         assert!(!status.ready);
         assert!(status.message.contains("client secret"));
+    }
+
+    // Twitch ships as a PUBLIC client type: no secret exists, the client id
+    // alone is ready (the runtime secret env still upgrades a confidential
+    // setup — both smoke accounts and forks may use one).
+    #[test]
+    fn secret_optional_provider_is_ready_with_client_id_alone() {
+        let status = provider_credential_status(
+            StreamPlatform::Twitch,
+            "VIDEORC_TEST_TWITCH_CLIENT_ID",
+            "VIDEORC_TEST_TWITCH_CLIENT_SECRET",
+            Some("bundled-twitch-client"),
+            None,
+            false,
+            true,
+        );
+
+        assert!(status.client_id_present);
+        assert!(!status.client_secret_present);
+        assert!(status.ready);
+        assert!(status.message.contains("bundled Videorc client ID"));
     }
 
     #[test]
@@ -1443,6 +1473,7 @@ mod tests {
             Some("bundled-youtube-client"),
             None,
             true,
+            false,
         );
 
         assert!(status.client_id_present);
@@ -1460,6 +1491,7 @@ mod tests {
             Some("bundled-youtube-client"),
             Some("bundled-youtube-secret"),
             true,
+            false,
         );
 
         assert!(status.client_secret_present);

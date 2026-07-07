@@ -134,14 +134,17 @@ VIDEORC_TWITCH_CLIENT_SECRET=...
 VIDEORC_SMOKE_TWITCH_ACCOUNT_READY=1
 ```
 
-Twitch currently requires a runtime client secret because the app's Twitch OAuth provider config is not PKCE-only.
+Register the Videorc Twitch application with **Client Type: Public** (dev
+console) — public clients exchange and refresh tokens with the client id
+alone, so no secret ships anywhere. `VIDEORC_TWITCH_CLIENT_SECRET` is only
+for confidential setups (e.g. a fork running its own confidential app).
 
 Twitch release blocker: a production candidate is not "out-of-the-box" ready until a
-Videorc-owned Twitch developer app exists, `VIDEORC_BUNDLED_TWITCH_CLIENT_ID` is
-injected at backend build time, and `VIDEORC_TWITCH_CLIENT_SECRET` is supplied in the
-smoke/runtime environment. The backend already requests
-`channel:manage:broadcast`, `channel:read:stream_key`, and `user:read:chat`; the
-registered Twitch app must allow the callback mode selected for the release.
+Videorc-owned PUBLIC Twitch developer app exists with the three loopback callback
+URLs registered, and `VIDEORC_BUNDLED_TWITCH_CLIENT_ID` is injected at backend build
+time (add it to `~/.videorc-release.env`). The backend already requests
+`channel:manage:broadcast`, `channel:read:stream_key`, `user:read:chat`, and
+`user:write:chat`.
 
 X:
 
@@ -180,7 +183,7 @@ Expected evidence:
 
 ## Twitch Acceptance
 
-1. Launch the packaged release candidate with Twitch OAuth credentials and runtime client secret.
+1. Launch the packaged release candidate (bundled public-client Twitch id; no secret).
 2. Open Streaming and connect Twitch through OAuth.
 3. Confirm the connected account identity appears and Twitch reports ready credential state.
 4. Search for and select a Twitch category.

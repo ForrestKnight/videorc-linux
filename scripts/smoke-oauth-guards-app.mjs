@@ -80,12 +80,12 @@ function assertProviderCredentials(credentials) {
     throw new Error(`YouTube PKCE readiness mismatch: ${JSON.stringify(youtube)}`)
   }
 
+  // Twitch is a PUBLIC client type: ready with the client id alone, no
+  // secret in the smoke env (a runtime secret still upgrades confidential
+  // setups — covered by the rust unit tests).
   const twitch = requireCredential(byPlatform, 'twitch')
-  if (twitch.ready || twitch.pkce || !twitch.clientIdPresent || twitch.clientSecretPresent) {
-    throw new Error(`Twitch secret gate mismatch: ${JSON.stringify(twitch)}`)
-  }
-  if (!String(twitch.message).toLowerCase().includes('client secret')) {
-    throw new Error(`Twitch missing-secret message was not explicit: ${JSON.stringify(twitch)}`)
+  if (!twitch.ready || twitch.pkce || !twitch.clientIdPresent || twitch.clientSecretPresent) {
+    throw new Error(`Twitch public-client readiness mismatch: ${JSON.stringify(twitch)}`)
   }
 
   const x = requireCredential(byPlatform, 'x')
