@@ -34,9 +34,12 @@ pub async fn list_devices(ffmpeg_path: &str) -> DeviceList {
     let mut warnings = Vec::new();
 
     if cfg!(target_os = "linux") {
-        // Linux port: microphones are live on PipeWire; screen, window, and
-        // camera capture land in their own port phases and stay explicit
-        // placeholders until then.
+        // Linux port: microphones (PipeWire) and cameras (V4L2) are live;
+        // screen and window capture land with the portal phase and stay
+        // explicit placeholders until then.
+        let native_cameras = list_native_cameras();
+        warnings.extend(native_cameras.warnings);
+        devices.extend(native_cameras.devices);
         devices.extend([
             Device {
                 id: "screen:unsupported-platform".to_string(),
@@ -65,9 +68,7 @@ pub async fn list_devices(ffmpeg_path: &str) -> DeviceList {
             system_audio_placeholder(),
         ]);
         devices.extend(list_native_microphones());
-        warnings.push(
-            "Screen, window, and camera probing are not implemented on Linux yet.".to_string(),
-        );
+        warnings.push("Screen and window probing are not implemented on Linux yet.".to_string());
         return DeviceList { devices, warnings };
     }
 

@@ -1,10 +1,16 @@
 #![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use crate::protocol::DeviceKind;
 use crate::protocol::{Device, DeviceStatus};
 
+/// Platform-valued: the id namespace names the capture backend, and the
+/// unique id inside the hex encoding is backend-specific (AVFoundation
+/// unique ids on macOS, `/dev/videoN` paths on Linux).
+#[cfg(not(target_os = "linux"))]
 const NATIVE_CAMERA_PREFIX: &str = "camera:avfoundation-native:";
+#[cfg(target_os = "linux")]
+const NATIVE_CAMERA_PREFIX: &str = "camera:v4l2-native:";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NativeCameraDevices {
@@ -41,12 +47,17 @@ pub fn list_native_cameras() -> NativeCameraDevices {
         macos::list_native_cameras()
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        linux::list_native_cameras()
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         NativeCameraDevices {
             devices: Vec::new(),
             warnings: vec![
-                "Native AVFoundation camera discovery is only available on macOS.".to_string(),
+                "Native camera discovery is only available on macOS and Linux.".to_string(),
             ],
         }
     }
@@ -60,7 +71,12 @@ pub fn native_camera_name_for_id(camera_id: &str) -> Option<String> {
         macos::camera_name_for_unique_id(&unique_id)
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        linux::camera_name_for_unique_id(&unique_id)
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         let _ = unique_id;
         None
@@ -71,18 +87,23 @@ pub fn camera_capability_matrix_for_id(
     camera_id: &str,
 ) -> Result<Vec<CameraFormatSummary>, String> {
     let unique_id = parse_native_camera_id(camera_id)
-        .ok_or_else(|| "Selected camera is not a native AVFoundation camera.".to_string())?;
+        .ok_or_else(|| "Selected camera is not a native camera.".to_string())?;
 
     #[cfg(target_os = "macos")]
     {
         macos::camera_capability_matrix_for_unique_id(&unique_id)
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        linux::camera_capability_matrix_for_unique_id(&unique_id)
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         let _ = unique_id;
         Err(
-            "Native AVFoundation camera capability diagnostics are only available on macOS."
+            "Native camera capability diagnostics are only available on macOS and Linux."
                 .to_string(),
         )
     }
@@ -229,6 +250,248 @@ fn hex_value(value: u8) -> Option<u8> {
         b'a'..=b'f' => Some(value - b'a' + 10),
         b'A'..=b'F' => Some(value - b'A' + 10),
         _ => None,
+    }
+}
+
+/// The capture loop in `preview_camera.rs` shares the discovery helpers.
+#[cfg(target_os = "linux")]
+pub(crate) use linux::{SUPPORTED_CAPTURE_FOURCCS, device_format_summaries};
+
+/// V4L2 camera discovery (Linux port phase 2). Enumeration and the format
+/// capability matrix; the capture loop itself lives in `preview_camera.rs`.
+#[cfg(target_os = "linux")]
+mod linux {
+    use super::*;
+    use v4l::video::Capture;
+
+    /// Fourccs the capture loop can convert to BGRA, in preference order —
+    /// raw formats first, JPEG decode last.
+    pub(crate) const SUPPORTED_CAPTURE_FOURCCS: [[u8; 4]; 5] =
+        [*b"NV12", *b"YUYV", *b"UYVY", *b"YU12", *b"MJPG"];
+
+    pub(crate) fn fourcc_supported(fourcc: &[u8; 4]) -> bool {
+        SUPPORTED_CAPTURE_FOURCCS
+            .iter()
+            .any(|entry| entry == fourcc)
+    }
+
+    pub(super) fn list_native_cameras() -> NativeCameraDevices {
+        let mut devices = Vec::new();
+        let mut warnings = Vec::new();
+        let mut nodes: Vec<_> = v4l::context::enum_devices()
+            .into_iter()
+            .map(|node| node.path().to_path_buf())
+            .collect();
+        nodes.sort();
+
+        for path in nodes {
+            let path_string = path.display().to_string();
+            let device = match v4l::Device::with_path(&path) {
+                Ok(device) => device,
+                Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                    devices.push(Device {
+                        id: native_camera_device_id(&path_string),
+                        name: path_string.clone(),
+                        kind: DeviceKind::Camera,
+                        status: DeviceStatus::PermissionRequired,
+                        detail: Some(format!(
+                            "Could not open {path_string}: permission denied. Add your user \
+                             to the 'video' group and log back in."
+                        )),
+                        width: None,
+                        height: None,
+                    });
+                    continue;
+                }
+                Err(_) => continue,
+            };
+            let Ok(caps) = device.query_caps() else {
+                continue;
+            };
+            if !caps
+                .capabilities
+                .contains(v4l::capability::Flags::VIDEO_CAPTURE)
+                || !caps
+                    .capabilities
+                    .contains(v4l::capability::Flags::STREAMING)
+            {
+                continue;
+            }
+            let Ok(descriptions) = device.enum_formats() else {
+                continue;
+            };
+            // UVC metadata nodes and exotic-only devices report no fourcc we
+            // can convert; they are not cameras the pipeline can show.
+            if !descriptions
+                .iter()
+                .any(|description| fourcc_supported(&description.fourcc.repr))
+            {
+                continue;
+            }
+
+            let formats = normalize_camera_formats(collect_formats(&device, &descriptions));
+            let mut detail = "V4L2 camera.".to_string();
+            if let Some(reason) = choose_camera_format(&formats, 1920, 1080, 30)
+                .and_then(|choice| choice.fallback_reason)
+            {
+                detail = format!("{detail} {reason}");
+            }
+            devices.push(Device {
+                id: native_camera_device_id(&path_string),
+                name: caps.card.clone(),
+                kind: DeviceKind::Camera,
+                status: DeviceStatus::Available,
+                detail: Some(detail),
+                width: None,
+                height: None,
+            });
+        }
+
+        if devices.is_empty() {
+            warnings.push("No V4L2 cameras were found under /dev/video*.".to_string());
+        }
+        NativeCameraDevices { devices, warnings }
+    }
+
+    pub(super) fn camera_name_for_unique_id(unique_id: &str) -> Option<String> {
+        let device = v4l::Device::with_path(unique_id).ok()?;
+        Some(device.query_caps().ok()?.card)
+    }
+
+    pub(super) fn camera_capability_matrix_for_unique_id(
+        unique_id: &str,
+    ) -> Result<Vec<CameraFormatSummary>, String> {
+        let device = v4l::Device::with_path(unique_id)
+            .map_err(|error| format!("Could not open camera {unique_id}: {error}"))?;
+        device_format_summaries(&device)
+            .map_err(|error| format!("Could not enumerate formats for {unique_id}: {error}"))
+    }
+
+    /// The normalized capability matrix over every convertible fourcc.
+    pub(crate) fn device_format_summaries(
+        device: &v4l::Device,
+    ) -> std::io::Result<Vec<CameraFormatSummary>> {
+        let descriptions = device.enum_formats()?;
+        Ok(normalize_camera_formats(collect_formats(
+            device,
+            &descriptions,
+        )))
+    }
+
+    fn collect_formats(
+        device: &v4l::Device,
+        descriptions: &[v4l::format::Description],
+    ) -> Vec<CameraFormatSummary> {
+        let mut formats = Vec::new();
+        for description in descriptions {
+            if !fourcc_supported(&description.fourcc.repr) {
+                continue;
+            }
+            let Ok(sizes) = device.enum_framesizes(description.fourcc) else {
+                continue;
+            };
+            for size in sizes {
+                for discrete in frame_size_candidates(size.size) {
+                    let Ok(intervals) = device.enum_frameintervals(
+                        description.fourcc,
+                        discrete.width,
+                        discrete.height,
+                    ) else {
+                        continue;
+                    };
+                    let mut min_fps = f64::INFINITY;
+                    let mut max_fps: f64 = 0.0;
+                    for interval in intervals {
+                        let (low, high) = interval_fps_range(interval.interval);
+                        min_fps = min_fps.min(low);
+                        max_fps = max_fps.max(high);
+                    }
+                    if max_fps > 0.0 && min_fps.is_finite() {
+                        formats.push(CameraFormatSummary {
+                            width: discrete.width,
+                            height: discrete.height,
+                            min_fps,
+                            max_fps,
+                        });
+                    }
+                }
+            }
+        }
+        formats
+    }
+
+    /// Stepwise size ranges expand only at their corners: per-step expansion
+    /// can be thousands of sizes, and the format chooser only needs the hull.
+    fn frame_size_candidates(size: v4l::framesize::FrameSizeEnum) -> Vec<v4l::framesize::Discrete> {
+        use v4l::framesize::{Discrete, FrameSizeEnum};
+        match size {
+            FrameSizeEnum::Discrete(discrete) => vec![discrete],
+            FrameSizeEnum::Stepwise(stepwise) => vec![
+                Discrete {
+                    width: stepwise.min_width,
+                    height: stepwise.min_height,
+                },
+                Discrete {
+                    width: stepwise.max_width,
+                    height: stepwise.max_height,
+                },
+            ],
+        }
+    }
+
+    /// A V4L2 frame interval is seconds-per-frame; fps = denominator/numerator.
+    fn interval_fps_range(interval: v4l::frameinterval::FrameIntervalEnum) -> (f64, f64) {
+        use v4l::frameinterval::FrameIntervalEnum;
+        match interval {
+            FrameIntervalEnum::Discrete(fraction) => {
+                let fps = fraction_fps(fraction);
+                (fps, fps)
+            }
+            // Longest interval = lowest fps and vice versa.
+            FrameIntervalEnum::Stepwise(stepwise) => {
+                (fraction_fps(stepwise.max), fraction_fps(stepwise.min))
+            }
+        }
+    }
+
+    fn fraction_fps(fraction: v4l::Fraction) -> f64 {
+        if fraction.numerator == 0 {
+            return 0.0;
+        }
+        f64::from(fraction.denominator) / f64::from(fraction.numerator)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn interval_fps_maps_seconds_per_frame_to_fps() {
+            let (low, high) = interval_fps_range(v4l::frameinterval::FrameIntervalEnum::Discrete(
+                v4l::Fraction::new(1, 30),
+            ));
+            assert_eq!((low, high), (30.0, 30.0));
+        }
+
+        #[test]
+        fn stepwise_interval_swaps_to_fps_range() {
+            let (low, high) = interval_fps_range(v4l::frameinterval::FrameIntervalEnum::Stepwise(
+                v4l::frameinterval::Stepwise {
+                    min: v4l::Fraction::new(1, 60),
+                    max: v4l::Fraction::new(1, 5),
+                    step: v4l::Fraction::new(1, 60),
+                },
+            ));
+            assert_eq!((low, high), (5.0, 60.0));
+        }
+
+        #[test]
+        fn fourcc_preference_covers_camlink_and_common_webcams() {
+            assert!(fourcc_supported(b"NV12"));
+            assert!(fourcc_supported(b"YUYV"));
+            assert!(fourcc_supported(b"MJPG"));
+            assert!(!fourcc_supported(b"H264"));
+        }
     }
 }
 
