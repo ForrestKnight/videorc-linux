@@ -4866,6 +4866,11 @@ fn append_bridge_audio_input_args(
         });
     } else {
         args.extend([
+            // Pace the tone at realtime like the legacy path's tone. Unpaced,
+            // lavfi generates ahead of the realtime FIFO video and `-shortest`
+            // flushes the surplus at EOF — a 130-200ms audio tail that reads
+            // as A/V skew in the finished file.
+            "-re".to_string(),
             "-f".to_string(),
             "lavfi".to_string(),
             "-i".to_string(),
@@ -8373,11 +8378,14 @@ mod tests {
             input_arg_value(&args, &fifo_path.display().to_string(), "-framerate"),
             Some("30")
         );
-        assert!(!input_has_arg(
-            &args,
-            "sine=frequency=880:sample_rate=48000",
-            "-re"
-        ));
+        // The tone must be realtime-paced: unpaced lavfi audio runs ahead of
+        // the realtime FIFO video and -shortest flushes the surplus as an
+        // audio tail (reads as A/V skew in the finished file).
+        assert!(
+            args.windows(3)
+                .any(|window| window[0] == "-re" && window[1] == "-f" && window[2] == "lavfi"),
+            "test tone input must be realtime-paced: {args:?}"
+        );
         assert!(args.iter().any(|arg| arg == "[v_main]"));
         assert!(!args.iter().any(|arg| arg == "[preview]"));
         assert!(args.iter().any(|arg| arg == "1:a?"));
