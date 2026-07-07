@@ -702,10 +702,11 @@ pub async fn start_session(
         starting_diagnostics(&session_id, params.output.video.fps, mode),
         duplicate_capture_sources,
     );
-    // Phase 4: both the shared-compositor bridge and the legacy path now request hardware
-    // h264_videotoolbox (sw fallback allowed). The bridge is the protected consumer of the
+    // Phase 4: both the shared-compositor bridge and the legacy path request the
+    // platform H.264 encoder (hardware videotoolbox with sw fallback on macOS,
+    // libx264 elsewhere). The bridge is the protected consumer of the
     // compositor output, paced by the output clock; the legacy path captures via FFmpeg.
-    initial_diagnostics.encode_backend = Some(EncodeBackend::HardwareVideotoolbox);
+    initial_diagnostics.encode_backend = Some(platform_h264_encode_backend());
     initial_diagnostics.recording_protected = use_encoder_bridge;
     {
         let mut diagnostics = state.diagnostics.lock().await;
@@ -4236,6 +4237,52 @@ fn default_encoder_bridge_video_output() -> EncoderBridgeVideoOutput {
     }
 }
 
+/// H.264 encoder for the raw-video (YUV420p) FFmpeg legs. macOS prefers the
+/// hardware encoder, like OBS: software libx264 ultrafast was a CPU-pressure
+/// source under real 1080p/1440p load, and `-allow_sw 1` keeps a software
+/// fallback so the encode never fails. Off macOS libx264 is the portable
+/// choice; `veryfast` + `zerolatency` keep the encode realtime on the live
+/// FIFO feed (hardware VAAPI/NVENC arrive later as FFmpeg flag swaps).
+fn platform_h264_encoder_args() -> &'static [&'static str] {
+    #[cfg(target_os = "macos")]
+    {
+        &[
+            "-c:v",
+            "h264_videotoolbox",
+            "-allow_sw",
+            "1",
+            "-realtime",
+            "1",
+            "-prio_speed",
+            "1",
+        ]
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        &[
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-tune",
+            "zerolatency",
+        ]
+    }
+}
+
+/// Diagnostics twin of `platform_h264_encoder_args` — the reported backend
+/// must name what the args actually request, per platform.
+fn platform_h264_encode_backend() -> EncodeBackend {
+    #[cfg(target_os = "macos")]
+    {
+        EncodeBackend::HardwareVideotoolbox
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        EncodeBackend::SoftwareX264
+    }
+}
+
 fn encoder_bridge_recording_disabled(setting: Option<&str>) -> bool {
     encoder_bridge_disabled_setting(setting)
 }
@@ -4349,18 +4396,11 @@ fn bridge_compositor_ffmpeg_args(
                     params.output.video.fps.to_string(),
                     "-pix_fmt".to_string(),
                     "yuv420p".to_string(),
-                    // Phase 4: prefer hardware encoding on the shared-compositor path, like OBS and
-                    // the legacy path. Software libx264 ultrafast was a CPU-pressure source under
-                    // real 1080p/1440p load; h264_videotoolbox offloads the encode to the media
-                    // engine. `-allow_sw 1` keeps a software fallback so the encode never fails.
-                    "-c:v".to_string(),
-                    "h264_videotoolbox".to_string(),
-                    "-allow_sw".to_string(),
-                    "1".to_string(),
-                    "-realtime".to_string(),
-                    "1".to_string(),
-                    "-prio_speed".to_string(),
-                    "1".to_string(),
+                ]);
+                // Phase 4: prefer hardware encoding on the shared-compositor
+                // path where the platform has it (see platform_h264_encoder_args).
+                args.extend(platform_h264_encoder_args().iter().map(ToString::to_string));
+                args.extend([
                     "-b:v".to_string(),
                     format!("{}k", params.output.video.bitrate_kbps),
                     "-maxrate".to_string(),
@@ -4884,14 +4924,9 @@ fn ffmpeg_args(
         params.output.video.fps.to_string(),
         "-pix_fmt".to_string(),
         "yuv420p".to_string(),
-        "-c:v".to_string(),
-        "h264_videotoolbox".to_string(),
-        "-allow_sw".to_string(),
-        "1".to_string(),
-        "-realtime".to_string(),
-        "1".to_string(),
-        "-prio_speed".to_string(),
-        "1".to_string(),
+    ]);
+    args.extend(platform_h264_encoder_args().iter().map(ToString::to_string));
+    args.extend([
         "-b:v".to_string(),
         format!("{}k", params.output.video.bitrate_kbps),
         "-maxrate".to_string(),
@@ -8346,10 +8381,19 @@ mod tests {
         assert!(args.iter().any(|arg| arg == "[v_main]"));
         assert!(!args.iter().any(|arg| arg == "[preview]"));
         assert!(args.iter().any(|arg| arg == "1:a?"));
-        assert_eq!(arg_value(&args, "-c:v"), Some("h264_videotoolbox"));
-        assert_eq!(arg_value(&args, "-allow_sw"), Some("1"));
-        assert_eq!(arg_value(&args, "-realtime"), Some("1"));
-        assert_eq!(arg_value(&args, "-prio_speed"), Some("1"));
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(arg_value(&args, "-c:v"), Some("h264_videotoolbox"));
+            assert_eq!(arg_value(&args, "-allow_sw"), Some("1"));
+            assert_eq!(arg_value(&args, "-realtime"), Some("1"));
+            assert_eq!(arg_value(&args, "-prio_speed"), Some("1"));
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            assert_eq!(arg_value(&args, "-c:v"), Some("libx264"));
+            assert_eq!(arg_value(&args, "-preset"), Some("veryfast"));
+            assert_eq!(arg_value(&args, "-tune"), Some("zerolatency"));
+        }
         assert_eq!(arg_value(&args, "-c:a"), Some("pcm_s16le"));
         assert!(args.iter().any(|arg| arg == "-shortest"));
 
@@ -8613,7 +8657,7 @@ mod tests {
         }
         #[cfg(not(target_os = "macos"))]
         {
-            assert_eq!(arg_value(&args, "-c:v"), Some("h264_videotoolbox"));
+            assert_eq!(arg_value(&args, "-c:v"), Some("libx264"));
             assert_eq!(
                 input_arg_value(&args, &fifo_path.display().to_string(), "-pix_fmt"),
                 Some("yuv420p")
@@ -8700,9 +8744,8 @@ mod tests {
                 tee_spec.contains("onfail=ignore"),
                 "a refused RTMP target must be a dead leg, never a dead session: {tee_spec}"
             );
-            // FIXME(linux): h264_videotoolbox is an Apple encoder; the Linux
-            // encoding slice must swap the raw-output encode to libx264/VAAPI.
-            assert_eq!(arg_value(&args, "-c:v"), Some("h264_videotoolbox"));
+            // Raw legs encode in software off macOS until VAAPI/NVENC land.
+            assert_eq!(arg_value(&args, "-c:v"), Some("libx264"));
             assert_eq!(
                 input_arg_value(&args, &fifo_path.display().to_string(), "-pix_fmt"),
                 Some("yuv420p")
@@ -8799,7 +8842,7 @@ mod tests {
         }
         #[cfg(not(target_os = "macos"))]
         {
-            assert_eq!(arg_value(&args, "-c:v"), Some("h264_videotoolbox"));
+            assert_eq!(arg_value(&args, "-c:v"), Some("libx264"));
             assert_eq!(
                 input_arg_value(&args, &fifo_path.display().to_string(), "-pix_fmt"),
                 Some("yuv420p")
@@ -9533,9 +9576,17 @@ mod tests {
         assert_eq!(arg_value(&args, "-ac"), Some("2"));
         assert_eq!(arg_value(&args, "-c:a"), Some("aac"));
         assert_eq!(arg_value(&args, "-b:a"), Some("160k"));
-        assert_eq!(arg_value(&args, "-allow_sw"), Some("1"));
-        assert_eq!(arg_value(&args, "-realtime"), Some("1"));
-        assert_eq!(arg_value(&args, "-prio_speed"), Some("1"));
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(arg_value(&args, "-allow_sw"), Some("1"));
+            assert_eq!(arg_value(&args, "-realtime"), Some("1"));
+            assert_eq!(arg_value(&args, "-prio_speed"), Some("1"));
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            assert_eq!(arg_value(&args, "-preset"), Some("veryfast"));
+            assert_eq!(arg_value(&args, "-tune"), Some("zerolatency"));
+        }
         // A pinned 2-second keyframe interval so YouTube (and HLS/DVR) go live.
         assert_eq!(
             arg_value(&args, "-force_key_frames"),
