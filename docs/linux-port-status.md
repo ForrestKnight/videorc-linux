@@ -15,7 +15,7 @@ clean GNOME/KDE VM at packaging time.
 | Build/lint/tests | — | **Green** (fmt, clippy `-D warnings`, 695 tests; `pnpm typecheck`/`lint`/`build`, desktop + script tests) since `linux/phase0-compile` |
 | Backend launch + WS protocol | axum/WS | **Green** — Electron dev app launches on Wayland, backend spawns via cargo, WS READY handshake and session protocol verified by `smoke:dev` |
 | Synthetic recording | Compositor → FIFO → FFmpeg | **Green** — `pnpm smoke:dev` passes all five layout scenarios on Linux (60 frames, A/V skew 16ms, artifact-analyzed) |
-| Microphone | CoreAudio | Stubbed (`bail!`), planned on PipeWire (phase 1) |
+| Microphone | CoreAudio | **Green (PipeWire)** — enumeration with default marker, meter, live capture through the shared FIFO/epoch pipeline; gated by `pnpm smoke:linux-mic` (virtual-mic, no hardware needed). Desktop audio (monitor sources) is a follow-up slice |
 | Camera | AVFoundation | Stubbed (`bail!`), planned on V4L2 (phase 2) |
 | Screen/window capture | ScreenCaptureKit | Stubbed (`bail!`), planned on portal ScreenCast + PipeWire (phase 3) |
 | Composition | Metal GPU (`metal_compositor.rs`) | CPU compositor path is portable, compiles, and composits the synthetic scenes in `smoke:dev`; GPU path correctly gated off. wgpu port is a later phase |
