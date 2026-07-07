@@ -24,3 +24,6 @@ apps/desktop/dist/
 
 # Private per-machine agent routing config — never ship
 /CLAUDE.md
+
+# Local working notes for the Linux port — never committed
+.devnotes/
