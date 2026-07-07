@@ -17,7 +17,7 @@ clean GNOME/KDE VM at packaging time.
 | Synthetic recording | Compositor → FIFO → FFmpeg | **Green** — `pnpm smoke:dev` passes all five layout scenarios on Linux (60 frames, A/V skew 16ms, artifact-analyzed) |
 | Microphone | CoreAudio | **Green (PipeWire)** — enumeration with default marker, meter, live capture through the shared FIFO/epoch pipeline; gated by `pnpm smoke:linux-mic` (virtual-mic, no hardware needed). Desktop audio (monitor sources) is a follow-up slice |
 | Camera | AVFoundation | **Green (V4L2)** — enumeration with capability matrix, live BGRA capture (NV12/YU12/YUYV/UYVY/MJPG) into the shared preview/compositor store, recording verified on a Cam Link 4K; gated by `pnpm smoke:linux-camera` (skips explicitly without a camera) |
-| Screen/window capture | ScreenCaptureKit | Stubbed (`bail!`), planned on portal ScreenCast + PipeWire (phase 3) |
+| Screen/window capture | ScreenCaptureKit | **Green (portal ScreenCast + PipeWire)** — one portal source entry (compositor picker chooses the monitor/window), live BGRA capture into the shared preview/compositor store, restore-token persistence (per source id, cleared on cancelled re-grant), recording verified end to end on Hyprland (3840×2560, 90-frame artifact). Gated by `pnpm smoke:linux-screen` (SKIPs explicitly without a grant, like upstream's macOS device smokes) |
 | Composition | Metal GPU (`metal_compositor.rs`) | CPU compositor path is portable, compiles, and composits the synthetic scenes in `smoke:dev`; GPU path correctly gated off. wgpu port is a later phase |
 | Preview | Detached native CAMetalLayer window | Falls back to image polling with an explicit reason ("no Metal IOSurface target"), surfaced in backend status; native wgpu preview later |
 | Encoding | VideoToolbox H.264 (+ `RawYuv420p` raw mode) | **Working (software)** — raw legs encode with libx264 `veryfast`+`zerolatency` via the `platform_h264_encoder_args` seam; diagnostics report `SoftwareX264` truthfully. VAAPI/NVENC later as flag swaps in the same seam |
@@ -32,9 +32,11 @@ clean GNOME/KDE VM at packaging time.
 - **Preview falls back to image polling** — the backend logs and status carry
   the explicit reason ("the compositor status carries no Metal IOSurface
   target"), matching the native-preview rules.
-- **Device lists are empty-with-reason** — `devices.rs`, camera and microphone
-  discovery all return explicit "only implemented on macOS" warnings rather
-  than empty silence, until phases 1–3 fill the seams.
+- **Screen capture requires a one-time interactive grant** — the compositor
+  picker is the Wayland permission model; the first grant is a human click,
+  after which the persisted restore token makes it headless. The screen smoke
+  SKIPs explicitly (never hangs) without a grant. This is the direct analog of
+  the macOS screen-recording permission the upstream device smokes require.
 
 ## Known gaps
 
