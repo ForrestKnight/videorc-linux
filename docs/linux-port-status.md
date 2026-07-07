@@ -21,7 +21,8 @@ clean GNOME/KDE VM at packaging time.
 | Composition | Metal GPU (`metal_compositor.rs`) | CPU compositor path is portable, compiles, and composits the synthetic scenes in `smoke:dev`; GPU path correctly gated off. wgpu port is a later phase |
 | Preview | Detached native CAMetalLayer window | Falls back to image polling with an explicit reason ("no Metal IOSurface target"), surfaced in backend status; native wgpu preview later |
 | Encoding | VideoToolbox H.264 (+ `RawYuv420p` raw mode) | **Working (software)** — raw legs encode with libx264 `veryfast`+`zerolatency` via the `platform_h264_encoder_args` seam; diagnostics report `SoftwareX264` truthfully. VAAPI/NVENC later as flag swaps in the same seam |
-| Streaming | FFmpeg RTMP (tee / fifo-muxer legs) | Arg-building compiles and is platform-forked in tests; end-to-end verification is phase 4 |
+| Streaming | FFmpeg RTMP (tee / fifo-muxer legs) | **Green** — `smoke:multistream` fans one encode to multiple local RTMP listeners with per-leg artifact gates; offline legs isolated; verified on Linux unmodified |
+| Composition (multi-source) | Metal GPU | **Green (CPU)** — `smoke:dev` composites all five layout presets (ffprobe-checked); `smoke:linux-studio` blended screen+camera+mic into one recording (correct 30fps cadence, 15ms A/V skew, non-silent audio). Note: native-resolution (4K/5K) screen composite is slow to warm up in a debug build — a phase-6 perf item (release build + dmabuf zero-copy), not a correctness gap |
 | Storage/protocol/state | Portable | Compiles; Linux default DB path `~/.videorc/videorc.sqlite3` (existing seam), recordings default `~/Movies/Videorc/Recordings` (macOS convention leaking — candidate for an XDG `~/Videos` island) |
 | FFmpeg provisioning | `build-ffmpeg-macos.sh` / `fetch-ffmpeg-windows.mjs` | Not started (phase 5); resolution is env-var + PATH (`VIDEORC_BUNDLED_FFMPEG_PATH`), so system FFmpeg works for development |
 

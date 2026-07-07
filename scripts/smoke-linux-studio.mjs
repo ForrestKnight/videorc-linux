@@ -24,7 +24,7 @@ const PORTAL_SCREEN_ID = 'screen:portal:screencast'
 const SINK_NAME = 'videorc_studio_sink'
 const MIC_NAME = 'videorc_studio_mic'
 const MIC_DESCRIPTION = 'VideorcStudioMic'
-const RECORDING_MS = Number(process.env.VIDEORC_SMOKE_RECORDING_MS ?? 4000)
+const RECORDING_MS = Number(process.env.VIDEORC_SMOKE_RECORDING_MS ?? 6000)
 const timeoutMs = Number(process.env.VIDEORC_SMOKE_TIMEOUT_MS ?? 180000)
 const interactive = process.env.VIDEORC_SCREEN_INTERACTIVE === '1'
 const hasToken = !!process.env.VIDEORC_SCREENCAST_RESTORE_TOKEN
@@ -136,6 +136,13 @@ try {
     sideBySideCameraSide: 'right'
   }
   const sources = { screenId: PORTAL_SCREEN_ID, cameraId: camera.id, microphoneId: mic.id }
+
+  // Warm the compositor before recording: a native-resolution screen source
+  // (often 4K/5K) makes the debug-build CPU composite slow to produce its
+  // first frame, and the recording sources-ready barrier would otherwise eat
+  // most of the window. This is a debug-build warmup only; release builds and
+  // the phase-6 dmabuf path remove it.
+  await sleep(3000)
 
   const started = await request(ws, timeoutMs, 'session.start', {
     sources,
