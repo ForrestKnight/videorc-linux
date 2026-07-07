@@ -135,7 +135,35 @@ try {
       `peakDb=${meter.peakDb?.toFixed(1)}`
   )
 
-  // 3. A recording with this mic carries its audio.
+  // 3. Desktop audio: the smoke's own null sink is a sink like any other —
+  // its monitor must list as a desktop-audio input and the meter must hear
+  // the tone through the capture-sink path.
+  const monitor = (deviceList.devices ?? []).find(
+    (device) => device.kind === 'microphone' && device.name === 'Monitor of VideorcSmokeSink'
+  )
+  if (!monitor) {
+    throw new Error('Sink monitor was not listed as a desktop-audio input.')
+  }
+  if (!monitor.detail?.startsWith('PipeWire desktop audio')) {
+    throw new Error(`Sink monitor has unexpected detail: ${monitor.detail}`)
+  }
+  const monitorMeter = await request(ws, timeoutMs, 'audio.meter.sample', {
+    microphoneId: monitor.id,
+    microphoneGainDb: 0,
+    microphoneMuted: false
+  })
+  if (monitorMeter.status !== 'ready' || !(monitorMeter.level > 0.05)) {
+    throw new Error(
+      `Desktop-audio meter did not hear the tone: status=${monitorMeter.status} ` +
+        `level=${monitorMeter.level}`
+    )
+  }
+  console.log(
+    `Linux mic smoke desktop-audio PASS: ${monitor.name} -> ${monitor.id} ` +
+      `level=${monitorMeter.level.toFixed(2)}`
+  )
+
+  // 4. A recording with this mic carries its audio.
   const started = await request(ws, timeoutMs, 'session.start', {
     sources: { testPattern: true, microphoneId: microphone.id },
     layout: {

@@ -1020,6 +1020,18 @@ mod linux {
         node_id: u32,
         label: String,
         node_name: String,
+        /// An `Audio/Sink` captured through its monitor — desktop audio. The
+        /// dedicated SystemAudio device kind stays reserved for upstream's
+        /// (pending) native adapter design; monitors ride the regular audio
+        /// input slot, the ecosystem convention on Linux.
+        sink_monitor: bool,
+    }
+
+    #[derive(Debug, Clone, Default)]
+    struct AudioGraphSnapshot {
+        sources: Vec<SourceNodeInfo>,
+        default_source: Option<String>,
+        default_sink: Option<String>,
     }
 
     /// Keeps the capture thread stoppable from `Drop`: the quit sender wakes
@@ -1056,34 +1068,37 @@ mod linux {
         let core = context.connect_rc(None).context(
             "Could not connect to PipeWire. Is the PipeWire daemon running for this session?",
         )?;
-        let (sources, default_node_name) = collect_audio_sources(&mainloop, &core)?;
-        if sources.is_empty() {
+        let snapshot = collect_audio_sources(&mainloop, &core)?;
+        if snapshot.sources.is_empty() {
             bail!("PipeWire did not report any audio input devices");
         }
-        Ok(microphone_devices(sources, default_node_name.as_deref()))
+        Ok(microphone_devices(snapshot))
     }
 
-    /// One registry roundtrip collecting every `Audio/Source` node plus the
-    /// session manager's default-source node name from the "default"
-    /// metadata object. Two syncs: the first flushes registry globals (which
-    /// binds the metadata proxy), the second flushes the bound proxy's
-    /// property events.
+    /// One registry roundtrip collecting every capturable audio node —
+    /// `Audio/Source` microphones plus `Audio/Sink` monitors (desktop audio)
+    /// — and the session manager's default source/sink names from the
+    /// "default" metadata object. Two syncs: the first flushes registry
+    /// globals (which binds the metadata proxy), the second flushes the
+    /// bound proxy's property events.
     fn collect_audio_sources(
         mainloop: &pw::main_loop::MainLoopRc,
         core: &pw::core::CoreRc,
-    ) -> Result<(Vec<SourceNodeInfo>, Option<String>)> {
+    ) -> Result<AudioGraphSnapshot> {
         let registry = core
             .get_registry_rc()
             .context("Could not get the PipeWire registry")?;
 
         let sources: Rc<RefCell<Vec<SourceNodeInfo>>> = Rc::default();
         let default_source: Rc<RefCell<Option<String>>> = Rc::default();
+        let default_sink: Rc<RefCell<Option<String>>> = Rc::default();
         let metadata_holds: Rc<
             RefCell<Vec<(pw::metadata::Metadata, pw::metadata::MetadataListener)>>,
         > = Rc::default();
 
         let sources_clone = sources.clone();
-        let default_clone = default_source.clone();
+        let default_source_clone = default_source.clone();
+        let default_sink_clone = default_sink.clone();
         let holds_clone = metadata_holds.clone();
         let registry_clone = registry.clone();
         let _registry_listener = registry
@@ -1093,21 +1108,25 @@ mod linux {
                 match global.type_ {
                     pw::types::ObjectType::Node => {
                         let media_class = props.get("media.class").unwrap_or("");
-                        // Physical + virtual microphones. Sink monitors are a
-                        // separate media class and a separate (desktop-audio)
-                        // slice.
-                        if media_class == "Audio/Source" || media_class == "Audio/Source/Virtual" {
-                            sources_clone.borrow_mut().push(SourceNodeInfo {
-                                node_id: global.id,
-                                label: props
-                                    .get("node.description")
-                                    .or_else(|| props.get("node.nick"))
-                                    .or_else(|| props.get("node.name"))
-                                    .unwrap_or("PipeWire input")
-                                    .to_string(),
-                                node_name: props.get("node.name").unwrap_or("").to_string(),
-                            });
-                        }
+                        // Physical + virtual microphones, and sinks — a sink
+                        // is capturable through its monitor ports (desktop
+                        // audio).
+                        let sink_monitor = match media_class {
+                            "Audio/Source" | "Audio/Source/Virtual" => false,
+                            "Audio/Sink" => true,
+                            _ => return,
+                        };
+                        sources_clone.borrow_mut().push(SourceNodeInfo {
+                            node_id: global.id,
+                            label: props
+                                .get("node.description")
+                                .or_else(|| props.get("node.nick"))
+                                .or_else(|| props.get("node.name"))
+                                .unwrap_or("PipeWire input")
+                                .to_string(),
+                            node_name: props.get("node.name").unwrap_or("").to_string(),
+                            sink_monitor,
+                        });
                     }
                     pw::types::ObjectType::Metadata => {
                         if props.get("metadata.name") != Some("default") {
@@ -1117,14 +1136,27 @@ mod linux {
                         else {
                             return;
                         };
-                        let default_clone = default_clone.clone();
+                        let default_source_clone = default_source_clone.clone();
+                        let default_sink_clone = default_sink_clone.clone();
                         let listener = metadata
                             .add_listener_local()
                             .property(move |_subject, key, _type, value| {
-                                if key == Some("default.audio.source")
-                                    && let Some(name) = value.and_then(extract_default_node_name)
-                                {
-                                    *default_clone.borrow_mut() = Some(name);
+                                match key {
+                                    Some("default.audio.source") => {
+                                        if let Some(name) =
+                                            value.and_then(extract_default_node_name)
+                                        {
+                                            *default_source_clone.borrow_mut() = Some(name);
+                                        }
+                                    }
+                                    Some("default.audio.sink") => {
+                                        if let Some(name) =
+                                            value.and_then(extract_default_node_name)
+                                        {
+                                            *default_sink_clone.borrow_mut() = Some(name);
+                                        }
+                                    }
+                                    _ => {}
                                 }
                                 0
                             })
@@ -1162,9 +1194,12 @@ mod linux {
             .register();
         mainloop.run();
 
-        let collected = sources.borrow().clone();
-        let default_node_name = default_source.borrow().clone();
-        Ok((collected, default_node_name))
+        let snapshot = AudioGraphSnapshot {
+            sources: sources.borrow().clone(),
+            default_source: default_source.borrow().clone(),
+            default_sink: default_sink.borrow().clone(),
+        };
+        Ok(snapshot)
     }
 
     /// The "default" metadata value is JSON shaped like {"name":"alsa_input…"}.
@@ -1176,42 +1211,64 @@ mod linux {
             .map(str::to_string)
     }
 
-    fn microphone_devices(
-        sources: Vec<SourceNodeInfo>,
-        default_node_name: Option<&str>,
-    ) -> Vec<Device> {
-        let mut devices: Vec<Device> = sources
+    fn microphone_devices(snapshot: AudioGraphSnapshot) -> Vec<Device> {
+        let AudioGraphSnapshot {
+            sources,
+            default_source,
+            default_sink,
+        } = snapshot;
+        // Microphones first (default first), then desktop-audio monitors
+        // (default output first) — the mic slot is the common pick.
+        let mut ranked: Vec<(u8, Device)> = sources
             .into_iter()
             .map(|source| {
-                let is_default = default_node_name == Some(source.node_name.as_str());
-                Device {
-                    id: format!("microphone:pipewire:{}", source.node_id),
-                    name: source.label,
-                    kind: DeviceKind::Microphone,
-                    status: DeviceStatus::Available,
-                    detail: Some(if is_default {
-                        "PipeWire input · default".to_string()
-                    } else {
-                        "PipeWire input".to_string()
-                    }),
-                    width: None,
-                    height: None,
-                }
+                let is_default = if source.sink_monitor {
+                    default_sink.as_deref() == Some(source.node_name.as_str())
+                } else {
+                    default_source.as_deref() == Some(source.node_name.as_str())
+                };
+                let rank = match (source.sink_monitor, is_default) {
+                    (false, true) => 0,
+                    (false, false) => 1,
+                    (true, true) => 2,
+                    (true, false) => 3,
+                };
+                let (name, detail) = if source.sink_monitor {
+                    (
+                        format!("Monitor of {}", source.label),
+                        if is_default {
+                            "PipeWire desktop audio · default output".to_string()
+                        } else {
+                            "PipeWire desktop audio".to_string()
+                        },
+                    )
+                } else {
+                    (
+                        source.label,
+                        if is_default {
+                            "PipeWire input · default".to_string()
+                        } else {
+                            "PipeWire input".to_string()
+                        },
+                    )
+                };
+                (
+                    rank,
+                    Device {
+                        id: format!("microphone:pipewire:{}", source.node_id),
+                        name,
+                        kind: DeviceKind::Microphone,
+                        status: DeviceStatus::Available,
+                        detail: Some(detail),
+                        width: None,
+                        height: None,
+                    },
+                )
             })
             .collect();
 
-        devices.sort_by_key(|device| {
-            if device
-                .detail
-                .as_deref()
-                .is_some_and(|detail| detail.contains("default"))
-            {
-                (0, device.name.clone())
-            } else {
-                (1, device.name.clone())
-            }
-        });
-        devices
+        ranked.sort_by_key(|(rank, device)| (*rank, device.name.clone()));
+        ranked.into_iter().map(|(_, device)| device).collect()
     }
 
     pub(super) fn start_platform_audio_source(
@@ -1291,21 +1348,29 @@ mod linux {
             "Could not connect to PipeWire. Is the PipeWire daemon running for this session?",
         )?;
 
-        let (sources, _default) = collect_audio_sources(&mainloop, &core)?;
-        let Some(node) = sources.into_iter().find(|source| source.node_id == node_id) else {
+        let snapshot = collect_audio_sources(&mainloop, &core)?;
+        let Some(node) = snapshot
+            .sources
+            .into_iter()
+            .find(|source| source.node_id == node_id)
+        else {
             bail!(
-                "Microphone (PipeWire node {node_id}) was not found. It may have been \
+                "Audio input (PipeWire node {node_id}) was not found. It may have been \
                  unplugged — refresh the device list and pick another input."
             );
         };
 
-        let props = properties! {
+        let mut props = properties! {
             *pw::keys::MEDIA_TYPE => "Audio",
             *pw::keys::MEDIA_CATEGORY => "Capture",
             *pw::keys::MEDIA_ROLE => "Communication",
             *pw::keys::NODE_NAME => "videorc-microphone",
             *pw::keys::TARGET_OBJECT => node.node_name.clone(),
         };
+        // Sinks are captured through their monitor ports — desktop audio.
+        if node.sink_monitor {
+            props.insert(*pw::keys::STREAM_CAPTURE_SINK, "true");
+        }
         let stream = pw::stream::StreamBox::new(&core, "videorc-microphone", props)
             .context("Could not create a PipeWire capture stream")?;
 
@@ -1451,6 +1516,14 @@ mod linux {
                 node_id,
                 label: label.to_string(),
                 node_name: node_name.to_string(),
+                sink_monitor: false,
+            }
+        }
+
+        fn sink(node_id: u32, label: &str, node_name: &str) -> SourceNodeInfo {
+            SourceNodeInfo {
+                sink_monitor: true,
+                ..node(node_id, label, node_name)
             }
         }
 
@@ -1466,13 +1539,14 @@ mod linux {
 
         #[test]
         fn microphone_devices_sort_default_first_and_carry_pipewire_ids() {
-            let devices = microphone_devices(
-                vec![
+            let devices = microphone_devices(AudioGraphSnapshot {
+                sources: vec![
                     node(70, "Cam Link 4K", "alsa_input.camlink"),
                     node(66, "Scarlett Solo Mic", "alsa_input.scarlett"),
                 ],
-                Some("alsa_input.scarlett"),
-            );
+                default_source: Some("alsa_input.scarlett".to_string()),
+                default_sink: None,
+            });
 
             assert_eq!(devices[0].id, "microphone:pipewire:66");
             assert_eq!(
@@ -1484,11 +1558,36 @@ mod linux {
         }
 
         #[test]
-        fn unknown_default_marks_nothing() {
-            let devices = microphone_devices(
-                vec![node(66, "Scarlett Solo Mic", "alsa_input.scarlett")],
-                None,
+        fn sink_monitors_list_as_desktop_audio_after_microphones() {
+            let devices = microphone_devices(AudioGraphSnapshot {
+                sources: vec![
+                    sink(62, "USB DAC", "alsa_output.dac"),
+                    sink(73, "HDMI Audio", "alsa_output.hdmi"),
+                    node(66, "Scarlett Solo Mic", "alsa_input.scarlett"),
+                ],
+                default_source: None,
+                default_sink: Some("alsa_output.dac".to_string()),
+            });
+
+            // Mic (even non-default) outranks every monitor.
+            assert_eq!(devices[0].id, "microphone:pipewire:66");
+            // Default output's monitor leads the desktop-audio block.
+            assert_eq!(devices[1].name, "Monitor of USB DAC");
+            assert_eq!(
+                devices[1].detail.as_deref(),
+                Some("PipeWire desktop audio · default output")
             );
+            assert_eq!(devices[2].name, "Monitor of HDMI Audio");
+            assert_eq!(devices[2].detail.as_deref(), Some("PipeWire desktop audio"));
+        }
+
+        #[test]
+        fn unknown_default_marks_nothing() {
+            let devices = microphone_devices(AudioGraphSnapshot {
+                sources: vec![node(66, "Scarlett Solo Mic", "alsa_input.scarlett")],
+                default_source: None,
+                default_sink: None,
+            });
             assert_eq!(devices[0].detail.as_deref(), Some("PipeWire input"));
         }
     }
