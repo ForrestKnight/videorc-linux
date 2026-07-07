@@ -434,6 +434,23 @@ describe('ScreenCaptureKit capture device filtering', () => {
 
     expect(capturePickerDevices([camera, legacyDisplay])).toEqual([legacyDisplay])
   })
+
+  it('offers the Linux portal ScreenCast entry as a native screen source', () => {
+    const portal: Device = {
+      id: 'screen:portal:screencast',
+      name: 'Screen or window (system picker)',
+      kind: 'screen',
+      status: 'available'
+    }
+    const camera: Device = {
+      id: 'camera:v4l2-native:2f6465762f766964656f30',
+      name: 'Cam Link 4K',
+      kind: 'camera',
+      status: 'available'
+    }
+
+    expect(capturePickerDevices([portal, camera])).toEqual([portal])
+  })
 })
 
 describe('smokePreviewCompositorCaptureConfig', () => {

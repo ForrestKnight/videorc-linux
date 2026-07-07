@@ -1188,8 +1188,20 @@ function sourceIdentityFor(device: Device | undefined): { id?: string; name?: st
   return { id: device?.id, name: device?.name }
 }
 
+// Linux's single portal ScreenCast source id. The compositor's own picker
+// chooses the concrete monitor/window at capture time, so there is one entry
+// (see screen_capture.rs). It is the native screen capture on Linux, so it
+// counts as a native screen source everywhere the pickers do.
+export const PORTAL_SCREEN_SOURCE_ID = 'screen:portal:screencast'
+
+export function isPortalScreenSourceId(sourceId: string | undefined): boolean {
+  return sourceId === PORTAL_SCREEN_SOURCE_ID
+}
+
 export function isNativeScreenSourceId(sourceId: string | undefined): boolean {
-  return sourceId?.startsWith('screen:screencapturekit:') === true
+  return (
+    sourceId?.startsWith('screen:screencapturekit:') === true || isPortalScreenSourceId(sourceId)
+  )
 }
 
 export function isNativeWindowSourceId(sourceId: string | undefined): boolean {

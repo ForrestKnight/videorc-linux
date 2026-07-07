@@ -4153,6 +4153,41 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     }
   }, [softwarePreview, connection, wsStatus, isSessionActive])
 
+  // Software preview scene sync (Linux etc.): start the capture the current
+  // scene needs, then commit the scene to the backend compositor so it
+  // composites the real sources instead of its idle test pattern. The JPEG
+  // bridge then streams that composited scene to the inline preview.
+  const syncSoftwarePreviewScene = useCallback(async () => {
+    const activeClient = clientRef.current
+    if (!softwarePreview || !activeClient || wsStatus !== 'connected' || isSessionActive) {
+      return
+    }
+    await Promise.all([ensureNativePreviewCamera(), ensureNativePreviewScreen()])
+    const compositorStatus = await activeClient.request<CompositorStatus>('compositor.status')
+    const revision = (compositorStatus.sceneRevision ?? 0) + 1
+    await activeClient.request<CompositorStatus>('compositor.scene.update', {
+      revision,
+      scene: sceneWithBackground,
+      layout: captureConfig.layout,
+      activeScreen: activeScreen ?? null
+    })
+  }, [
+    softwarePreview,
+    wsStatus,
+    isSessionActive,
+    ensureNativePreviewCamera,
+    ensureNativePreviewScreen,
+    sceneWithBackground,
+    captureConfig.layout,
+    activeScreen
+  ])
+
+  useEffect(() => {
+    void syncSoftwarePreviewScene().catch((error: unknown) => {
+      console.error('Software preview scene sync failed:', error)
+    })
+  }, [syncSoftwarePreviewScene])
+
   useEffect(() => {
     if (aiConsent && !currentCloudAiReadiness.ready) {
       setAiConsent(false)
