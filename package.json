@@ -80,6 +80,7 @@
     "smoke:linux-mic": "node scripts/smoke-linux-mic.mjs",
     "smoke:linux-camera": "node scripts/smoke-linux-camera.mjs",
     "smoke:linux-screen": "node scripts/smoke-linux-screen.mjs",
+    "smoke:linux-studio": "node scripts/smoke-linux-studio.mjs",
     "smoke:account-auth": "node scripts/smoke-account-auth.mjs",
     "smoke:sources": "node scripts/smoke-source-reconciliation.mjs",
     "smoke:session-ops": "node scripts/smoke-session-ops.mjs",
