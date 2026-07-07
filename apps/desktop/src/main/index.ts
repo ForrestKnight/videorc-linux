@@ -136,6 +136,15 @@ import type {
   RuntimeInfo
 } from '../shared/backend'
 
+// Headless/software-rendering escape hatch: some Linux sessions (and CI) cannot
+// launch Electron's GPU process, which is otherwise fatal. Set VIDEORC_DISABLE_GPU=1
+// to run with hardware acceleration off. Must be called before app is ready.
+if (process.env.VIDEORC_DISABLE_GPU === '1') {
+  app.disableHardwareAcceleration()
+  app.commandLine.appendSwitch('disable-gpu')
+  app.commandLine.appendSwitch('disable-gpu-compositing')
+}
+
 let mainWindow: BrowserWindow | null = null
 let nativePreviewSurfaceWindow: BrowserWindow | null = null
 let notesWindow: BrowserWindow | null = null
