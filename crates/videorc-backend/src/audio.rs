@@ -1,3 +1,5 @@
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
+
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{self, Write};

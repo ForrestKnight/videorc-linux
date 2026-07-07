@@ -1,3 +1,5 @@
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
+
 use std::io::{self, Write};
 
 const TS_PACKET_SIZE: usize = 188;

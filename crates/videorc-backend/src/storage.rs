@@ -1964,12 +1964,23 @@ mod tests {
         assert_eq!(database.reconcile_orphaned_sessions().unwrap(), 0);
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn default_database_path_uses_application_support_on_macos() {
         let path = default_database_path();
         let rendered = path.display().to_string();
 
         assert!(rendered.contains("Videorc"));
+        assert!(rendered.ends_with("videorc.sqlite3"));
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[test]
+    fn default_database_path_uses_dot_videorc_elsewhere() {
+        let path = default_database_path();
+        let rendered = path.display().to_string();
+
+        assert!(rendered.contains(".videorc"));
         assert!(rendered.ends_with("videorc.sqlite3"));
     }
 

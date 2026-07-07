@@ -1,7 +1,12 @@
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
+
+#[cfg(target_os = "macos")]
 use std::sync::mpsc;
 use std::time::Duration;
 
-use crate::protocol::{Device, DeviceKind, DeviceStatus};
+#[cfg(target_os = "macos")]
+use crate::protocol::DeviceKind;
+use crate::protocol::{Device, DeviceStatus};
 
 const SCREEN_CAPTUREKIT_PREFIX: &str = "screen:screencapturekit:";
 const WINDOW_CAPTUREKIT_PREFIX: &str = "window:screencapturekit:";
