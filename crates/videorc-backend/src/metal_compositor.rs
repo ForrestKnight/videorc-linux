@@ -148,15 +148,10 @@ pub struct GpuSource<'a> {
     pub mask: SourceMask,
 }
 
-/// Camera-bubble mask shared by both software compositors (the FFmpeg leg mirrors
-/// the same constants in its filter graph).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SourceMask {
-    None,
-    Circle,
-    Rounded { radius_pct: u32 },
-}
+pub use crate::compositor::SourceMask;
 
+/// Metal-shader packing for the shared mask; the enum itself lives in the CPU
+/// compositor so non-Metal platforms can build it.
 impl SourceMask {
     pub fn circle_flag(self) -> f32 {
         if matches!(self, SourceMask::Circle) {

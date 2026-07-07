@@ -1629,7 +1629,7 @@ struct PreparedGpuSource<'a> {
     dest: [f32; 4],
     crop: [f32; 4],
     mirror: bool,
-    mask: crate::metal_compositor::SourceMask,
+    mask: SourceMask,
 }
 
 #[cfg(target_os = "macos")]
@@ -1714,11 +1714,6 @@ fn scene_source_kind_label(kind: &SceneSourceKind) -> &'static str {
     }
 }
 
-/// Compose the scene on the GPU for the cases the GPU path reproduces exactly:
-/// Screen/Window/Camera/TestPattern sources with transform crop, cover/contain fitting,
-/// camera mirror, and camera circle masks. Uploaded-image sources still fall back to the
-/// CPU compositor when uncached, so enabling the flag never produces a frame for a case
-/// the GPU path cannot match.
 #[cfg(target_os = "macos")]
 /// Append the caption bar as the TOPMOST Metal image source. The bridge
 /// consumes Metal-composited surfaces directly, so the overlay must ride the
@@ -1776,10 +1771,16 @@ fn push_caption_overlay_gpu_source(
         dest,
         crop,
         mirror: false,
-        mask: crate::metal_compositor::SourceMask::None,
+        mask: SourceMask::None,
     });
 }
 
+/// Compose the scene on the GPU for the cases the GPU path reproduces exactly:
+/// Screen/Window/Camera/TestPattern sources with transform crop, cover/contain fitting,
+/// camera mirror, and camera circle masks. Uploaded-image sources still fall back to the
+/// CPU compositor when uncached, so enabling the flag never produces a frame for a case
+/// the GPU path cannot match.
+#[cfg(target_os = "macos")]
 fn try_gpu_compose(
     gpu: Option<&mut GpuCompositor>,
     inputs: &CompositorRenderInputs<'_>,
@@ -1829,7 +1830,7 @@ fn try_gpu_compose(
                     dest,
                     crop,
                     mirror: false,
-                    mask: crate::metal_compositor::SourceMask::None,
+                    mask: SourceMask::None,
                 });
                 true
             } else {
@@ -1879,7 +1880,7 @@ fn try_gpu_compose(
             dest,
             crop,
             mirror: false,
-            mask: crate::metal_compositor::SourceMask::None,
+            mask: SourceMask::None,
         });
         if let Some(overlay) = inputs.caption_overlay {
             push_caption_overlay_gpu_source(
@@ -1938,7 +1939,7 @@ fn try_gpu_compose(
             dest,
             crop,
             mirror: false,
-            mask: crate::metal_compositor::SourceMask::None,
+            mask: SourceMask::None,
         });
         if let Some(overlay) = inputs.caption_overlay {
             push_caption_overlay_gpu_source(
@@ -2076,7 +2077,7 @@ fn try_gpu_compose(
                         dest,
                         crop,
                         mirror: false,
-                        mask: crate::metal_compositor::SourceMask::None,
+                        mask: SourceMask::None,
                     });
                 } else {
                     let placeholder =
@@ -2101,7 +2102,7 @@ fn try_gpu_compose(
                         dest,
                         crop,
                         mirror: false,
-                        mask: crate::metal_compositor::SourceMask::None,
+                        mask: SourceMask::None,
                     });
                 }
             }
@@ -2127,7 +2128,7 @@ fn try_gpu_compose(
                     dest,
                     crop,
                     mirror: false,
-                    mask: crate::metal_compositor::SourceMask::None,
+                    mask: SourceMask::None,
                 });
             }
         }
@@ -2793,7 +2794,7 @@ fn render_compositor_yuv420p_scene(inputs: CompositorRenderInputs<'_>, bytes: &m
                     CompositorSceneSourceFit::Contain
                 ),
                 mirror_x: false,
-                mask: crate::metal_compositor::SourceMask::None,
+                mask: SourceMask::None,
             },
         ) {
             return;
@@ -2838,7 +2839,7 @@ fn render_compositor_yuv420p_scene(inputs: CompositorRenderInputs<'_>, bytes: &m
                             crop: source_crop_from_transform(&transform),
                             contain: screen_contain,
                             mirror_x: false,
-                            mask: crate::metal_compositor::SourceMask::None,
+                            mask: SourceMask::None,
                         },
                     )
                 } else if let Some(frame) = screen_frame {
@@ -2857,7 +2858,7 @@ fn render_compositor_yuv420p_scene(inputs: CompositorRenderInputs<'_>, bytes: &m
                             crop: source_crop_from_transform(&transform),
                             contain: screen_contain,
                             mirror_x: false,
-                            mask: crate::metal_compositor::SourceMask::None,
+                            mask: SourceMask::None,
                         },
                     )
                 } else {
@@ -3078,12 +3079,23 @@ enum SourcePixelFormat {
     Rgba,
 }
 
+/// Camera-bubble mask shared by both software compositors (the FFmpeg leg mirrors
+/// the same constants in its filter graph). Lives here rather than in the Metal
+/// module so the CPU compositor builds on every platform; the Metal shader
+/// packing helpers stay in `metal_compositor`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceMask {
+    None,
+    Circle,
+    Rounded { radius_pct: u32 },
+}
+
 #[derive(Debug, Clone, Copy)]
 struct SourceRenderOptions {
     crop: SourceCrop,
     contain: bool,
     mirror_x: bool,
-    mask: crate::metal_compositor::SourceMask,
+    mask: SourceMask,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -3164,7 +3176,7 @@ fn render_scene_background(
             crop: background_zoom_crop(Some(background)),
             contain: matches!(background.fit, BackgroundFit::Fit),
             mirror_x: false,
-            mask: crate::metal_compositor::SourceMask::None,
+            mask: SourceMask::None,
         },
     )
 }
@@ -3351,7 +3363,7 @@ fn render_synthetic_source_rect(
             crop: SourceCrop::none(),
             contain: false,
             mirror_x: false,
-            mask: crate::metal_compositor::SourceMask::None,
+            mask: SourceMask::None,
         },
     );
 }
@@ -3668,13 +3680,7 @@ fn map_source_pixel(
 /// so the "square" camera box renders slightly non-square). Using separate x/y radii here
 /// drew an ellipse; this matches the recording path's `circle_alpha_mask_filter` so the
 /// preview and the encoded file agree.
-fn source_mask_allows(
-    mask: crate::metal_compositor::SourceMask,
-    dest_x: usize,
-    dest_y: usize,
-    fit: &SourceFit,
-) -> bool {
-    use crate::metal_compositor::SourceMask;
+fn source_mask_allows(mask: SourceMask, dest_x: usize, dest_y: usize, fit: &SourceFit) -> bool {
     match mask {
         SourceMask::None => true,
         SourceMask::Circle => inside_circle(dest_x, dest_y, fit),
@@ -3813,7 +3819,7 @@ fn compositor_scene_sources(
                             CameraShape::Circle
                         } else if matches!(
                             camera_source_mask(&snapshot.layout),
-                            crate::metal_compositor::SourceMask::Rounded { .. }
+                            SourceMask::Rounded { .. }
                         ) {
                             CameraShape::Rounded
                         } else {
@@ -3908,8 +3914,7 @@ fn camera_circle_mask_applies(layout: &LayoutSettings) -> bool {
 /// The camera bubble's mask for BOTH software compositors — one derivation,
 /// mirrored by the FFmpeg filter graph (rounded_alpha_mask_filter): circle
 /// inscribes min(w,h); rounded clips corners at radius_pct% of the shorter side.
-fn camera_source_mask(layout: &LayoutSettings) -> crate::metal_compositor::SourceMask {
-    use crate::metal_compositor::SourceMask;
+fn camera_source_mask(layout: &LayoutSettings) -> SourceMask {
     if !matches!(layout.layout_preset, LayoutPreset::ScreenCamera) {
         return SourceMask::None;
     }
@@ -4359,7 +4364,7 @@ mod tests {
                 },
                 contain: false,
                 mirror_x: false,
-                mask: crate::metal_compositor::SourceMask::None,
+                mask: SourceMask::None,
             },
         ));
 
@@ -6799,7 +6804,6 @@ mod tests {
 
     #[test]
     fn camera_source_mask_follows_shape_and_preset() {
-        use crate::metal_compositor::SourceMask;
         let mut layout = crate::protocol::default_layout_settings();
         layout.layout_preset = LayoutPreset::ScreenCamera;
 
