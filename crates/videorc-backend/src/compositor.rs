@@ -12,6 +12,9 @@ use tokio::task::JoinHandle;
 use tokio::time::{Duration, MissedTickBehavior, sleep};
 use uuid::Uuid;
 
+#[cfg(target_os = "linux")]
+use rayon::prelude::*;
+
 use crate::color::rgb_to_yuv_full_range_bt601 as rgb_to_yuv;
 use crate::compositor_synthetic::SyntheticMovingSource;
 use crate::diagnostics::{
@@ -187,6 +190,10 @@ pub struct CompositorRuntime {
     run_id: Option<String>,
     stop_tx: Option<watch::Sender<bool>>,
     render_task: Option<JoinHandle<()>>,
+    /// Linux software-preview bridge: encodes composited frames to JPEG for the
+    /// `/preview/live.jpg` poller (there is no Metal surface to present). Always
+    /// `None` on macOS, where the native surface presents the compositor output.
+    preview_task: Option<JoinHandle<()>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -584,6 +591,7 @@ pub fn initial_compositor_state() -> CompositorRuntime {
         run_id: None,
         stop_tx: None,
         render_task: None,
+        preview_task: None,
     }
 }
 
@@ -642,8 +650,23 @@ pub async fn start_synthetic_compositor(
         compositor.latest_frame_evidence = None;
         compositor.status = status.clone();
         compositor.run_id = Some(run_id.clone());
+        // Linux software preview reads the compositor frame store; take a stop
+        // subscription before the sender moves into the runtime.
+        #[cfg(target_os = "linux")]
+        let preview_stop_rx = stop_tx.subscribe();
         compositor.stop_tx = Some(stop_tx);
         compositor.render_task = None;
+        if let Some(previous) = compositor.preview_task.take() {
+            previous.abort();
+        }
+        #[cfg(target_os = "linux")]
+        {
+            compositor.preview_task = Some(spawn_preview_jpeg_bridge(
+                state.clone(),
+                run_id.clone(),
+                preview_stop_rx,
+            ));
+        }
     }
 
     let render_task = spawn_compositor_render_loop(
@@ -727,6 +750,9 @@ pub async fn stop_compositor_if_run_id(state: &AppState, run_id: &str) -> Option
         }
         compositor.run_id = None;
         let previous_task = compositor.render_task.take();
+        if let Some(preview_task) = compositor.preview_task.take() {
+            preview_task.abort();
+        }
         compositor.latest_frame_evidence = None;
         compositor.stream_frame_store = None;
         let status = stopped_status(Some("Compositor stopped.".to_string()));
@@ -739,6 +765,136 @@ pub async fn stop_compositor_if_run_id(state: &AppState, run_id: &str) -> Option
     }
     state.emit_event("compositor.status", status.clone());
     Some(status)
+}
+
+/// Linux software preview: there is no Metal surface to present, so this task
+/// reads the CPU compositor's latest composited frame at ~15fps, encodes it to
+/// JPEG, and publishes it to `preview_latest_frame` — which the existing
+/// `/preview/live.jpg` endpoint serves and the Studio's preview panel renders
+/// inline. Stops when the compositor stops (the shared watch signal) or the
+/// run id changes.
+#[cfg(target_os = "linux")]
+fn spawn_preview_jpeg_bridge(
+    state: AppState,
+    run_id: String,
+    mut stop_rx: watch::Receiver<bool>,
+) -> JoinHandle<()> {
+    // ~15fps is plenty for a monitoring preview and keeps the JPEG encode off
+    // the compositor's frame budget entirely.
+    const PREVIEW_INTERVAL: Duration = Duration::from_millis(66);
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(PREVIEW_INTERVAL);
+        ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        let mut last_sequence = 0_u64;
+        loop {
+            tokio::select! {
+                changed = stop_rx.changed() => {
+                    if changed.is_err() || *stop_rx.borrow() {
+                        break;
+                    }
+                }
+                _ = ticker.tick() => {}
+            }
+
+            let frame = {
+                let compositor = state.compositor.lock().await;
+                if compositor.run_id.as_deref() != Some(run_id.as_str()) {
+                    break;
+                }
+                compositor
+                    .frame_store
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .latest()
+            };
+            let Some(frame) = frame else { continue };
+            if frame.sequence == last_sequence {
+                continue;
+            }
+            last_sequence = frame.sequence;
+
+            let jpeg = tokio::task::spawn_blocking(move || {
+                compositor_yuv420p_to_jpeg(&frame.bytes, frame.width, frame.height)
+            })
+            .await;
+            let Ok(Some(jpeg)) = jpeg else { continue };
+
+            let sequence = {
+                let mut metrics = state.preview_metrics.lock().await;
+                metrics.next_sequence = metrics.next_sequence.saturating_add(1);
+                metrics.next_sequence
+            };
+            *state.preview_latest_frame.write().await = Some(crate::state::PreviewFrame {
+                sequence,
+                bytes: jpeg,
+                published_at: Instant::now(),
+            });
+        }
+    })
+}
+
+/// I420 (planar YUV 4:2:0, full-range BT.601 — what the CPU compositor writes)
+/// to a JPEG. Downscales the long edge to at most `PREVIEW_MAX_EDGE` so the
+/// encode stays cheap regardless of output resolution. Returns `None` on a
+/// malformed/short buffer rather than encoding garbage.
+#[cfg(target_os = "linux")]
+fn compositor_yuv420p_to_jpeg(bytes: &[u8], width: u32, height: u32) -> Option<Vec<u8>> {
+    use crate::color::ycbcr_full_range_bt601_to_rgb;
+    use image::{ImageEncoder, codecs::jpeg::JpegEncoder, imageops::FilterType};
+
+    let width = width as usize;
+    let height = height as usize;
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let uv_width = width.div_ceil(2);
+    let uv_height = height.div_ceil(2);
+    let y_len = width * height;
+    let uv_len = uv_width * uv_height;
+    if bytes.len() < y_len + uv_len * 2 {
+        return None;
+    }
+    let (y_plane, rest) = bytes.split_at(y_len);
+    let (u_plane, v_plane) = rest.split_at(uv_len);
+
+    let mut rgb = vec![0_u8; width * height * 3];
+    rgb.par_chunks_mut(width * 3)
+        .enumerate()
+        .for_each(|(row, rgb_row)| {
+            let uv_row = row / 2;
+            for (col, pixel) in rgb_row.chunks_exact_mut(3).enumerate() {
+                let uv_index = uv_row * uv_width + (col / 2);
+                let (r, g, b) = ycbcr_full_range_bt601_to_rgb(
+                    y_plane[row * width + col],
+                    u_plane[uv_index],
+                    v_plane[uv_index],
+                );
+                pixel[0] = r;
+                pixel[1] = g;
+                pixel[2] = b;
+            }
+        });
+
+    let mut image = image::RgbImage::from_raw(width as u32, height as u32, rgb)?;
+    const PREVIEW_MAX_EDGE: u32 = 1280;
+    let long_edge = width.max(height) as u32;
+    if long_edge > PREVIEW_MAX_EDGE {
+        let scale = f64::from(PREVIEW_MAX_EDGE) / f64::from(long_edge);
+        let target_w = ((width as f64 * scale).round() as u32).max(1);
+        let target_h = ((height as f64 * scale).round() as u32).max(1);
+        image = image::imageops::resize(&image, target_w, target_h, FilterType::Triangle);
+    }
+
+    let mut jpeg = Vec::new();
+    JpegEncoder::new_with_quality(&mut jpeg, 80)
+        .write_image(
+            image.as_raw(),
+            image.width(),
+            image.height(),
+            image::ExtendedColorType::Rgb8,
+        )
+        .ok()?;
+    Some(jpeg)
 }
 
 fn spawn_compositor_render_loop(
@@ -1118,6 +1274,9 @@ async fn stop_current_compositor(state: &AppState) {
             let _ = stop_tx.send(true);
         }
         compositor.run_id = None;
+        if let Some(preview_task) = compositor.preview_task.take() {
+            preview_task.abort();
+        }
         compositor.render_task.take()
     };
 

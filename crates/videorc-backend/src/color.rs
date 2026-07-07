@@ -11,6 +11,22 @@ pub fn rgb_to_yuv_full_range_bt601(r: u8, g: u8, b: u8) -> (u8, u8, u8) {
     (y, u, v)
 }
 
+/// Exact inverse of [`rgb_to_yuv_full_range_bt601`]: full-range BT.601 Y'CbCr
+/// back to 8-bit RGB. Used by the Linux software preview to turn the CPU
+/// compositor's YUV420p output into RGB for JPEG encoding (the macOS preview
+/// presents the Metal surface directly and never needs this).
+#[allow(dead_code)] // only the Linux preview bridge calls this
+#[inline]
+pub fn ycbcr_full_range_bt601_to_rgb(y: u8, u: u8, v: u8) -> (u8, u8, u8) {
+    let c = i32::from(y);
+    let d = i32::from(u) - 128;
+    let e = i32::from(v) - 128;
+    let r = (c + ((359 * e) >> 8)).clamp(0, 255) as u8;
+    let g = (c - ((88 * d) >> 8) - ((183 * e) >> 8)).clamp(0, 255) as u8;
+    let b = (c + ((454 * d) >> 8)).clamp(0, 255) as u8;
+    (r, g, b)
+}
+
 /// BT.709 limited-("video"-)range Y'CbCr to BGR. Capture devices (e.g. an Elgato
 /// Cam Link 4K) deliver HD/4K frames as BT.709 video-range Y'CbCr (NV12 `420v`,
 /// UYVY `2vuy`); this maps a sample back to 8-bit BGR for the BGRA compositor
@@ -80,5 +96,26 @@ mod tests {
     fn rgb_to_yuv_full_range_bt601_maps_black_and_white_to_full_range_luma() {
         assert_eq!(rgb_to_yuv_full_range_bt601(0, 0, 0), (0, 128, 128));
         assert_eq!(rgb_to_yuv_full_range_bt601(255, 255, 255), (255, 128, 128));
+    }
+
+    #[test]
+    fn ycbcr_full_range_bt601_inverts_the_forward_conversion() {
+        // Black / white endpoints exact.
+        assert_eq!(ycbcr_full_range_bt601_to_rgb(0, 128, 128), (0, 0, 0));
+        assert_eq!(
+            ycbcr_full_range_bt601_to_rgb(255, 128, 128),
+            (255, 255, 255)
+        );
+        // Primaries round-trip within integer-math rounding tolerance.
+        for (r, g, b) in [(255, 0, 0), (0, 255, 0), (0, 0, 255), (120, 200, 40)] {
+            let (y, u, v) = rgb_to_yuv_full_range_bt601(r, g, b);
+            let (r2, g2, b2) = ycbcr_full_range_bt601_to_rgb(y, u, v);
+            assert!(
+                (i32::from(r) - i32::from(r2)).abs() <= 4
+                    && (i32::from(g) - i32::from(g2)).abs() <= 4
+                    && (i32::from(b) - i32::from(b2)).abs() <= 4,
+                "round-trip {r},{g},{b} -> {r2},{g2},{b2}"
+            );
+        }
     }
 }
