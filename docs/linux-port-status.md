@@ -24,7 +24,8 @@ clean GNOME/KDE VM at packaging time.
 | Streaming | FFmpeg RTMP (tee / fifo-muxer legs) | **Green** — `smoke:multistream` fans one encode to multiple local RTMP listeners with per-leg artifact gates; offline legs isolated; verified on Linux unmodified |
 | Composition (multi-source) | Metal GPU | **Green (CPU)** — `smoke:dev` composites all five layout presets (ffprobe-checked); `smoke:linux-studio` blended screen+camera+mic into one recording (correct 30fps cadence, 15ms A/V skew, non-silent audio). Note: native-resolution (4K/5K) screen composite is slow to warm up in a debug build — a phase-6 perf item (release build + dmabuf zero-copy), not a correctness gap |
 | Storage/protocol/state | Portable | Compiles; Linux default DB path `~/.videorc/videorc.sqlite3` (existing seam), recordings default `~/Movies/Videorc/Recordings` (macOS convention leaking — candidate for an XDG `~/Videos` island) |
-| FFmpeg provisioning | `build-ffmpeg-macos.sh` / `fetch-ffmpeg-windows.mjs` | Not started (phase 5); resolution is env-var + PATH (`VIDEORC_BUNDLED_FFMPEG_PATH`), so system FFmpeg works for development |
+| FFmpeg provisioning | `build-ffmpeg-macos.sh` / `fetch-ffmpeg-windows.mjs` | **Done** — `ffmpeg:fetch:linux` pulls a pinned LGPL BtbN static build (ffmpeg + ffprobe) under `vendor/ffmpeg/linux-x64/`; system FFmpeg still works for dev via PATH |
+| Packaging (AppImage) | electron-builder dmg/nsis | **Built + launches** — `dist:desktop:linux` produces `Videorc-*-linux-x86_64.AppImage` with backend + ffmpeg bundled; verified to launch and connect its backend on Arch. Clean non-Arch VM record test is the outstanding gate (needs a separate box); Flatpak/AUR later |
 
 ## Deliberate degradations (and where the status is surfaced)
 
@@ -45,6 +46,16 @@ clean GNOME/KDE VM at packaging time.
   platform (macOS convention); Linux convention is `~/Videos` (XDG).
 - **System FFmpeg dependency:** development uses the system `ffmpeg` from
   PATH (verified against 8.1.1); bundled-static provisioning is phase 5.
+
+## Outstanding verification (not blocking any phase's code)
+
+- **Clean non-Arch VM record test** (Fedora/Ubuntu GNOME) — the actual
+  "not Hyprland-specific" proof for packaging. The AppImage is built for it
+  (bundled glibc-compatible binaries; screen capture via the same xdg portals
+  GNOME/KDE implement), but the proof needs a separate machine/CI runner.
+- **Live physical-mic evidence** — the dev-box Scarlett records digital
+  silence (hardware gain down); the virtual-mic smoke proves the capture path,
+  but a real mic level should be eyeballed once.
 
 ## macOS-only verification that cannot run here
 
