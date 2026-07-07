@@ -108,3 +108,28 @@ nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
+
+# Linux x64. AppImage first (runs on any modern glibc distro) — the "not
+# Hyprland-specific" target; Flatpak (whose native permission model is the
+# same xdg portals Videorc already uses) and an AUR PKGBUILD come later. The
+# linux backend binary and the linux-x64 ffmpeg dir override the top-level
+# (macOS) extraResources paths, same pattern as win:. See
+# docs/specs/linux-0006-packaging.md.
+linux:
+  category: AudioVideo
+  icon: build-resources/icon.icns
+  extraResources:
+    - from: ../../target/release/videorc-backend
+      to: videorc-backend
+      filter:
+        - videorc-backend
+    - from: ../../vendor/ffmpeg/linux-x64
+      to: ffmpeg
+      filter:
+        - bin/ffmpeg
+        - bin/ffprobe
+        - LICENSE.txt
+        - SOURCE.txt
+  target:
+    - dir
+    - AppImage
