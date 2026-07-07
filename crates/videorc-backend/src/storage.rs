@@ -626,6 +626,35 @@ impl Database {
         Ok(())
     }
 
+    /// The portal ScreenCast restore token (Linux): stored so a granted
+    /// screen selection restores without re-prompting the compositor picker
+    /// on every launch. Keyed per portal source id so a window and a monitor
+    /// grant do not clobber each other.
+    pub fn screencast_restore_token(&self, source_id: &str) -> Result<Option<String>> {
+        let conn = self.lock()?;
+        let value_json = conn
+            .query_row(
+                "SELECT value_json FROM app_settings WHERE key = ?1",
+                params![screencast_restore_token_key(source_id)],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        Ok(value_json.and_then(|value| serde_json::from_str::<String>(&value).ok()))
+    }
+
+    pub fn save_screencast_restore_token(&self, source_id: &str, token: &str) -> Result<()> {
+        self.save_setting(&screencast_restore_token_key(source_id), &token)
+    }
+
+    pub fn clear_screencast_restore_token(&self, source_id: &str) -> Result<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "DELETE FROM app_settings WHERE key = ?1",
+            params![screencast_restore_token_key(source_id)],
+        )?;
+        Ok(())
+    }
+
     pub fn import_screen_image(&self, image_path: &str, ffmpeg_path: &str) -> Result<StreamScreen> {
         self.import_screen_image_with_optimizer(image_path, |source, destination| {
             optimize_screen_image(source, destination, ffmpeg_path)
@@ -1625,6 +1654,10 @@ fn ensure_column(conn: &Connection, table: &str, column: &str, definition: &str)
 }
 
 #[allow(dead_code)]
+fn screencast_restore_token_key(source_id: &str) -> String {
+    format!("screencastRestoreToken:{source_id}")
+}
+
 fn normalized_scopes(scopes: Vec<String>) -> Vec<String> {
     let mut scopes = scopes
         .into_iter()

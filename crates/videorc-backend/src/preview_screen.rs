@@ -16,6 +16,9 @@ use crate::diagnostics::{
     PreviewScreenCaptureTimingStats, apply_preview_screen_capture_timing_stats,
     apply_preview_screen_source_stats, apply_preview_source_frame_store_stats,
 };
+#[cfg(target_os = "linux")]
+use rayon::prelude::*;
+
 use crate::frame_store::{FrameHandle, FrameStore, FrameStoreStats};
 use crate::protocol::{
     PreviewScreenSourceKind, PreviewScreenStartParams, PreviewScreenState, PreviewScreenStatus,
@@ -372,6 +375,29 @@ pub async fn start_preview_screen(
     let (stop_tx, stop_rx) = std_mpsc::channel();
     let (startup_tx, startup_rx) = std_mpsc::channel();
     let thread_shared = Arc::clone(&shared);
+    // Linux: a stored portal restore token skips the compositor picker on
+    // re-grant. Other platforms ignore this field.
+    let restore_token = {
+        #[cfg(target_os = "linux")]
+        {
+            // A token supplied by the environment wins (smoke/headless
+            // re-grant hook); otherwise the persisted per-source token.
+            std::env::var("VIDEORC_SCREENCAST_RESTORE_TOKEN")
+                .ok()
+                .filter(|token| !token.trim().is_empty())
+                .or_else(|| {
+                    state
+                        .database
+                        .screencast_restore_token(&source.source_id)
+                        .ok()
+                        .flatten()
+                })
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            None
+        }
+    };
     let thread_config = NativeScreenPreviewConfig {
         source_id: source.source_id.clone(),
         source_kind: source.source_kind.clone(),
@@ -381,6 +407,7 @@ pub async fn start_preview_screen(
         include_cursor,
         exclude_current_process_windows,
         protected_overlay_window_ids,
+        restore_token,
     };
 
     let join_handle = thread::Builder::new()
@@ -439,7 +466,20 @@ pub async fn start_preview_screen(
             height,
             selected_fps,
             message,
+            restore_token,
         } => {
+            // Linux: persist the portal restore token so the next grant of
+            // this source skips the compositor picker.
+            #[cfg(target_os = "linux")]
+            if let Some(token) = restore_token.as_deref()
+                && let Err(error) = state
+                    .database
+                    .save_screencast_restore_token(&source.source_id, token)
+            {
+                tracing::warn!("Could not persist screencast restore token: {error}");
+            }
+            #[cfg(not(target_os = "linux"))]
+            let _ = restore_token;
             let initial_frame = {
                 let guard = shared
                     .lock()
@@ -529,6 +569,16 @@ pub async fn start_preview_screen(
         NativeScreenStartup::PermissionNeeded(message) => {
             let _ = stop_tx.send(());
             let _ = tokio::task::spawn_blocking(move || join_handle.join()).await;
+            // Linux: a cancelled re-grant means the stored portal token no
+            // longer restores; drop it so the next start shows a fresh picker
+            // instead of silently cancelling again.
+            #[cfg(target_os = "linux")]
+            if let Err(error) = state
+                .database
+                .clear_screencast_restore_token(&source.source_id)
+            {
+                tracing::warn!("Could not clear stale screencast restore token: {error}");
+            }
             let status = PreviewScreenStatus {
                 state: PreviewScreenState::PermissionNeeded,
                 source_id: Some(source.source_id),
@@ -899,6 +949,20 @@ fn should_exclude_protected_overlay_window(window_id: u32, protected_ids: &[u32]
 }
 
 fn selected_screen_source(params: &PreviewScreenStartParams) -> Option<SelectedScreenSource> {
+    // Linux: one portal source id; the compositor picker resolves the actual
+    // monitor/window at capture time, so there is no native id to parse.
+    #[cfg(target_os = "linux")]
+    if let Some(screen_id) = params.sources.screen_id.clone()
+        && crate::screen_capture::is_portal_screencast_id(&screen_id)
+    {
+        return Some(SelectedScreenSource {
+            source_id: screen_id,
+            source_kind: PreviewScreenSourceKind::Screen,
+            display_id: None,
+            window_id: None,
+        });
+    }
+
     if let Some(window_id) = params.sources.window_id.clone() {
         return parse_screencapturekit_window_id(&window_id).map(|native_window_id| {
             SelectedScreenSource {
@@ -1317,6 +1381,10 @@ struct NativeScreenPreviewConfig {
     include_cursor: bool,
     exclude_current_process_windows: bool,
     protected_overlay_window_ids: Vec<u32>,
+    /// Portal ScreenCast restore token (Linux) read from storage before the
+    /// capture thread starts, so a prior grant skips the compositor picker.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    restore_token: Option<String>,
 }
 
 #[derive(Debug)]
@@ -1330,6 +1398,9 @@ enum NativeScreenStartup {
         height: u32,
         selected_fps: f64,
         message: Option<String>,
+        /// Portal restore token to persist (Linux); None on macOS.
+        #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+        restore_token: Option<String>,
     },
     PermissionNeeded(String),
     SourceMissing(String),
@@ -1345,14 +1416,573 @@ fn run_native_screen_preview(
     #[cfg(target_os = "macos")]
     macos::run_native_screen_preview(config, shared, stop_rx, startup_tx);
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    linux::run_native_screen_preview(config, shared, stop_rx, startup_tx);
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         let _ = config;
         let _ = shared;
         let _ = stop_rx;
         let _ = startup_tx.send(NativeScreenStartup::Failed(
-            "Native screen preview is only available on macOS.".to_string(),
+            "Native screen preview is only available on macOS and Linux.".to_string(),
         ));
+    }
+}
+
+/// Portal ScreenCast + PipeWire screen capture (Linux port phase 3). The
+/// portal handshake runs on a current-thread tokio runtime on the capture
+/// thread; PipeWire video frames convert to BGRA into the same
+/// `PreviewScreenShared` store the ScreenCaptureKit delegate feeds on macOS.
+#[cfg(target_os = "linux")]
+mod linux {
+    use std::cell::{Cell, RefCell};
+    use std::os::fd::OwnedFd;
+    use std::rc::Rc;
+
+    use ashpd::desktop::PersistMode;
+    use ashpd::desktop::screencast::{
+        CursorMode, OpenPipeWireRemoteOptions, Screencast, SelectSourcesOptions, SourceType,
+        StartCastOptions,
+    };
+    use pipewire as pw;
+    use pw::{properties::properties, spa};
+
+    use super::*;
+
+    /// The portal `start()` dialog is a human step on first grant; give it
+    /// room. Re-grants with a restore token return in well under a second.
+    const PORTAL_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(120);
+    const STREAM_TIMEOUT: Duration = Duration::from_millis(250);
+
+    struct PortalCapture {
+        node_id: u32,
+        fd: OwnedFd,
+        restore_token: Option<String>,
+        _session: ashpd::desktop::Session<Screencast>,
+    }
+
+    pub(super) fn run_native_screen_preview(
+        config: NativeScreenPreviewConfig,
+        shared: Arc<StdMutex<PreviewScreenShared>>,
+        stop_rx: std_mpsc::Receiver<()>,
+        startup_tx: std_mpsc::Sender<NativeScreenStartup>,
+    ) {
+        let runtime = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                let _ = startup_tx.send(NativeScreenStartup::Failed(format!(
+                    "Could not start the portal runtime: {error}"
+                )));
+                return;
+            }
+        };
+
+        let portal = match runtime.block_on(portal_handshake(&config)) {
+            Ok(portal) => portal,
+            Err(PortalError::Cancelled) => {
+                let _ = startup_tx.send(NativeScreenStartup::PermissionNeeded(
+                    "Screen capture was not permitted. When recording starts, choose a \
+                     monitor or window in your desktop's share dialog."
+                        .to_string(),
+                ));
+                return;
+            }
+            Err(PortalError::Other(message)) => {
+                let _ = startup_tx.send(NativeScreenStartup::Failed(message));
+                return;
+            }
+        };
+
+        // Keep the portal session alive for the whole capture: dropping it
+        // ends the ScreenCast and the PipeWire node disappears.
+        let _runtime_guard = runtime.enter();
+        run_pipewire_capture(portal, &config, shared, stop_rx, startup_tx);
+    }
+
+    enum PortalError {
+        Cancelled,
+        Other(String),
+    }
+
+    async fn portal_handshake(
+        config: &NativeScreenPreviewConfig,
+    ) -> Result<PortalCapture, PortalError> {
+        let proxy = Screencast::new()
+            .await
+            .map_err(|error| PortalError::Other(format!("Could not reach the portal: {error}")))?;
+        let session = proxy
+            .create_session(Default::default())
+            .await
+            .map_err(|error| {
+                PortalError::Other(format!("Could not create a portal session: {error}"))
+            })?;
+
+        proxy
+            .select_sources(
+                &session,
+                SelectSourcesOptions::default()
+                    .set_cursor_mode(if config.include_cursor {
+                        CursorMode::Embedded
+                    } else {
+                        CursorMode::Hidden
+                    })
+                    .set_sources(SourceType::Monitor | SourceType::Window)
+                    .set_persist_mode(PersistMode::ExplicitlyRevoked)
+                    .set_restore_token(config.restore_token.as_deref()),
+            )
+            .await
+            .map_err(portal_error)?
+            .response()
+            .map_err(portal_error)?;
+
+        let streams = proxy
+            .start(&session, None, StartCastOptions::default())
+            .await
+            .map_err(portal_error)?
+            .response()
+            .map_err(portal_error)?;
+
+        let restore_token = streams.restore_token().map(str::to_string);
+        let stream = streams
+            .streams()
+            .first()
+            .ok_or_else(|| PortalError::Other("Portal returned no capture streams.".to_string()))?;
+        let node_id = stream.pipe_wire_node_id();
+        let fd = proxy
+            .open_pipe_wire_remote(&session, OpenPipeWireRemoteOptions::default())
+            .await
+            .map_err(portal_error)?;
+
+        Ok(PortalCapture {
+            node_id,
+            fd,
+            restore_token,
+            _session: session,
+        })
+    }
+
+    fn portal_error(error: ashpd::Error) -> PortalError {
+        if matches!(
+            error,
+            ashpd::Error::Response(ashpd::desktop::ResponseError::Cancelled)
+        ) {
+            PortalError::Cancelled
+        } else {
+            PortalError::Other(format!("Portal request failed: {error}"))
+        }
+    }
+
+    fn run_pipewire_capture(
+        portal: PortalCapture,
+        config: &NativeScreenPreviewConfig,
+        shared: Arc<StdMutex<PreviewScreenShared>>,
+        stop_rx: std_mpsc::Receiver<()>,
+        startup_tx: std_mpsc::Sender<NativeScreenStartup>,
+    ) {
+        let PortalCapture {
+            node_id,
+            fd,
+            restore_token,
+            _session,
+        } = portal;
+
+        pw::init();
+        let mainloop = match pw::main_loop::MainLoopRc::new(None) {
+            Ok(mainloop) => mainloop,
+            Err(error) => {
+                let _ = startup_tx.send(NativeScreenStartup::Failed(format!(
+                    "Could not create a PipeWire loop: {error}"
+                )));
+                return;
+            }
+        };
+        let context = match pw::context::ContextRc::new(&mainloop, None) {
+            Ok(context) => context,
+            Err(error) => {
+                let _ = startup_tx.send(NativeScreenStartup::Failed(format!(
+                    "Could not create a PipeWire context: {error}"
+                )));
+                return;
+            }
+        };
+        let core = match context.connect_fd_rc(fd, None) {
+            Ok(core) => core,
+            Err(error) => {
+                let _ = startup_tx.send(NativeScreenStartup::Failed(format!(
+                    "Could not connect to the portal PipeWire remote: {error}"
+                )));
+                return;
+            }
+        };
+
+        let stream = match pw::stream::StreamBox::new(
+            &core,
+            "videorc-screen",
+            properties! {
+                *pw::keys::MEDIA_TYPE => "Video",
+                *pw::keys::MEDIA_CATEGORY => "Capture",
+                *pw::keys::MEDIA_ROLE => "Screen",
+            },
+        ) {
+            Ok(stream) => stream,
+            Err(error) => {
+                let _ = startup_tx.send(NativeScreenStartup::Failed(format!(
+                    "Could not create the PipeWire screen stream: {error}"
+                )));
+                return;
+            }
+        };
+
+        let requested_width = config.video.width.max(1);
+        let requested_height = config.video.height.max(1);
+        let requested_fps = config.video.fps.clamp(1, 120);
+
+        let negotiated: Rc<RefCell<Option<NegotiatedVideo>>> = Rc::default();
+        let live_sent = Rc::new(Cell::new(false));
+        let mut frame_cursor = 0_u64;
+
+        let negotiated_param = negotiated.clone();
+        let negotiated_proc = negotiated.clone();
+        let live_proc = live_sent.clone();
+        let startup_proc = startup_tx.clone();
+        let shared_proc = shared.clone();
+        let _listener = stream
+            .add_local_listener_with_user_data(())
+            .param_changed(move |_, (), id, param| {
+                let Some(param) = param else { return };
+                if id != spa::param::ParamType::Format.as_raw() {
+                    return;
+                }
+                let mut info = spa::param::video::VideoInfoRaw::new();
+                if info.parse(param).is_ok() {
+                    *negotiated_param.borrow_mut() = Some(NegotiatedVideo {
+                        width: info.size().width,
+                        height: info.size().height,
+                        format: info.format(),
+                    });
+                }
+            })
+            .process(move |stream, ()| {
+                let Some(mut buffer) = stream.dequeue_buffer() else {
+                    return;
+                };
+                let Some(video) = *negotiated_proc.borrow() else {
+                    return;
+                };
+                let datas = buffer.datas_mut();
+                let Some(data) = datas.first_mut() else {
+                    return;
+                };
+                let stride = data.chunk().stride().max(0) as usize;
+                let size = data.chunk().size() as usize;
+                let offset = data.chunk().offset() as usize;
+                let Some(bytes) = data.data() else { return };
+                let end = offset.saturating_add(size).min(bytes.len());
+                if end <= offset {
+                    return;
+                }
+                let width = video.width as usize;
+                let height = video.height as usize;
+                let src_stride = if stride > 0 { stride } else { width * 4 };
+                let frame_bytes = width * height * 4;
+
+                let mut out = {
+                    let mut guard = shared_proc
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    guard
+                        .frame_store
+                        .checkout_spare_buffer(frame_bytes)
+                        .unwrap_or_else(|| {
+                            guard.frame_store.record_buffer_allocation();
+                            vec![0; frame_bytes]
+                        })
+                };
+                if !convert_to_bgra(
+                    &bytes[offset..end],
+                    src_stride,
+                    video.format,
+                    width,
+                    height,
+                    &mut out,
+                ) {
+                    let mut guard = shared_proc
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    guard.dropped_frames = guard.dropped_frames.saturating_add(1);
+                    return;
+                }
+
+                let now = Instant::now();
+                let mut guard = shared_proc
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                guard.frames_captured = guard.frames_captured.saturating_add(1);
+                guard.frames_in_window = guard.frames_in_window.saturating_add(1);
+                let window_started = *guard.window_started_at.get_or_insert(now);
+                let elapsed = window_started.elapsed();
+                if elapsed >= Duration::from_millis(500) {
+                    guard.source_fps =
+                        Some(guard.frames_in_window as f64 / elapsed.as_secs_f64().max(0.001));
+                    guard.frames_in_window = 0;
+                    guard.window_started_at = Some(now);
+                }
+                frame_cursor = frame_cursor.saturating_add(1);
+                let sequence = frame_cursor;
+                guard.frame_store.publish_with_source_handles(
+                    sequence,
+                    video.width,
+                    video.height,
+                    PreviewScreenPixelFormat::Bgra8,
+                    now,
+                    out,
+                    None,
+                    None,
+                );
+                drop(guard);
+
+                // Announce Live only once the first real frame is composited
+                // and its true size is known.
+                if !live_proc.replace(true) {
+                    let _ = startup_proc.send(NativeScreenStartup::Live {
+                        native_width: video.width,
+                        native_height: video.height,
+                        requested_width,
+                        requested_height,
+                        width: video.width,
+                        height: video.height,
+                        selected_fps: f64::from(requested_fps),
+                        message: None,
+                        restore_token: restore_token.clone(),
+                    });
+                }
+            })
+            .register();
+        let _listener = match _listener {
+            Ok(listener) => listener,
+            Err(error) => {
+                let _ = startup_tx.send(NativeScreenStartup::Failed(format!(
+                    "Could not register the PipeWire screen listener: {error}"
+                )));
+                return;
+            }
+        };
+
+        let pod = match screen_format_pod(requested_width, requested_height, requested_fps) {
+            Ok(pod) => pod,
+            Err(message) => {
+                let _ = startup_tx.send(NativeScreenStartup::Failed(message));
+                return;
+            }
+        };
+        let Some(pod_param) = spa::pod::Pod::from_bytes(&pod) else {
+            let _ = startup_tx.send(NativeScreenStartup::Failed(
+                "Could not build the PipeWire screen format request.".to_string(),
+            ));
+            return;
+        };
+        let mut params = [pod_param];
+        if let Err(error) = stream.connect(
+            spa::utils::Direction::Input,
+            Some(node_id),
+            pw::stream::StreamFlags::AUTOCONNECT | pw::stream::StreamFlags::MAP_BUFFERS,
+            &mut params,
+        ) {
+            let _ = startup_tx.send(NativeScreenStartup::Failed(format!(
+                "Could not connect the PipeWire screen stream: {error}"
+            )));
+            return;
+        }
+
+        // Poll the stop channel from inside the loop via a short timer.
+        let stop_flag = Rc::new(Cell::new(false));
+        let stop_timer_flag = stop_flag.clone();
+        let loop_for_timer = mainloop.clone();
+        let timer = mainloop
+            .loop_()
+            .add_timer(move |_| match stop_rx.try_recv() {
+                Ok(()) | Err(std_mpsc::TryRecvError::Disconnected) => {
+                    stop_timer_flag.set(true);
+                    loop_for_timer.quit();
+                }
+                Err(std_mpsc::TryRecvError::Empty) => {}
+            });
+        if let Err(error) = timer
+            .update_timer(Some(STREAM_TIMEOUT), Some(STREAM_TIMEOUT))
+            .into_result()
+        {
+            tracing::warn!("Could not arm the screen stop timer: {error:?}");
+        }
+        mainloop.run();
+        let _ = stop_flag.get();
+    }
+
+    #[derive(Clone, Copy)]
+    struct NegotiatedVideo {
+        width: u32,
+        height: u32,
+        format: spa::param::video::VideoFormat,
+    }
+
+    /// Portal frames are 32-bit packed. BGRx/BGRA copy straight through (alpha
+    /// forced opaque for the x variants); RGBx/RGBA swap R and B.
+    fn convert_to_bgra(
+        src: &[u8],
+        src_stride: usize,
+        format: spa::param::video::VideoFormat,
+        width: usize,
+        height: usize,
+        out: &mut [u8],
+    ) -> bool {
+        use spa::param::video::VideoFormat;
+        let swap = matches!(format, VideoFormat::RGBx | VideoFormat::RGBA);
+        let keep_alpha = matches!(format, VideoFormat::BGRA | VideoFormat::RGBA);
+        if src_stride < width * 4 || out.len() < width * height * 4 {
+            return false;
+        }
+        out.par_chunks_mut(width * 4)
+            .enumerate()
+            .for_each(|(row, out_row)| {
+                if row >= height {
+                    return;
+                }
+                let src_row = &src[row * src_stride..row * src_stride + width * 4];
+                for (s, d) in src_row.chunks_exact(4).zip(out_row.chunks_exact_mut(4)) {
+                    if swap {
+                        d[0] = s[2];
+                        d[1] = s[1];
+                        d[2] = s[0];
+                    } else {
+                        d[0] = s[0];
+                        d[1] = s[1];
+                        d[2] = s[2];
+                    }
+                    d[3] = if keep_alpha { s[3] } else { 255 };
+                }
+            });
+        true
+    }
+
+    fn screen_format_pod(width: u32, height: u32, fps: u32) -> Result<Vec<u8>, String> {
+        use spa::param::video::VideoFormat;
+        use spa::pod::{ChoiceValue, Object, Property, Value};
+        use spa::utils::{Choice, ChoiceEnum, ChoiceFlags, Fraction, Id, Rectangle};
+
+        let object = Object {
+            type_: spa::utils::SpaTypes::ObjectParamFormat.as_raw(),
+            id: spa::param::ParamType::EnumFormat.as_raw(),
+            properties: vec![
+                Property::new(
+                    spa::sys::SPA_FORMAT_mediaType,
+                    Value::Id(Id(spa::sys::SPA_MEDIA_TYPE_video)),
+                ),
+                Property::new(
+                    spa::sys::SPA_FORMAT_mediaSubtype,
+                    Value::Id(Id(spa::sys::SPA_MEDIA_SUBTYPE_raw)),
+                ),
+                Property::new(
+                    spa::sys::SPA_FORMAT_VIDEO_format,
+                    Value::Choice(ChoiceValue::Id(Choice(
+                        ChoiceFlags::empty(),
+                        ChoiceEnum::Enum {
+                            default: Id(VideoFormat::BGRx.as_raw()),
+                            alternatives: vec![
+                                Id(VideoFormat::BGRA.as_raw()),
+                                Id(VideoFormat::RGBx.as_raw()),
+                                Id(VideoFormat::RGBA.as_raw()),
+                            ],
+                        },
+                    ))),
+                ),
+                Property::new(
+                    spa::sys::SPA_FORMAT_VIDEO_size,
+                    Value::Choice(ChoiceValue::Rectangle(Choice(
+                        ChoiceFlags::empty(),
+                        ChoiceEnum::Range {
+                            default: Rectangle { width, height },
+                            min: Rectangle {
+                                width: 1,
+                                height: 1,
+                            },
+                            max: Rectangle {
+                                width: 8192,
+                                height: 8192,
+                            },
+                        },
+                    ))),
+                ),
+                Property::new(
+                    spa::sys::SPA_FORMAT_VIDEO_framerate,
+                    Value::Choice(ChoiceValue::Fraction(Choice(
+                        ChoiceFlags::empty(),
+                        ChoiceEnum::Range {
+                            default: Fraction { num: fps, denom: 1 },
+                            min: Fraction { num: 0, denom: 1 },
+                            max: Fraction { num: 240, denom: 1 },
+                        },
+                    ))),
+                ),
+            ],
+        };
+        let (cursor, _) = spa::pod::serialize::PodSerializer::serialize(
+            std::io::Cursor::new(Vec::new()),
+            &Value::Object(object),
+        )
+        .map_err(|error| format!("Could not serialize the screen format request: {error:?}"))?;
+        Ok(cursor.into_inner())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn bgrx_passes_through_with_opaque_alpha() {
+            let src = [10, 20, 30, 0, 40, 50, 60, 0];
+            let mut out = [0u8; 8];
+            assert!(convert_to_bgra(
+                &src,
+                8,
+                spa::param::video::VideoFormat::BGRx,
+                2,
+                1,
+                &mut out
+            ));
+            assert_eq!(out, [10, 20, 30, 255, 40, 50, 60, 255]);
+        }
+
+        #[test]
+        fn rgba_swaps_red_and_blue_and_keeps_alpha() {
+            let src = [10, 20, 30, 128];
+            let mut out = [0u8; 4];
+            assert!(convert_to_bgra(
+                &src,
+                4,
+                spa::param::video::VideoFormat::RGBA,
+                1,
+                1,
+                &mut out
+            ));
+            assert_eq!(out, [30, 20, 10, 128]);
+        }
+
+        #[test]
+        fn rejects_short_stride() {
+            let src = [0u8; 4];
+            let mut out = [0u8; 8];
+            assert!(!convert_to_bgra(
+                &src,
+                4,
+                spa::param::video::VideoFormat::BGRx,
+                2,
+                1,
+                &mut out
+            ));
+        }
     }
 }
 
@@ -1454,6 +2084,7 @@ mod macos {
                     height: session.height,
                     selected_fps: session.selected_fps,
                     message: session.message,
+                    restore_token: None,
                 });
                 let _ = stop_rx.recv();
                 stop_stream(&session.stream);

@@ -31,6 +31,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1.19", features = ["v4"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+ashpd = { version = "0.13", default-features = false, features = ["screencast", "tokio"] }
 # PipeWire microphone capture (Linux port phase 1); the feature gate pins the
 # libpipewire 0.3.65+ API level (TARGET_OBJECT and friends).
 pipewire = { version = "0.10", features = ["v0_3_65"] }

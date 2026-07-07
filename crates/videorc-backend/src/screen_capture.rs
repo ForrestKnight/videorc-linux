@@ -4,13 +4,23 @@
 use std::sync::mpsc;
 use std::time::Duration;
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use crate::protocol::DeviceKind;
 use crate::protocol::{Device, DeviceStatus};
 
 const SCREEN_CAPTUREKIT_PREFIX: &str = "screen:screencapturekit:";
 const WINDOW_CAPTUREKIT_PREFIX: &str = "window:screencapturekit:";
 const SCREEN_CAPTUREKIT_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(12);
+
+/// Single Linux screen source id. The portal cannot enumerate monitors and
+/// windows without showing its own picker (that dialog IS the permission
+/// model), so the app offers one entry and the compositor picker chooses the
+/// concrete source; a persisted restore token keeps that a one-time prompt.
+pub const PORTAL_SCREENCAST_ID: &str = "screen:portal:screencast";
+
+pub fn is_portal_screencast_id(id: &str) -> bool {
+    id == PORTAL_SCREENCAST_ID
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NativeCaptureSources {
@@ -31,7 +41,27 @@ pub fn list_native_capture_sources() -> NativeCaptureSources {
     macos::list_native_capture_sources()
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
+pub fn list_native_capture_sources() -> NativeCaptureSources {
+    NativeCaptureSources {
+        devices: vec![Device {
+            id: PORTAL_SCREENCAST_ID.to_string(),
+            name: "Screen or window (system picker)".to_string(),
+            kind: DeviceKind::Screen,
+            status: DeviceStatus::Available,
+            detail: Some(
+                "Your desktop's screen-share dialog chooses the monitor or window when \
+                 recording starts. The choice is remembered so you are not asked every time."
+                    .to_string(),
+            ),
+            width: None,
+            height: None,
+        }],
+        warnings: Vec::new(),
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn list_native_capture_sources() -> NativeCaptureSources {
     NativeCaptureSources {
         devices: Vec::new(),

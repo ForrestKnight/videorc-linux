@@ -34,41 +34,17 @@ pub async fn list_devices(ffmpeg_path: &str) -> DeviceList {
     let mut warnings = Vec::new();
 
     if cfg!(target_os = "linux") {
-        // Linux port: microphones (PipeWire) and cameras (V4L2) are live;
-        // screen and window capture land with the portal phase and stay
-        // explicit placeholders until then.
+        // Linux port: microphones (PipeWire), cameras (V4L2), and screen
+        // capture (portal ScreenCast) are live. The portal offers one screen
+        // entry; the compositor picker chooses the concrete monitor/window.
+        let native_sources = list_native_capture_sources();
+        warnings.extend(native_sources.warnings);
+        devices.extend(native_sources.devices);
         let native_cameras = list_native_cameras();
         warnings.extend(native_cameras.warnings);
         devices.extend(native_cameras.devices);
-        devices.extend([
-            Device {
-                id: "screen:unsupported-platform".to_string(),
-                name: "Primary Display".to_string(),
-                kind: DeviceKind::Screen,
-                status: DeviceStatus::Unavailable,
-                detail: Some(
-                    "Screen capture is not implemented on Linux yet (portal ScreenCast planned)."
-                        .to_string(),
-                ),
-                width: None,
-                height: None,
-            },
-            Device {
-                id: "window:unsupported-platform".to_string(),
-                name: "Window Capture".to_string(),
-                kind: DeviceKind::Window,
-                status: DeviceStatus::Unavailable,
-                detail: Some(
-                    "Window capture is not implemented on Linux yet (portal ScreenCast planned)."
-                        .to_string(),
-                ),
-                width: None,
-                height: None,
-            },
-            system_audio_placeholder(),
-        ]);
+        devices.push(system_audio_placeholder());
         devices.extend(list_native_microphones());
-        warnings.push("Screen and window probing are not implemented on Linux yet.".to_string());
         return DeviceList { devices, warnings };
     }
 
