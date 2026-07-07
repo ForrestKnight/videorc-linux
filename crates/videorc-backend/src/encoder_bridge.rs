@@ -1671,6 +1671,7 @@ enum VideoToolboxH264PipeWriter {
     MpegTs {
         writer: MpegTsH264Writer,
         access_unit_buffer: Vec<u8>,
+        base_pts_90khz: Option<u64>,
     },
 }
 
@@ -1681,6 +1682,7 @@ impl VideoToolboxH264PipeWriter {
             EncoderBridgeVideoOutput::VideoToolboxH264MpegTs => Self::MpegTs {
                 writer: MpegTsH264Writer::new(),
                 access_unit_buffer: Vec::new(),
+                base_pts_90khz: None,
             },
             EncoderBridgeVideoOutput::RawYuv420p
             | EncoderBridgeVideoOutput::VideoToolboxH264AnnexB => Self::AnnexB,
@@ -1697,14 +1699,22 @@ impl VideoToolboxH264PipeWriter {
             Self::MpegTs {
                 writer,
                 access_unit_buffer,
+                base_pts_90khz,
             } => {
-                let pts_90khz = timing_to_90khz(
+                let raw_pts_90khz = timing_to_90khz(
                     frame.timing.presentation_time_value,
                     frame.timing.presentation_time_scale,
                 )
                 .ok_or_else(|| {
                     io::Error::other("VideoToolbox frame timing cannot be mapped to MPEG-TS PTS")
                 })?;
+                // Rebase to the first frame: VideoToolbox stamps carry the
+                // session-startup offset (seconds of host time), while the
+                // audio leg starts at the shared video epoch = first frame.
+                // Without this the container starts video ~startup-latency
+                // AFTER audio (plan 023: 4000ms skew in the split baseline).
+                let base = *base_pts_90khz.get_or_insert(raw_pts_90khz);
+                let pts_90khz = raw_pts_90khz.saturating_sub(base);
                 access_unit_buffer.clear();
                 writer
                     .write_h264_access_unit(access_unit_buffer, pts_90khz, &frame.bytes)

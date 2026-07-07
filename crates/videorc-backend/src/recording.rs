@@ -4175,17 +4175,17 @@ fn parse_encoder_bridge_video_output(
 
 fn default_encoder_bridge_video_output_for_outputs(
     _record_enabled: bool,
-    stream_enabled: bool,
+    _stream_enabled: bool,
 ) -> EncoderBridgeVideoOutput {
-    // Streaming legs stay on Annex-B until the MpegTs split-muxer path passes the
-    // multistream gate (LVF2, docs/live-video-freeze-incident-plan.md): with MpegTs
-    // as the stream default the tee fan-out delivers no bytes to RTMP targets.
-    // MpegTs remains opt-in via VIDEORC_ENCODER_BRIDGE_VIDEO_OUTPUT.
-    #[cfg(target_os = "macos")]
-    if stream_enabled {
-        return EncoderBridgeVideoOutput::VideoToolboxH264AnnexB;
-    }
-
+    // MpegTs everywhere (plan 023 L1). Streaming legs sat on Annex-B as an
+    // LVF2 stopgap — but raw Annex-B has no timestamps, so the muxer stamped
+    // frames with demux WALLCLOCK and record+stream recordings came out as
+    // duplicate-PTS slideshows (the owner's 9fps 4K incident). The real LVF2
+    // causes are fixed at the args: minimal mpegts probing on FIFO inputs
+    // (default 5MB probe starved the multi-input graph) and fifo-muxer-wrapped
+    // per-target FLV outputs with an explicit FLV codec tag (tee forwards the
+    // mpegts tag [27], which flv rejects). Annex-B stays reachable via
+    // VIDEORC_ENCODER_BRIDGE_VIDEO_OUTPUT for diagnosis.
     default_encoder_bridge_video_output()
 }
 
@@ -4274,10 +4274,17 @@ fn bridge_compositor_ffmpeg_args(
     ];
     let input_layout =
         append_bridge_recording_input_args(&mut args, capture, params, fifo_path, video_output);
-    let mpegts_plain_stream_output = video_output
-        == EncoderBridgeVideoOutput::VideoToolboxH264MpegTs
-        && !stream_targets.is_empty();
-    if !mpegts_plain_stream_output {
+    // Copy-kind outputs (AnnexB/MpegTs) with stream targets fan out as one
+    // file output plus one fifo-muxer-wrapped FLV output per target — tee
+    // cannot carry an mpegts input to flv slaves (codec tag [27] propagates
+    // verbatim and flv rejects it), and a refused RTMP target must be a dead
+    // LEG, never a dead session (plan 023 L1).
+    let copy_stream_fanout = matches!(
+        video_output,
+        EncoderBridgeVideoOutput::VideoToolboxH264AnnexB
+            | EncoderBridgeVideoOutput::VideoToolboxH264MpegTs
+    ) && !stream_targets.is_empty();
+    if !copy_stream_fanout {
         match video_output {
             EncoderBridgeVideoOutput::RawYuv420p => {
                 args.extend([
@@ -4358,7 +4365,7 @@ fn bridge_compositor_ffmpeg_args(
 
     match (output_path, stream_targets) {
         (Some(path), []) => args.push(path.display().to_string()),
-        (Some(path), _) if video_output == EncoderBridgeVideoOutput::VideoToolboxH264MpegTs => {
+        (Some(path), _) if copy_stream_fanout => {
             append_bridge_copy_file_output(&mut args, &input_layout, &params.audio, true, path);
             for target in stream_targets {
                 append_bridge_copy_flv_output(
@@ -4378,7 +4385,7 @@ fn bridge_compositor_ffmpeg_args(
             legs.extend(stream_legs);
             args.extend(tee_output_args(legs.join("|")));
         }
-        (None, targets) if video_output == EncoderBridgeVideoOutput::VideoToolboxH264MpegTs => {
+        (None, targets) if copy_stream_fanout => {
             for target in targets {
                 append_bridge_copy_flv_output(
                     &mut args,
@@ -4465,7 +4472,12 @@ fn bridge_compositor_split_output_ffmpeg_args(
         format!("{recording_video_input_index}:v"),
     ]);
     append_audio_output_args(&mut args, &input_layout);
-    args.extend(["-c:v".to_string(), "copy".to_string()]);
+    args.extend([
+        "-c:v".to_string(),
+        "copy".to_string(),
+        "-tag:v".to_string(),
+        "0".to_string(),
+    ]);
     append_audio_encoding_args(&mut args, &input_layout, &params.audio, true);
     args.push("-shortest".to_string());
     args.push(output_path.display().to_string());
@@ -4520,50 +4532,12 @@ fn bridge_compositor_split_output_ffmpeg_args(
         return Ok(args);
     }
 
-    let mpegts_plain_stream = recording_video_output
-        == EncoderBridgeVideoOutput::VideoToolboxH264MpegTs
-        && !stream_targets.is_empty();
-    if !mpegts_plain_stream {
-        args.extend(["-map".to_string(), format!("{stream_video_input_index}:v")]);
-        append_audio_output_args(&mut args, &stream_input_layout);
-        args.extend(["-c:v".to_string(), "copy".to_string()]);
-        append_audio_encoding_args(&mut args, &stream_input_layout, &params.audio, true);
-        args.push("-shortest".to_string());
-    }
-
-    let stream_legs = stream_targets
-        .iter()
-        .map(|target| {
-            format!(
-                "[f=flv:onfail=ignore:flvflags=no_duration_filesize]{}",
-                escape_tee_target(&target.url)
-            )
-        })
-        .collect::<Vec<_>>();
-    match stream_targets {
-        _ if recording_video_output == EncoderBridgeVideoOutput::VideoToolboxH264MpegTs => {
-            for target in stream_targets {
-                append_bridge_copy_flv_output(
-                    &mut args,
-                    &stream_input_layout,
-                    &params.audio,
-                    target,
-                    true,
-                );
-            }
-        }
-        [single] => {
-            args.extend([
-                "-flvflags".to_string(),
-                "no_duration_filesize".to_string(),
-                "-f".to_string(),
-                "flv".to_string(),
-                single.url.clone(),
-            ]);
-        }
-        _ => {
-            args.extend(tee_output_args(stream_legs.join("|")));
-        }
+    // One fifo-muxer-wrapped FLV output per target: a refused RTMP target is a
+    // dead LEG (background retries, packet drops on overflow), never a dead
+    // SESSION — the old direct/tee shapes aborted the local recording when a
+    // platform handshake failed (plan 023 L1).
+    for target in stream_targets {
+        append_bridge_copy_flv_output(&mut args, &stream_input_layout, &params.audio, target, true);
     }
 
     Ok(args)
@@ -4642,6 +4616,21 @@ fn append_bridge_recording_input_args(
             ]);
         }
         EncoderBridgeVideoOutput::VideoToolboxH264MpegTs => {
+            // Minimal probing ONLY when streaming: default (~5MB) probing on a
+            // low-bitrate FIFO delays first bytes by many seconds, which
+            // starves RTMP targets (LVF2 "no bytes", plan 023 L1). Record-only
+            // keeps the default — shrinking it shifted A/V start alignment in
+            // smoke:dev, and a startup delay doesn't hurt a local file.
+            if params.output.stream_enabled {
+                args.extend([
+                    "-probesize".to_string(),
+                    "65536".to_string(),
+                    "-analyzeduration".to_string(),
+                    "0".to_string(),
+                    "-fflags".to_string(),
+                    "nobuffer".to_string(),
+                ]);
+            }
             args.extend([
                 "-f".to_string(),
                 "mpegts".to_string(),
@@ -4688,6 +4677,15 @@ fn append_bridge_encoded_video_input_args(
         }
         EncoderBridgeVideoOutput::VideoToolboxH264MpegTs => {
             args.extend([
+                // Same probe discipline as append_bridge_recording_input_args:
+                // the writer is our own bridge; default mpegts probing starves
+                // a multi-FIFO graph (LVF2 "no bytes", plan 023 L1).
+                "-probesize".to_string(),
+                "65536".to_string(),
+                "-analyzeduration".to_string(),
+                "0".to_string(),
+                "-fflags".to_string(),
+                "nobuffer".to_string(),
                 "-f".to_string(),
                 "mpegts".to_string(),
                 "-i".to_string(),
@@ -4726,11 +4724,29 @@ fn append_bridge_copy_flv_output(
         audio
     };
     append_bridge_copy_output_args(args, input_layout, audio, true);
+    // FLV's H264 codec tag, explicitly: the mpegts input carries tag [27]
+    // (stream_type) through -c:v copy, wrapper muxers clone it verbatim into
+    // the inner flv muxer, and "-tag:v 0" is a no-op for copy (0 = keep).
+    args.extend(["-tag:v".to_string(), "7".to_string()]);
+    // Each RTMP target is its own output wrapped in ffmpeg's `fifo` muxer:
+    // a refused/unreachable target retries in the background and drops
+    // packets on overflow instead of aborting the whole session (tee cannot
+    // carry mpegts inputs to flv slaves — it forwards the mpegts codec tag
+    // [27], which the FLV muxer rejects; standalone outputs negotiate tags
+    // correctly — plan 023 L1).
     args.extend([
-        "-flvflags".to_string(),
-        "no_duration_filesize".to_string(),
         "-f".to_string(),
+        "fifo".to_string(),
+        "-fifo_format".to_string(),
         "flv".to_string(),
+        "-queue_size".to_string(),
+        "512".to_string(),
+        "-drop_pkts_on_overflow".to_string(),
+        "1".to_string(),
+        "-attempt_recovery".to_string(),
+        "1".to_string(),
+        "-recovery_wait_time".to_string(),
+        "2".to_string(),
         target.url.clone(),
     ]);
 }
@@ -8454,28 +8470,38 @@ mod tests {
         )
         .unwrap();
 
+        // Plan 023 L1: streaming shapes default to MpegTs (real encoder PTS);
+        // targets ride fifo-muxer-wrapped FLV outputs (failure-isolated).
         #[cfg(target_os = "macos")]
         assert_eq!(
             video_output,
-            EncoderBridgeVideoOutput::VideoToolboxH264AnnexB
+            EncoderBridgeVideoOutput::VideoToolboxH264MpegTs
         );
         #[cfg(not(target_os = "macos"))]
         assert_eq!(video_output, EncoderBridgeVideoOutput::RawYuv420p);
         assert!(!args.contains(&"tee".to_string()));
         assert_eq!(arg_value(&args, "-c:a"), Some("aac"));
-        assert!(
-            args.windows(2)
-                .any(|window| window[0] == "-f" && window[1] == "flv")
-        );
         assert!(args.contains(&"rtmp://a.rtmp.youtube.com/live2/abc123".to_string()));
         assert!(args.iter().any(|arg| arg == "-shortest"));
         assert!(!args.iter().any(|arg| arg == "[preview]"));
         #[cfg(target_os = "macos")]
         {
             assert_eq!(arg_value(&args, "-c:v"), Some("copy"));
+            // FLV's H264 tag, forced: wrappers clone the mpegts tag verbatim.
+            assert_eq!(arg_value(&args, "-tag:v"), Some("7"));
+            assert!(
+                args.windows(2)
+                    .any(|window| window[0] == "-f" && window[1] == "fifo"),
+                "single RTMP target must be fifo-muxer wrapped: {args:?}"
+            );
+            assert_eq!(arg_value(&args, "-fifo_format"), Some("flv"));
             assert_eq!(
                 input_arg_value(&args, &fifo_path.display().to_string(), "-f"),
-                Some("h264")
+                Some("mpegts")
+            );
+            assert_eq!(
+                input_arg_value(&args, &fifo_path.display().to_string(), "-probesize"),
+                Some("65536")
             );
             assert_eq!(
                 input_arg_value(
@@ -8483,11 +8509,7 @@ mod tests {
                     &fifo_path.display().to_string(),
                     "-use_wallclock_as_timestamps"
                 ),
-                Some("1")
-            );
-            assert_eq!(
-                input_arg_value(&args, &fifo_path.display().to_string(), "-framerate"),
-                Some("30")
+                None
             );
             assert_eq!(
                 input_arg_value(&args, &fifo_path.display().to_string(), "-pix_fmt"),
@@ -8537,32 +8559,34 @@ mod tests {
         )
         .unwrap();
 
+        // Plan 023 L1: MpegTs default; each target is its OWN fifo-muxer
+        // output — tee cannot carry mpegts inputs to flv slaves (tag [27]).
         #[cfg(target_os = "macos")]
         assert_eq!(
             video_output,
-            EncoderBridgeVideoOutput::VideoToolboxH264AnnexB
+            EncoderBridgeVideoOutput::VideoToolboxH264MpegTs
         );
         #[cfg(not(target_os = "macos"))]
         assert_eq!(video_output, EncoderBridgeVideoOutput::RawYuv420p);
-        assert!(args.contains(&"tee".to_string()));
-        let tee = args.iter().find(|arg| arg.contains("[f=flv")).unwrap();
-        assert!(!tee.contains("[f=matroska"));
-        assert_eq!(tee.matches("[f=flv").count(), 2);
-        assert!(tee.contains("rtmp://a.rtmp.youtube.com/live2/yt"));
-        assert!(tee.contains("rtmp://live.twitch.tv/app/tw"));
-        assert!(
+        assert!(!args.contains(&"tee".to_string()));
+        assert!(args.contains(&"rtmp://a.rtmp.youtube.com/live2/yt".to_string()));
+        assert!(args.contains(&"rtmp://live.twitch.tv/app/tw".to_string()));
+        assert_eq!(
             args.windows(2)
-                .any(|window| window[0] == "-use_fifo" && window[1] == "1"),
-            "stream-only bridge tee must isolate slaves with a fifo: {args:?}"
+                .filter(|window| window[0] == "-f" && window[1] == "fifo")
+                .count(),
+            2,
+            "every RTMP target must be an isolated fifo-muxer output: {args:?}"
         );
         assert_eq!(arg_value(&args, "-c:a"), Some("aac"));
         #[cfg(target_os = "macos")]
         {
             assert_eq!(arg_value(&args, "-c:v"), Some("copy"));
+            assert_eq!(arg_value(&args, "-tag:v"), Some("7"));
             assert_eq!(arg_value(&args, "-filter_complex"), None);
             assert_eq!(
                 input_arg_value(&args, &fifo_path.display().to_string(), "-f"),
-                Some("h264")
+                Some("mpegts")
             );
             assert_eq!(
                 input_arg_value(&args, &fifo_path.display().to_string(), "-pix_fmt"),
@@ -8612,19 +8636,38 @@ mod tests {
         )
         .unwrap();
 
+        // Record+stream defaults to MpegTs like every other shape (plan 023 L1:
+        // the Annex-B stopgap wallclock-stamped recordings into slideshows).
         #[cfg(target_os = "macos")]
         assert_eq!(
             video_output,
-            EncoderBridgeVideoOutput::VideoToolboxH264AnnexB
+            EncoderBridgeVideoOutput::VideoToolboxH264MpegTs
         );
         #[cfg(not(target_os = "macos"))]
         assert_eq!(video_output, EncoderBridgeVideoOutput::RawYuv420p);
-        assert!(args.contains(&"tee".to_string()));
-        let tee = args.iter().find(|arg| arg.contains("[f=matroska")).unwrap();
-        assert!(tee.contains("[f=matroska:onfail=abort]/tmp/videorc-bridge-record-stream.mkv"));
-        assert_eq!(tee.matches("[f=flv").count(), 2);
-        assert!(tee.contains("rtmp://a.rtmp.youtube.com/live2/yt"));
-        assert!(tee.contains("rtmp://live.twitch.tv/app/tw"));
+        #[cfg(target_os = "macos")]
+        {
+            // File output + one fifo-muxer FLV output per target — no tee
+            // (mpegts→flv slaves reject the forwarded codec tag) and a
+            // refused target can never abort the local recording.
+            assert!(!args.contains(&"tee".to_string()));
+            assert!(args.contains(&"/tmp/videorc-bridge-record-stream.mkv".to_string()));
+            assert!(args.contains(&"rtmp://a.rtmp.youtube.com/live2/yt".to_string()));
+            assert!(args.contains(&"rtmp://live.twitch.tv/app/tw".to_string()));
+            assert_eq!(
+                args.windows(2)
+                    .filter(|window| window[0] == "-f" && window[1] == "fifo")
+                    .count(),
+                2
+            );
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            assert!(args.contains(&"tee".to_string()));
+            let tee = args.iter().find(|arg| arg.contains("[f=matroska")).unwrap();
+            assert!(tee.contains("[f=matroska:onfail=abort]/tmp/videorc-bridge-record-stream.mkv"));
+            assert_eq!(tee.matches("[f=flv").count(), 2);
+        }
         assert_eq!(arg_value(&args, "-c:a"), Some("aac"));
         assert!(args.iter().any(|arg| arg == "-shortest"));
         assert!(!args.iter().any(|arg| arg == "[preview]"));
@@ -8634,7 +8677,12 @@ mod tests {
             assert_eq!(arg_value(&args, "-filter_complex"), None);
             assert_eq!(
                 input_arg_value(&args, &fifo_path.display().to_string(), "-f"),
-                Some("h264")
+                Some("mpegts")
+            );
+            // Minimal probing is load-bearing on FIFO inputs (LVF2).
+            assert_eq!(
+                input_arg_value(&args, &fifo_path.display().to_string(), "-probesize"),
+                Some("65536")
             );
             assert_eq!(
                 input_arg_value(&args, &fifo_path.display().to_string(), "-pix_fmt"),
@@ -8677,7 +8725,7 @@ mod tests {
         let stream_fifo_path = Path::new("/tmp/videorc-bridge-stream-output.h264");
         let stream_output = recording_compositor_stream_output(
             &params,
-            EncoderBridgeVideoOutput::VideoToolboxH264AnnexB,
+            EncoderBridgeVideoOutput::VideoToolboxH264MpegTs,
         )
         .unwrap()
         .expect("split stream output");
@@ -8693,7 +8741,7 @@ mod tests {
             &targets,
             recording_fifo_path,
             stream_fifo_path,
-            EncoderBridgeVideoOutput::VideoToolboxH264AnnexB,
+            EncoderBridgeVideoOutput::VideoToolboxH264MpegTs,
             stream_output,
         )
         .unwrap();
@@ -8708,38 +8756,55 @@ mod tests {
         );
         assert_eq!(
             input_arg_value(&args, &recording_fifo_path.display().to_string(), "-f"),
-            Some("h264")
+            Some("mpegts")
         );
         assert_eq!(
             input_arg_value(&args, &stream_fifo_path.display().to_string(), "-f"),
-            Some("h264")
+            Some("mpegts")
+        );
+        // MpegTs carries real encoder PTS — no -framerate synthesis and no
+        // wallclock stamping on either FIFO (plan 023: the wallclock path
+        // wrote duplicate-PTS slideshow recordings).
+        assert_eq!(
+            input_arg_value(
+                &args,
+                &recording_fifo_path.display().to_string(),
+                "-use_wallclock_as_timestamps"
+            ),
+            None
+        );
+        assert_eq!(
+            input_arg_value(&args, &stream_fifo_path.display().to_string(), "-probesize"),
+            Some("65536")
+        );
+        assert!(args.windows(2).any(|pair| pair == ["-map", "1:v"]));
+        assert!(args.windows(2).any(|pair| pair == ["-map", "2:v"]));
+        // File output + one fifo-muxer FLV output per target (plan 023 L1) —
+        // three copy outputs total, no tee.
+        assert_eq!(args.iter().filter(|arg| *arg == "-c:v").count(), 3);
+        assert_eq!(args.iter().filter(|arg| arg.as_str() == "copy").count(), 3);
+        assert!(args.contains(&"/tmp/videorc-bridge-record-stream-split.mkv".to_string()));
+        assert!(!args.contains(&"tee".to_string()));
+        assert!(args.contains(&"rtmp://a.rtmp.youtube.com/live2/yt".to_string()));
+        assert!(args.contains(&"rtmp://live.twitch.tv/app/tw".to_string()));
+        assert_eq!(
+            args.windows(2)
+                .filter(|window| window[0] == "-f" && window[1] == "fifo")
+                .count(),
+            2,
+            "every stream target must be an isolated fifo-muxer output: {args:?}"
+        );
+        assert_eq!(
+            input_arg_value(&args, &recording_fifo_path.display().to_string(), "-f"),
+            Some("mpegts")
         );
         assert_eq!(
             input_arg_value(
                 &args,
                 &recording_fifo_path.display().to_string(),
-                "-framerate"
+                "-probesize"
             ),
-            Some("30")
-        );
-        assert_eq!(
-            input_arg_value(&args, &stream_fifo_path.display().to_string(), "-framerate"),
-            Some("30")
-        );
-        assert!(args.windows(2).any(|pair| pair == ["-map", "1:v"]));
-        assert!(args.windows(2).any(|pair| pair == ["-map", "2:v"]));
-        assert_eq!(args.iter().filter(|arg| *arg == "-c:v").count(), 2);
-        assert_eq!(args.iter().filter(|arg| arg.as_str() == "copy").count(), 2);
-        assert!(args.contains(&"/tmp/videorc-bridge-record-stream-split.mkv".to_string()));
-        let tee = args.iter().find(|arg| arg.contains("[f=flv")).unwrap();
-        assert!(!tee.contains("[f=matroska"));
-        assert_eq!(tee.matches("[f=flv").count(), 2);
-        assert!(tee.contains("rtmp://a.rtmp.youtube.com/live2/yt"));
-        assert!(tee.contains("rtmp://live.twitch.tv/app/tw"));
-        assert!(
-            args.windows(2)
-                .any(|window| window[0] == "-use_fifo" && window[1] == "1"),
-            "stream split-output tee must isolate stream slaves with a fifo: {args:?}"
+            Some("65536")
         );
         assert_eq!(arg_value(&args, "-filter_complex"), None);
     }
@@ -8971,10 +9036,12 @@ mod tests {
             parse_encoder_bridge_video_output(Some(" mpeg-ts "), default_output),
             EncoderBridgeVideoOutput::VideoToolboxH264MpegTs
         );
+        // Plan 023 L1: record+stream defaults to MpegTs — the Annex-B
+        // stopgap is env-opt-in only.
         #[cfg(target_os = "macos")]
         assert_eq!(
             select_encoder_bridge_video_output(None, true, true),
-            EncoderBridgeVideoOutput::VideoToolboxH264AnnexB
+            EncoderBridgeVideoOutput::VideoToolboxH264MpegTs
         );
         #[cfg(not(target_os = "macos"))]
         assert_eq!(
@@ -8988,7 +9055,7 @@ mod tests {
         #[cfg(target_os = "macos")]
         assert_eq!(
             select_encoder_bridge_video_output(None, false, true),
-            EncoderBridgeVideoOutput::VideoToolboxH264AnnexB
+            EncoderBridgeVideoOutput::VideoToolboxH264MpegTs
         );
         #[cfg(not(target_os = "macos"))]
         assert_eq!(
