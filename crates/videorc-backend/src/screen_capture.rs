@@ -46,12 +46,13 @@ pub fn list_native_capture_sources() -> NativeCaptureSources {
     NativeCaptureSources {
         devices: vec![Device {
             id: PORTAL_SCREENCAST_ID.to_string(),
-            name: "Screen or window (system picker)".to_string(),
+            name: "Screen Capture".to_string(),
             kind: DeviceKind::Screen,
             status: DeviceStatus::Available,
             detail: Some(
-                "Your desktop's screen-share dialog chooses the monitor or window when \
-                 recording starts. The choice is remembered so you are not asked every time."
+                "Same model as OBS on Wayland: your desktop's share dialog picks the \
+                 monitor or window (Wayland cannot list them in-app). The choice is \
+                 remembered so you are not asked every time."
                     .to_string(),
             ),
             width: None,

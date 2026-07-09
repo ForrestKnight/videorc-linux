@@ -1278,13 +1278,14 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   // software JPEG preview instead, so the native path must not claim to run.
   const nativePreviewSurfaceEnabled =
     Boolean(runtimeInfo?.nativePreviewSurfaceProofEnabled) && runtimeInfo?.platform === 'darwin'
-  // Linux (and any non-Metal platform) renders the compositor's output inline as
-  // an MJPEG stream the backend serves; the compositor is driven by an idle
-  // preview surface below.
+  // Linux (and any non-Metal platform) renders the compositor's output inline by
+  // polling /preview/live.jpg — the JPEG bridge the CPU compositor publishes.
+  // Do not use /preview/live.mjpeg here: that is the legacy FFmpeg idle preview
+  // and resolves to a synthetic test pattern when macOS capture inputs are absent.
   const softwarePreview = runtimeInfo != null && runtimeInfo.platform !== 'darwin'
   const softwarePreviewUrl =
     softwarePreview && connection
-      ? `http://${connection.host}:${connection.port}/preview/live.mjpeg?token=${encodeURIComponent(
+      ? `http://${connection.host}:${connection.port}/preview/live.jpg?token=${encodeURIComponent(
           connection.token
         )}`
       : null
@@ -3391,6 +3392,25 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
       return
     }
 
+    // Software preview (Linux): the compositor JPEG bridge owns /preview/live.jpg.
+    // Never start the legacy FFmpeg MJPEG idle preview — it fights the bridge for
+    // preview_latest_frame and falls back to a rainbow test pattern without macOS
+    // capture inputs. Scene sync + native camera/screen start live elsewhere.
+    if (softwarePreview) {
+      setPreviewLoading(false)
+      setPreviewUrl(softwarePreviewUrl)
+      setPreviewLiveStatus({
+        state: 'live',
+        source: 'idle-preview',
+        transport: 'latest-jpeg-polling',
+        targetFps: previewSurfaceStatusRef.current.targetFps || 15,
+        width: previewSurfaceStatusRef.current.width || captureConfig.video.width,
+        height: previewSurfaceStatusRef.current.height || captureConfig.video.height,
+        message: 'Software compositor preview is live.'
+      })
+      return
+    }
+
     if (previewRequestPending.current) {
       previewRefreshQueued.current = true
       return
@@ -3434,6 +3454,8 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     nativePreviewSurfaceEnabled,
     reportError,
     settings.ffmpegPath,
+    softwarePreview,
+    softwarePreviewUrl,
     wsStatus
   ])
 
@@ -4134,8 +4156,8 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
   const isSessionActive =
     isActiveRecordingState(recording.state) || startRequestPending || stopRequestPending
 
-  // Linux software preview: keep an idle compositor running so the inline MJPEG
-  // preview always has the composited scene to show. A recording drives its own
+  // Linux software preview: keep an idle compositor running so the inline JPEG
+  // poller always has the composited scene to show. A recording drives its own
   // compositor (which feeds the same preview endpoint), so stand down while one
   // is active and re-create the idle preview once it ends.
   useEffect(() => {
@@ -4617,13 +4639,11 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     if (runtimeInfo?.disableAutoPreview) {
       return
     }
-    if (
-      !client ||
-      wsStatus !== 'connected' ||
-      isSessionActive ||
-      !health?.ffmpeg.available ||
-      !previewDevicesSignature
-    ) {
+    if (!client || wsStatus !== 'connected' || isSessionActive || !previewDevicesSignature) {
+      return
+    }
+    // Software preview does not need FFmpeg; the compositor JPEG bridge is enough.
+    if (!softwarePreview && !health?.ffmpeg.available) {
       return
     }
 
@@ -4640,6 +4660,7 @@ export function StudioProvider({ children }: { children: ReactNode }): ReactElem
     previewRefreshNonce,
     refreshPreview,
     runtimeInfo?.disableAutoPreview,
+    softwarePreview,
     wsStatus
   ])
 

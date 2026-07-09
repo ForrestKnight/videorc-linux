@@ -29,9 +29,10 @@ macOS shape onto it (fake pre-enumeration via compositor IPC) is exactly
 what the port charter bans. So on Linux:
 
 - `list_native_capture_sources` returns **one** screen entry
-  (`screen:portal:screencast`, "Screen or window (system picker)") whose
+  (`screen:portal:screencast`, "Screen Capture") whose
   detail says the compositor's own dialog chooses the actual
-  monitor/window. No fake per-monitor rows the backend cannot honor.
+  monitor/window — the same portal model OBS uses on Wayland. No fake
+  per-monitor rows the backend cannot honor.
 - The portal's `restore_token` is persisted (sqlite settings, one key) and
   passed to `SelectSources`; with a valid token the compositor restores the
   previous selection without showing the dialog. Token invalidation (source

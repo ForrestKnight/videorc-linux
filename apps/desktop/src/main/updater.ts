@@ -1,7 +1,7 @@
 import { app, ipcMain, Notification } from 'electron'
 import type { BrowserWindow } from 'electron'
 import electronUpdater from 'electron-updater'
-import type { ProgressInfo, UpdateInfo } from 'electron-updater'
+import type { AppUpdater, ProgressInfo, UpdateInfo } from 'electron-updater'
 
 import type { UpdateStatus } from '../shared/backend'
 import { safeConsole } from './safe-console'
@@ -12,7 +12,12 @@ import {
   updateStatusFromEvent
 } from './updater-status'
 
-const { autoUpdater } = electronUpdater
+// Lazy: electron-updater's AppImageUpdater reads app.getVersion() at construct
+// time. Accessing autoUpdater at module load (before app is ready) crashes on
+// Linux. Resolve it only from init/IPC paths that run after Electron is up.
+function getAutoUpdater(): AppUpdater {
+  return electronUpdater.autoUpdater
+}
 
 // One shared electron-updater singleton drives two flows:
 //   • a silent background check on every launch (default for packaged builds;
@@ -51,6 +56,8 @@ function attachUpdaterListeners(): void {
     return
   }
   listenersAttached = true
+
+  const autoUpdater = getAutoUpdater()
 
   // Manual + background both drive download explicitly.
   autoUpdater.autoDownload = false
@@ -105,6 +112,7 @@ export function initAutoUpdater(): void {
   }
 
   attachUpdaterListeners()
+  const autoUpdater = getAutoUpdater()
 
   // autoDownload is off, so kick the download ourselves when an update is found.
   autoUpdater.on('update-available', () => {
@@ -148,6 +156,7 @@ export function registerUpdaterIpc(mainWindowGetter: MainWindowGetter): void {
       setStatus(updateStatusFromEvent({ type: 'unsupported' }))
       return currentStatus
     }
+    const autoUpdater = getAutoUpdater()
     try {
       setStatus(updateStatusFromEvent({ type: 'checking' }))
       await autoUpdater.checkForUpdates()
@@ -174,7 +183,7 @@ export function registerUpdaterIpc(mainWindowGetter: MainWindowGetter): void {
       return currentStatus
     }
     try {
-      await autoUpdater.downloadUpdate()
+      await getAutoUpdater().downloadUpdate()
       return currentStatus
     } catch (error) {
       const message = errorMessage(error)
@@ -189,6 +198,6 @@ export function registerUpdaterIpc(mainWindowGetter: MainWindowGetter): void {
     if (!app.isPackaged) {
       return
     }
-    autoUpdater.quitAndInstall()
+    getAutoUpdater().quitAndInstall()
   })
 }

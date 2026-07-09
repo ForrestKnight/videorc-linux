@@ -1,5 +1,5 @@
 import { ArrowSquareOut, PushPinSimple, VideoCamera, Warning } from '@phosphor-icons/react'
-import type { ReactElement } from 'react'
+import { useEffect, useState, type ReactElement } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
@@ -13,6 +13,9 @@ import type {
   PreviewWindowState
 } from '@/lib/backend'
 import { cn } from '@/lib/utils'
+
+/** ~15fps matches the backend JPEG bridge cadence. */
+const SOFTWARE_PREVIEW_POLL_MS = 66
 
 type PreviewStageProps = {
   previewLiveStatus?: PreviewLiveStatus
@@ -48,16 +51,15 @@ export function PreviewStage({
   // cleanup tells main the slot unmounted (tab switch, undock, close).
   const slotRef = useDockSlotReporter(docked, previewWindow.dockEpoch)
 
-  // Software preview (Linux and any non-Metal platform): the backend serves the
-  // composited scene as an MJPEG stream; render it inline in this panel — there
-  // is no separate window and no native surface to host. (After all hooks so
-  // hook order stays stable.)
+  // Software preview (Linux and any non-Metal platform): poll the compositor's
+  // latest JPEG frame inline — there is no separate window and no native
+  // surface to host. (After all hooks so hook order stays stable.)
   if (softwarePreview) {
     return (
       <SoftwarePreviewCard
         aspect={{ width: captureConfig.video.width, height: captureConfig.video.height }}
         className={className}
-        streamUrl={softwarePreviewUrl}
+        frameUrl={softwarePreviewUrl}
       />
     )
   }
@@ -106,19 +108,57 @@ function previewAspectRatio(aspect: { width: number; height: number }): string {
   return aspect.width > 0 && aspect.height > 0 ? `${aspect.width} / ${aspect.height}` : '16 / 9'
 }
 
-// Inline software preview: an MJPEG stream (multipart/x-mixed-replace) the
-// browser renders natively in an <img>, refreshed as the compositor produces
-// frames. Used where there is no macOS Metal surface (Linux etc.). A cache-
-// buster in the key restarts the stream if the URL changes (backend restart).
+// Inline software preview: poll /preview/live.jpg (single-frame JPEG the
+// compositor bridge refreshes). A static <img src> would cache one frame;
+// cache-busting the query keeps the panel live. Used where there is no macOS
+// Metal surface (Linux etc.).
 function SoftwarePreviewCard({
-  streamUrl,
+  frameUrl,
   aspect,
   className
 }: {
-  streamUrl: string | null
+  frameUrl: string | null
   aspect: { width: number; height: number }
   className?: string
 }): ReactElement {
+  const [displayUrl, setDisplayUrl] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!frameUrl) {
+      setDisplayUrl(null)
+      return
+    }
+
+    let cancelled = false
+    let timer: number | undefined
+
+    const poll = () => {
+      if (cancelled) {
+        return
+      }
+      const next = `${frameUrl}${frameUrl.includes('?') ? '&' : '?'}t=${Date.now()}`
+      const probe = new Image()
+      probe.onload = () => {
+        if (!cancelled) {
+          setDisplayUrl(next)
+        }
+        timer = window.setTimeout(poll, SOFTWARE_PREVIEW_POLL_MS)
+      }
+      probe.onerror = () => {
+        timer = window.setTimeout(poll, SOFTWARE_PREVIEW_POLL_MS)
+      }
+      probe.src = next
+    }
+
+    poll()
+    return () => {
+      cancelled = true
+      if (timer !== undefined) {
+        window.clearTimeout(timer)
+      }
+    }
+  }, [frameUrl])
+
   return (
     <div
       className={cn('flex w-full flex-col overflow-hidden rounded-panel border', className)}
@@ -129,12 +169,11 @@ function SoftwarePreviewCard({
         className="relative w-full bg-[#0D0D0F]"
         style={{ aspectRatio: previewAspectRatio(aspect) }}
       >
-        {streamUrl ? (
+        {displayUrl ? (
           <img
-            key={streamUrl}
             alt="Live program preview"
             className="absolute inset-0 size-full object-contain"
-            src={streamUrl}
+            src={displayUrl}
           />
         ) : (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-center">

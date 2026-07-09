@@ -438,7 +438,7 @@ describe('ScreenCaptureKit capture device filtering', () => {
   it('offers the Linux portal ScreenCast entry as a native screen source', () => {
     const portal: Device = {
       id: 'screen:portal:screencast',
-      name: 'Screen or window (system picker)',
+      name: 'Screen Capture',
       kind: 'screen',
       status: 'available'
     }
